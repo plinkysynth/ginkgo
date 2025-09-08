@@ -1,4 +1,6 @@
 foo
+gpu
+ginkgo
 dsp.*.so
 build/
 .DS_Store

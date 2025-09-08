@@ -3,3 +3,4 @@ ColumnLimit: 132
 BreakBeforeBraces: Attach
 SortIncludes: Never
 IndentWidth: 4
+AllowShortFunctionsOnASingleLine: All

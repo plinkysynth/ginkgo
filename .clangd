@@ -1,0 +1,12 @@
+CompileFlags:
+  Add:
+    - -I/opt/homebrew/include
+    - -I/usr/local/include
+    - -framework
+    - OpenGL
+    - -framework
+    - Cocoa
+    - -framework
+    - IOKit
+    - -framework
+    - CoreVideo

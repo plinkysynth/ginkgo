@@ -1,2 +1,4 @@
 foo
 dsp.*.so
+build/
+.DS_Store

@@ -1,0 +1,5 @@
+TODO: full license info
+
+3rdparty/miniaudio.* and 3rdparty/stb_* are public domain
+
+much inspiration from https://garten.salat.dev/ 

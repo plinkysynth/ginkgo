@@ -216,8 +216,7 @@ uniform sampler2D uFP;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
 void main() {
-    o_color = texture(uFP, v_uvn);
-    return;
+    vec4 rendercol = texture(uFP, v_uvn);
     ivec2 pixel = ivec2(v_uv);
     ivec2 cell = pixel / ivec2(8, 16); // FONT_WIDTH, FONT_HEIGHT
     ivec2 fontpix = ivec2(pixel - cell * ivec2(8, 16));
@@ -235,7 +234,9 @@ void main() {
     fontpix.x += (thechar & 15) * 8;
     fontpix.y += (thechar >> 4) * 16;
     float fontlvl = (thechar >= 0) ? texelFetch(uFont, fontpix, 0).r : 1.0;
-    o_color = mix(fg, bg, fontlvl);
+    vec4 fontcol = mix(fg, bg, fontlvl);
+    float alpha = (fontcol.x == 0. && fontcol.y == 0. && fontcol.z == 0.) ? 0.0 : 0.75;
+    o_color = mix(rendercol, fontcol, alpha);
 });
 //clang-format on
 

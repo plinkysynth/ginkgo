@@ -1,31 +1,34 @@
 // clang -std=c11 -O2 gpu.c -o gpu -I$(brew --prefix glfw)/include -L$(brew --prefix glfw)/lib -lglfw -framework OpenGL -framework
 // Cocoa -framework IOKit -framework CoreVideo
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_DS_IMPLEMENTATION
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
 
-#include "3rdparty/stb_image.h"
-
-#include <GLFW/glfw3.h>
-#include <OpenGL/gl3.h> // core profile headers
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "3rdparty/stb_image.h"
+#include "3rdparty/stb_ds.h"
+
+#include <GLFW/glfw3.h>
+#include <OpenGL/gl3.h> // core profile headers
+
+#define FONT_WIDTH 8
+#define FONT_HEIGHT 16
+// size of virtual textmode screen:
+#define TMW 512
+#define TMH 256
+
 int mini(int a, int b) { return a < b ? a : b; }
 int maxi(int a, int b) { return a > b ? a : b; }
-
-#define STB_DS_IMPLEMENTATION
-#include "3rdparty/stb_ds.h"
 
 typedef struct EditableString {
     char *str; // stb stretchy buffer
 } EditableString;
-
-#define FONT_WIDTH 8
-#define FONT_HEIGHT 16
 
 #define STB_TEXTEDIT_CHARTYPE char
 #define STB_TEXTEDIT_POSITIONTYPE int
@@ -193,13 +196,28 @@ static GLuint link_program(GLuint vs, GLuint fs) {
 #define SHADER(...) "#version 330 core\n" #__VA_ARGS__
 
 //clang-format off
-const char *kVS = SHADER(out vec2 v_uv; uniform ivec2 uScreenPx; void main() {
+const char *kVS = SHADER(out vec2 v_uv; out vec2 v_uvn; uniform ivec2 uScreenPx; void main() {
     vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    v_uvn = p;
     v_uv = p * vec2(uScreenPx);
     gl_Position = vec4(p.x * 2.0 - 1.0, p.y * -2.0 + 1.0, 0.0, 1.0);
 });
 
-const char *kFS = SHADER(out vec4 o_color; in vec2 v_uv; uniform sampler2D uFont; uniform usampler2D uText; void main() {
+const char *kFS2 = SHADER(out vec4 o_color; in vec2 v_uvn; uniform sampler2D uFont; uniform usampler2D uText; void main() {
+    vec2 p = v_uvn;
+    o_color = vec4(p, 0.5, 1.0);
+});
+
+const char *kFS = SHADER(
+out vec4 o_color; 
+in vec2 v_uv; 
+in vec2 v_uvn; 
+uniform sampler2D uFP; 
+uniform sampler2D uFont; 
+uniform usampler2D uText; 
+void main() {
+    o_color = texture(uFP, v_uvn);
+    return;
     ivec2 pixel = ivec2(v_uv);
     ivec2 cell = pixel / ivec2(8, 16); // FONT_WIDTH, FONT_HEIGHT
     ivec2 fontpix = ivec2(pixel - cell * ivec2(8, 16));
@@ -223,6 +241,7 @@ const char *kFS = SHADER(out vec4 o_color; in vec2 v_uv; uniform sampler2D uFont
 
 EditableString edit_str = {};
 STB_TexteditState state = {};
+
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
         if (key == GLFW_KEY_TAB)
@@ -258,8 +277,20 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
     }
 }
 
-int main(int argc, char **argv) {
-    int want_fullscreen = (argc > 1 && strcmp(argv[1], "--fullscreen") == 0);
+GLuint gl_create_texture(int filter_mode, int wrap_mode) {
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    return tex;
+}
+
+GLFWwindow *gl_init(int want_fullscreen) {
     if (!glfwInit())
         die("glfwInit failed");
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -281,46 +312,66 @@ int main(int argc, char **argv) {
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
 
+    return win;
+}
+
+int main(int argc, char **argv) {
+    int want_fullscreen = (argc > 1 && strcmp(argv[1], "--fullscreen") == 0);
+    GLFWwindow *win = gl_init(want_fullscreen);
+
     GLuint vs = compile_shader(GL_VERTEX_SHADER, kVS);
     GLuint fs = compile_shader(GL_FRAGMENT_SHADER, kFS);
+    GLuint fs2 = compile_shader(GL_FRAGMENT_SHADER, kFS2);
     GLuint prog = link_program(vs, fs);
+    GLuint prog2 = link_program(vs, fs2);
     glDeleteShader(vs);
     glDeleteShader(fs);
+    glDeleteShader(fs2);
 
     GLint loc_uText = glGetUniformLocation(prog, "uText");
     GLint loc_uFont = glGetUniformLocation(prog, "uFont");
+    GLint loc_uFP = glGetUniformLocation(prog, "uFP");
     GLint loc_uTextSize = glGetUniformLocation(prog, "uTextSize");
     GLint loc_uCellPx = glGetUniformLocation(prog, "uCellPx");
     GLint loc_uScreenPx = glGetUniformLocation(prog, "uScreenPx");
     GLint loc_uFontPx = glGetUniformLocation(prog, "uFontPx");
 
-    // Create textures
-    GLuint texText = 0, texFont = 0;
-    glGenTextures(1, &texText);
-    glBindTexture(GL_TEXTURE_2D, texText);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, 256, 256, 0, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, NULL);
-    check_gl("alloc text tex");
-
     int fw = 0, fh = 0, fc = 0;
-    stbi_uc *fontPixels = stbi_load("scripts/font_256.png", &fw, &fh, &fc, 4);
+    stbi_uc *fontPixels = stbi_load("assets/font.png", &fw, &fh, &fc, 4);
     if (!fontPixels)
         die("Failed to load font");
-    glGenTextures(1, &texFont);
-    glBindTexture(GL_TEXTURE_2D, texFont);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    GLuint texFont = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, fontPixels);
     stbi_image_free(fontPixels);
     check_gl("upload font");
+    glBindTexture(GL_TEXTURE_2D, 0);
 
-    size_t textBytes = (size_t)(256 * 256 * 4);
+    GLuint texText = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, TMW, TMH, 0, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, NULL);
+    check_gl("alloc text tex");
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    GLuint texFPRT = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 2560, 1440, 0, GL_RGBA, GL_HALF_FLOAT, NULL);
+    check_gl("alloc fpRT");
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    GLuint fbo;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texFPRT, 0);
+    GLenum bufs[1] = { GL_COLOR_ATTACHMENT0 };
+    glDrawBuffers(1, bufs);
+    GLenum fbo_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (fbo_status != GL_FRAMEBUFFER_COMPLETE) 
+        die("fbo is not complete");
+    check_gl("alloc fbo");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    
+    size_t textBytes = (size_t)(TMW * TMH * 4);
     GLuint pbos[3];
+    int pbo_index = 0;
     glGenBuffers(3, pbos);
     for (int i = 0; i < 3; ++i) {
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[i]);
@@ -331,8 +382,6 @@ int main(int argc, char **argv) {
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
 
-    int pbo_index = 1;
-
     FILE *f = fopen("gpu.c", "r");
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
@@ -340,9 +389,7 @@ int main(int argc, char **argv) {
     fseek(f, 0, SEEK_SET);
     fread(edit_str.str, 1, len, f);
     fclose(f);
-
     stb_textedit_initialize_state(&state, 0);
-
     glfwSetKeyCallback(win, key_callback);
     glfwSetCharCallback(win, char_callback);
     glfwSetMouseButtonCallback(win, mouse_button_callback);
@@ -364,7 +411,8 @@ int main(int argc, char **argv) {
 
         int fbw, fbh;
         glfwGetFramebufferSize(win, &fbw, &fbh);
-        glViewport(0, 0, fbw, fbh);
+        int tmw = fbw/FONT_WIDTH;
+        int tmh = fbh/FONT_HEIGHT;
 
         double t = glfwGetTime() - t0;
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[pbo_index]);
@@ -384,14 +432,14 @@ int main(int argc, char **argv) {
                     col = 0x48ffff00;
                 if (idx == state.cursor)
                     col = 0xfff00000;
-                if (x < 256)
-                    ptr[y * 256 + x] = col | c;
+                if (x < TMW)
+                    ptr[y * TMW + x] = col | c;
                 if (c == '\t')
                     x += 4;
                 else if (c == '\n') {
                     x = 0;
                     y++;
-                    if (y == 256)
+                    if (y == TMH)
                         break;
                 } else
                     ++x;
@@ -399,29 +447,56 @@ int main(int argc, char **argv) {
             glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
         }
         glBindTexture(GL_TEXTURE_2D, texText);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 256, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, (const void *)0);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TMW, TMH, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, (const void *)0);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         pbo_index = (pbo_index + 1) % 3;
+        check_gl("update text tex");
 
-        // --- Draw ---
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glDisable(GL_DEPTH_TEST);
-        glClearColor(0.f, 0.f, 0.f, 1.f);
-        glClear(GL_COLOR_BUFFER_BIT);
 
+        glDisable(GL_DEPTH_TEST);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        check_gl("bind fbo");
+        glViewport(0, 0, 2560, 1440);
+        //glClearColor(1.f, 0.f, 1.f, 1.f);
+        //glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(prog2); // a fragment shader that writes RGBA16F
+        check_gl("use prog2");
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        check_gl("draw fpRT");
+
+        //glClearColor(0.f, 0.f, 0.f, 1.f);
+        //glClear(GL_COLOR_BUFFER_BIT);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, fbw, fbh);
         glUseProgram(prog);
-        glUniform1i(loc_uText, 0);
-        glUniform1i(loc_uFont, 1);
-        glUniform2i(loc_uScreenPx, fbw, fbh);
-        glUniform2i(loc_uFontPx, fw, fh);
 
+        glUniform1i(loc_uText, 0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texText);
+
+        glUniform1i(loc_uFont, 1);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, texFont);
 
+        glUniform1i(loc_uFP, 2);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, texFPRT);
+
+        glUniform2i(loc_uScreenPx, fbw, fbh);
+        glUniform2i(loc_uFontPx, fw, fh);
+
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        check_gl("draw text");
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
         glfwSwapBuffers(win);
     }
@@ -430,6 +505,7 @@ int main(int argc, char **argv) {
     glDeleteVertexArrays(1, &vao);
     glDeleteTextures(1, &texText);
     glDeleteTextures(1, &texFont);
+    glDeleteTextures(1, &texFPRT);
     glDeleteProgram(prog);
     glDeleteBuffers(3, pbos);
     // free(staging);

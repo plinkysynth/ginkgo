@@ -551,7 +551,8 @@ int main(int argc, char **argv) {
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
 
-    FILE *f = fopen("gpu.c", "r");
+    FILE *f = fopen("ginkgo.c", "r");
+    assert(f);
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     stbds_arrsetlen(edit_str.str, len);
@@ -757,6 +758,8 @@ int main(int argc, char **argv) {
         iFrame++;
         
     }
+    ma_device_stop(&dev);
+    ma_device_uninit(&dev);
 
     // Cleanup
     glDeleteVertexArrays(1, &vao);

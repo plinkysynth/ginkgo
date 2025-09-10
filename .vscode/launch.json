@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug gpu (LLDB)",
+            "name": "Debug ginkgo (LLDB)",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/gpu",
+            "program": "${workspaceFolder}/ginkgo",
             "cwd": "${workspaceFolder}",
             "args": [],
             "env": {},

@@ -2,11 +2,11 @@ CFLAGS  = -g -std=c11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include
 LDFLAGS = -L/opt/homebrew/opt/glfw/lib -lglfw \
           -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL
 
-SRC = gpu.c
+SRC = ginkgo.c
 OBJ = $(SRC:%.c=build/%.o)
 DEP = $(OBJ:.o=.d)
 
-gpu: $(OBJ)
+ginkgo: $(OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 build/%.o: %.c | build
@@ -19,4 +19,4 @@ build:
 
 .PHONY: clean
 clean:
-	rm -rf build gpu
+	rm -rf build ginkgo

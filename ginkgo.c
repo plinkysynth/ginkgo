@@ -56,6 +56,7 @@ static inline float db2squared(float x) { return expf(x / 4.342944819f); }
 typedef struct stereo {
     float l, r;
 } stereo;
+
 static inline float mid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float side(stereo s) { return (s.l - s.r) * 0.5f; }
 static inline stereo saturate_stereo(stereo s) {
@@ -64,6 +65,43 @@ static inline stereo saturate_stereo(stereo s) {
     // tanhf is a little harder
     return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)};
 }
+
+typedef struct error_msg_t {
+    int key;           // a line number
+    const char *value; // a line of text (terminated by \n)
+} error_msg_t;
+
+char *last_compile_log = NULL;
+error_msg_t *error_msgs = NULL;
+char status_bar[512];
+double status_bar_time = 0;
+uint32_t status_bar_color = 0;
+
+// --- colors 3 digits bg, 3 digits fg
+#define C_SELECTION 0xc48fffu
+
+#define C_NUM 0x000cc7u
+#define C_DEF 0x000fffu
+#define C_KW 0x0009acu
+#define C_TYPE 0x000a9cu
+#define C_PREPROC 0x0009a9u
+#define C_STR 0x000886u
+#define C_COM 0x000fd8u
+#define C_PUN 0x000aaau
+#define C_ERR 0xf00fffu
+#define C_OK 0x080fffu
+#define C_WARNING 0x860fffu
+
+void set_status_bar(uint32_t color, const char *msg, ...) {
+    va_list args;
+    va_start(args, msg);
+    vsnprintf(status_bar, sizeof(status_bar)-1, msg, args);
+    va_end(args);
+    fprintf(stderr, "%s\n", status_bar);
+    status_bar_color = color;
+    status_bar_time = glfwGetTime();
+}
+
 
 stereo scope[SCOPE_SIZE];
 uint32_t scope_pos = 0;
@@ -270,19 +308,32 @@ static void check_gl(const char *where) {
     }
 }
 
+
 static GLuint compile_shader(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, NULL);
     glCompileShader(s);
     GLint ok = 0;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    free(last_compile_log);
+    last_compile_log = NULL;
+    hmfree(error_msgs);
+    error_msgs = NULL;
     if (!ok) {
         GLint len = 0;
         glGetShaderiv(s, GL_INFO_LOG_LENGTH, &len);
-        char *log = (char *)malloc(len > 1 ? len : 1);
-        glGetShaderInfoLog(s, len, NULL, log);
-        fprintf(stderr, "Shader compile failed:\n%s\n", log);
-        free(log);
+        last_compile_log = (char *)malloc(len > 1 ? len : 1);
+        glGetShaderInfoLog(s, len, NULL, last_compile_log);
+        fprintf(stderr, "Shader compile failed:\n[%s]\n", last_compile_log);
+        for (const char *c = last_compile_log; *c; c++) {
+            int col = 0, line = 0;
+            if (sscanf(c, "ERROR: %d:%d:", &col, &line) == 2) {
+                hmput(error_msgs, line - 1, c);
+            }
+            while (*c && *c != '\n')
+                c++;
+        }
+        set_status_bar(C_ERR, "Shader compile failed - %d errors", (int)hmlen(error_msgs));
         return 0;
     }
     return s;
@@ -308,33 +359,52 @@ static GLuint link_program(GLuint vs, GLuint fs) {
 }
 
 #define SHADER(...) "#version 330 core\n" #__VA_ARGS__
+#define SHADER_NO_VERSION(...) #__VA_ARGS__
 
-//clang-format off
-const char *kVS = SHADER(out vec2 v_uv; void main() {
+// clang-format off
+const char *kVS = SHADER(
+out vec2 v_uv; 
+void main() {
     vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
     v_uv = p;
     gl_Position = vec4(p.x * 2.0 - 1.0, p.y * 2.0 - 1.0, 0.0, 1.0);
 });
 
-const char *kFS2 = SHADER(
-    out vec4 o_color; in vec2 v_uv; uniform uint iFrame; uint seed; uniform sampler2D uFP; uniform ivec2 uScreenPx;
-    uint pcg_next() { return seed = seed * 747796405u + 2891336453u; } float rnd() {
-        return float((pcg_next())) / 4294967296.0;
-    } vec2 rnd2() { return vec2(rnd(), rnd()); } vec2 rnd_disc_cauchy() {
-        vec2 h = rnd2() * vec2(6.28318530718, 3.1 / 2.);
-        h.y = tan(h.y);
-        return h.y * vec2(sin(h.x), cos(h.x));
-    } void main() {
+const char *kFS2_prefix = SHADER(
+out vec4 o_color; 
+in vec2 v_uv; 
+uniform uint iFrame; 
+uint seed; 
+uniform sampler2D uFP; 
+uniform ivec2 uScreenPx;
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+uint pcg_next() { return seed = seed * 747796405u + 2891336453u; } 
+float rnd() { return float((pcg_next())) / 4294967296.0; } 
+vec2 rnd2() { return vec2(rnd(), rnd()); } 
+vec3 rnd3() { return vec3(rnd(), rnd(), rnd()); } 
+vec2 rnd_disc_cauchy() {
+    vec2 h = rnd2() * vec2(6.28318530718, 3.1 / 2.);
+    h.y = tan(h.y);
+    return h.y * vec2(sin(h.x), cos(h.x));
+}
+vec3 c(vec2 uv) { 
+    vec3 o=vec3(0.0); 
+    // user code follows
+);
+    
+const char *kFS2_suffix = SHADER_NO_VERSION(
+   return o; } // end of user shader
+    void main() {
         vec2 fragCoord = gl_FragCoord.xy;
         seed = uint(uint(fragCoord.x) * uint(1973) + uint(fragCoord.y) * uint(9277) + uint(iFrame) * uint(23952683)) | uint(1);
-        vec2 uv = fragCoord;
-        o_color = vec4(uv, 0.0, 1.0);
+        o_color = vec4(c(v_uv), 1.0);
     });
 
 const char *kFS = SHADER(
     float saturate(float x) { return clamp(x, 0.0, 1.0); }
     uniform ivec2 uScreenPx; uniform float iTime; uniform float scroll_y; uniform vec4 cursor; out vec4 o_color; in vec2 v_uv;
     uniform ivec2 uFontPx;
+    uniform int status_bar_size;
     uniform sampler2D uFP; uniform sampler2D uFont; uniform usampler2D uText; vec3 filmicToneMapping(vec3 color) {
         color = max(vec3(0.), color - vec3(0.004));
         color = (color * (6.2 * color + .5)) / (color * (6.2 * color + 1.7) + 0.06);
@@ -350,7 +420,7 @@ const char *kFS = SHADER(
     vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * 0.25; }
 
     void main() {
-        vec3 rendercol; //= texture(uFP, v_uv).rgb;
+        vec3 rendercol= texture(uFP, v_uv).rgb;
         // float kernel_size = 0.25f; // the gap is about double this.
         // float dx = kernel_size * (16./9.) * (1./1280.);
         // float dy = kernel_size * (1./720.);
@@ -385,17 +455,23 @@ const char *kFS = SHADER(
             beam *= smoothstep(miny - 2.f, maxy - 0.5f, pix.xx);
             beam *= 1.5f / (maxy - miny + 1.f);
         }
-        rendercol = sqrt(beam.x * vec3(0.2, 0.4, 0.8) + beam.y * vec3(0.8, 0.4, 0.2));
+        rendercol += sqrt(beam.x * vec3(0.2, 0.4, 0.8) + beam.y * vec3(0.8, 0.4, 0.2));
         rendercol.rgb = sqrt(rendercol.rgb); // filmicToneMapping(rendercol.rgb);
 
-        vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y + scroll_y);
+        vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y);
+        // status line doesnt scroll
+        if (fpixel.y < uScreenPx.y - uFontPx.y * status_bar_size) {
+            fpixel.y += scroll_y;
+        } else {
+            fpixel.y += uFontPx.y;
+        }
 
         ivec2 pixel = ivec2(fpixel);
         ivec2 cell = pixel / uFontPx; 
         uvec4 char_attrib = texelFetch(uText, cell, 0);
         int thechar = int(char_attrib.r) - 32;
-        vec3 fg = vec3(0.0);
-        vec3 bg = vec3(0.0);
+        vec4 fg = vec4(1.0);
+        vec4 bg = vec4(1.0);
         // bbbfffcc -> bb bf ff cc ( A B G R )
         fg.x = float(char_attrib.b & 15u) * (1.f / 15.f);
         fg.y = float(char_attrib.g >> 4u) * (1.f / 15.f);
@@ -403,32 +479,55 @@ const char *kFS = SHADER(
         bg.x = float(char_attrib.a >> 4) * (1.f / 15.f);
         bg.y = float(char_attrib.a & 15u) * (1.f / 15.f);
         bg.z = float(char_attrib.b >> 4) * (1.f / 15.f);
+        if (bg.x == 0. && bg.y == 0. && bg.z == 0.) {
+            bg.w = 0.0;
+        }
         vec2 fontpix = vec2(pixel - cell * uFontPx + 0.5f) / vec2(uFontPx);
-
-
-        
         fontpix.x += (thechar & 15);
         fontpix.y += (thechar >> 4);
         fontpix *= vec2(1./16.,1./6.); // 16 x 6 atlas
         float aa = uFontPx.x / 2.f;
         float fontlvl = (thechar >= 0) ? sqrt(saturate((texture(uFont, fontpix).r-0.5) * aa + 0.5)) : 0.0;
-        vec3 fontcol = mix(bg, fg, fontlvl);
+        vec4 fontcol = mix(bg, fg, fontlvl);
         vec2 fcursor = vec2(cursor.x, cursor.y) - fpixel;
         vec2 fcursor_prev = vec2(cursor.z, cursor.w) - fpixel;
         vec2 cursor_delta = fcursor_prev - fcursor;
         float cursor_t = clamp(-fcursor.x / (cursor_delta.x + 1e-6 * sign(cursor_delta.x)), 0., 1.);
         fcursor += cursor_delta * cursor_t;
         if (fcursor.x >= -2.f && fcursor.x <= 2.f && fcursor.y >= -float(uFontPx.y) && fcursor.y <= 0.f) {
-            fontcol.rgb = mix(fontcol, vec3(1.f), vec3(1.f - cursor_t * cursor_t));
+            float cursor_alpha = 1.f - cursor_t * cursor_t;
+            fontcol = mix(fontcol, vec4(1.), cursor_alpha);
         }
-
-        float alpha = (fontcol.x == 0. && fontcol.y == 0. && fontcol.z == 0.) ? 0.0 : 1.0;
-        o_color = vec4(mix(rendercol, fontcol.rgb, alpha), 1.0);
+        o_color = vec4(rendercol.xyz * (1.-fontcol.w) + fontcol.xyz, 1.0);
     });
-//clang-format on
+// clang-format on
 
 EditableString edit_str = {};
 STB_TexteditState state = {};
+GLuint prog = 0, prog2 = 0;
+GLuint vs = 0, fs = 0;
+GLuint loc_uScreenPx2 = 0;
+GLuint loc_iFrame2 = 0;
+GLuint loc_uFP2 = 0;
+GLuint try_to_compile_shader(void) {
+    char *fs2_str = (char *)calloc(1, strlen(kFS2_prefix) + stbds_arrlen(edit_str.str) + strlen(kFS2_suffix) + 64);
+    sprintf(fs2_str, "%s\n#line 1\n%.*s\n%s", kFS2_prefix, (int)stbds_arrlen(edit_str.str), edit_str.str, kFS2_suffix);
+    GLuint fs2 = compile_shader(GL_FRAGMENT_SHADER, fs2_str);
+    GLuint new_prog2 = fs2 ? link_program(vs, fs2) : 0;
+    if (new_prog2) {
+        glDeleteProgram(prog2);
+        prog2 = new_prog2;
+        loc_uScreenPx2 = glGetUniformLocation(prog2, "uScreenPx");
+        loc_iFrame2 = glGetUniformLocation(prog2, "iFrame");
+        loc_uFP2 = glGetUniformLocation(prog2, "uFP");
+    }
+    if (!prog2)
+        die("Failed to compile shader");
+    glDeleteShader(fs2);
+    free(fs2_str);
+    GLenum e = glGetError(); // clear any errors
+    return new_prog2;
+}
 
 int fbw, fbh; // current framebuffer size in pixels
 int tmw, tmh; // current textmap size in cells
@@ -453,9 +552,47 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
 
         if (key < 32 || key > 126 || (mods & GLFW_MOD_SUPER)) {
             if (mods == GLFW_MOD_SUPER) {
+                if (key == GLFW_KEY_C || key == GLFW_KEY_X) {
+                    int se = mini(state.select_end, state.select_start);
+                    int ee = maxi(state.select_end, state.select_start);
+                    char *str = calloc(1, ee - se + 1);
+                    memcpy(str, edit_str.str + se, ee - se);
+                    glfwSetClipboardString(win, str);
+                    free(str);
+                    if (key == GLFW_KEY_X) {
+                        stb_textedit_cut(&edit_str, &state);
+                    }
+                }
+                if (key == GLFW_KEY_V) {
+                    const char *str = glfwGetClipboardString(win);
+                    if (str) {
+                        stb_textedit_paste(&edit_str, &state, (STB_TEXTEDIT_CHARTYPE *)str, strlen(str));
+                    }
+                }
                 if (key == GLFW_KEY_A) {
                     state.select_start = 0;
                     state.select_end = stbds_arrlen(edit_str.str);
+                }
+                if (key == GLFW_KEY_S) {
+                    bool compiled = try_to_compile_shader() != 0;
+                    if (compiled) {
+                        FILE *f = fopen("f.tmp", "w");
+                        if (f) {
+                            fwrite(edit_str.str, 1, stbds_arrlen(edit_str.str), f);
+                            fclose(f);
+                            if (rename("f.tmp", "f.glsl")==0) {
+                                set_status_bar(C_OK, "saved shader");
+                                f=0;
+                            }
+                        }
+                        if (!f) {
+                            set_status_bar(C_ERR, "failed to save shader");
+                        }                
+                    }
+                }
+    
+                if (key == GLFW_KEY_ENTER || key == '\n') {
+                    try_to_compile_shader();
                 }
                 if (key == GLFW_KEY_MINUS) {
                     adjust_font_size(-1);
@@ -488,7 +625,8 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         // printf("mouse button: %d, mods: %d\n", button, mods);
         double mx, my;
         glfwGetCursorPos(win, &mx, &my);
-        mx *=retina; my*=retina;
+        mx *= retina;
+        my *= retina;
         stb_textedit_click(&edit_str, &state, mx - 64., my + edit_str.scroll_y);
         edit_str.need_scroll_update = true;
     }
@@ -496,7 +634,8 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         // printf("mouse button: %d, mods: %d\n", button, mods);
         double mx, my;
         glfwGetCursorPos(win, &mx, &my);
-        mx *=retina; my*=retina;
+        mx *= retina;
+        my *= retina;
         stb_textedit_drag(&edit_str, &state, mx - 64., my + edit_str.scroll_y);
         edit_str.need_scroll_update = true;
     }
@@ -548,18 +687,6 @@ GLFWwindow *gl_init(int want_fullscreen) {
     return win;
 }
 
-// --- colors 3 digits bg, 3 digits fg
-#define C_SELECTION 0xc48fffu
-
-#define C_NUM 0x000cc7u
-#define C_DEF 0x000fffu
-#define C_KW 0x0009acu
-#define C_TYPE 0x000a9cu
-#define C_PREPROC 0x0009a9u
-#define C_STR 0x000886u
-#define C_COM 0x000fd8u
-#define C_PUN 0x000aaau
-#define C_ERR 0xf00fffu
 static inline int is_ident_start(unsigned c) { return (c == '_') || ((c | 32) - 'a' < 26); }
 static inline int is_ident_cont(unsigned c) { return is_ident_start(c) || (c - '0' < 10); }
 static inline int is_space(unsigned c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
@@ -755,8 +882,12 @@ char tok_get(tokenizer_t *t, int i) { return (i < t->n && i >= 0) ? t->str[i] : 
 
 int code_color(uint32_t *ptr) {
     int left = 64 / edit_str.font_width;
-    tokenizer_t t = {
-        .ptr = ptr, .str = edit_str.str, .n = stbds_arrlen(edit_str.str), .x = left, .y = -edit_str.intscroll, .prev_nonspace = ';'};
+    tokenizer_t t = {.ptr = ptr,
+                     .str = edit_str.str,
+                     .n = stbds_arrlen(edit_str.str),
+                     .x = left,
+                     .y = -edit_str.intscroll,
+                     .prev_nonspace = ';'};
     bool wasinclude = false;
     int se = mini(state.select_start, state.select_end);
     int ee = maxi(state.select_start, state.select_end);
@@ -803,7 +934,8 @@ int code_color(uint32_t *ptr) {
             if (wasinclude) {
                 col = C_STR;
                 j = scan_string(t.str, i, t.n, '>');
-            } else col = C_PUN;
+            } else
+                col = C_PUN;
             break;
         case '\'': {
             col = C_STR;
@@ -916,7 +1048,16 @@ int code_color(uint32_t *ptr) {
                 t.ptr[t.y * TMW + t.x] = (ccol) | (unsigned char)(ch);
             if (ch == '\t')
                 t.x += 2;
-            else if (ch == '\n') {
+            else if (ch == '\n' || ch == 0) {
+                // look for an error message
+                const char *errline = hmget(error_msgs, t.y);
+                if (errline) {
+                    for (; *errline && *errline != '\n'; errline++) {
+                        if (t.x < TMW && t.y >= 0 && t.y < TMH)
+                            t.ptr[t.y * TMW + t.x] = (C_ERR << 8) | (unsigned char)(*errline);
+                        t.x++;
+                    }
+                }
                 t.x = left;
                 ++t.y;
             } else
@@ -958,14 +1099,21 @@ int main(int argc, char **argv) {
     int want_fullscreen = (argc > 1 && (strcmp(argv[1], "--fullscreen") == 0 || strcmp(argv[1], "-f") == 0));
     GLFWwindow *win = gl_init(want_fullscreen);
 
-    GLuint vs = compile_shader(GL_VERTEX_SHADER, kVS);
-    GLuint fs = compile_shader(GL_FRAGMENT_SHADER, kFS);
-    GLuint fs2 = compile_shader(GL_FRAGMENT_SHADER, kFS2);
-    GLuint prog = link_program(vs, fs);
-    GLuint prog2 = link_program(vs, fs2);
-    glDeleteShader(vs);
+    FILE *f = fopen("f.glsl", "r");
+    assert(f);
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    stbds_arrsetlen(edit_str.str, len + 1);
+    fseek(f, 0, SEEK_SET);
+    fread(edit_str.str, 1, len, f);
+    fclose(f);
+    edit_str.str[len] = '\0';
+
+    vs = compile_shader(GL_VERTEX_SHADER, kVS);
+    fs = compile_shader(GL_FRAGMENT_SHADER, kFS);
+    prog = link_program(vs, fs);
     glDeleteShader(fs);
-    glDeleteShader(fs2);
+    try_to_compile_shader();
 
     GLint loc_uText = glGetUniformLocation(prog, "uText");
     GLint loc_uFont = glGetUniformLocation(prog, "uFont");
@@ -976,15 +1124,13 @@ int main(int argc, char **argv) {
     GLint loc_uTextSize = glGetUniformLocation(prog, "uTextSize");
     GLint loc_uCellPx = glGetUniformLocation(prog, "uCellPx");
     GLint loc_uScreenPx = glGetUniformLocation(prog, "uScreenPx");
-    GLint loc_uScreenPx2 = glGetUniformLocation(prog2, "uScreenPx");
-    GLint loc_iFrame = glGetUniformLocation(prog2, "iFrame");
-    GLint loc_uFP2 = glGetUniformLocation(prog2, "uFP");
     GLint loc_uFontPx = glGetUniformLocation(prog, "uFontPx");
+    GLint loc_status_bar_size = glGetUniformLocation(prog, "status_bar_size");
     int fw = 0, fh = 0, fc = 0;
     stbi_uc *fontPixels = stbi_load("assets/font_sdf.png", &fw, &fh, &fc, 4);
     if (!fontPixels)
         die("Failed to load font");
-    assert(fw == 32*16 && fh == 64*6);
+    assert(fw == 32 * 16 && fh == 64 * 6);
     GLuint texFont = gl_create_texture(GL_LINEAR, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, fontPixels);
     stbi_image_free(fontPixels);
@@ -1029,14 +1175,6 @@ int main(int argc, char **argv) {
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
 
-    FILE *f = fopen("ginkgo.c", "r");
-    assert(f);
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    stbds_arrsetlen(edit_str.str, len);
-    fseek(f, 0, SEEK_SET);
-    fread(edit_str.str, 1, len, f);
-    fclose(f);
     edit_str.font_width = 12;
     edit_str.font_height = 24;
     stb_textedit_initialize_state(&state, 0);
@@ -1051,7 +1189,8 @@ int main(int argc, char **argv) {
 
         double mx, my;
         glfwGetCursorPos(win, &mx, &my);
-        mx *=retina; my*=retina;
+        mx *= retina;
+        my *= retina;
         int m0 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         int m1 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         if (m0) {
@@ -1084,6 +1223,14 @@ int main(int argc, char **argv) {
             memset(ptr, 0, textBytes);
             edit_str.intscroll = (int)(edit_str.scroll_y / edit_str.font_height);
             code_color(ptr);
+            if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
+                int x = 0;
+                for (const char *c = status_bar; *c && *c != '\n' && x < TMW; c++, x++) {
+                    ptr[tmh * TMW + x] = (status_bar_color << 8) | (unsigned char)(*c);
+                }
+            } else {
+               status_bar_color = 0;
+            }
             if (edit_str.need_scroll_update) {
                 edit_str.need_scroll_update = false;
                 if (edit_str.cursor_y >= edit_str.intscroll + tmh - 4) {
@@ -1166,7 +1313,7 @@ int main(int argc, char **argv) {
         check_gl("use prog2");
         glUniform2i(loc_uScreenPx2, RESW, RESH);
         check_gl("uniform uScreenPx2");
-        glUniform1ui(loc_iFrame, iFrame);
+        glUniform1ui(loc_iFrame2, iFrame);
         check_gl("uniform iFrame");
 
         glActiveTexture(GL_TEXTURE0);
@@ -1197,6 +1344,7 @@ int main(int argc, char **argv) {
 
         glUniform2i(loc_uScreenPx, fbw, fbh);
         glUniform2i(loc_uFontPx, edit_str.font_width, edit_str.font_height);
+        glUniform1i(loc_status_bar_size, status_bar_color ? 1 : 0);
         glUniform1f(loc_iTime, t);
         glUniform1f(loc_scroll_y, edit_str.scroll_y - edit_str.intscroll * edit_str.font_height);
         float f_cursor_x = edit_str.cursor_x * edit_str.font_width;

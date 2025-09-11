@@ -373,7 +373,8 @@ void main() {
 const char *kFS2_prefix = SHADER(
 out vec4 o_color; 
 in vec2 v_uv; 
-uniform uint iFrame; 
+uniform uint iFrame;
+uniform float iTime; 
 uint seed; 
 uniform sampler2D uFP; 
 uniform ivec2 uScreenPx;
@@ -389,6 +390,7 @@ vec2 rnd_disc_cauchy() {
 }
 vec3 c(vec2 uv) { 
     vec3 o=vec3(0.0); 
+    float t = iTime;
     // user code follows
 );
     
@@ -455,7 +457,15 @@ const char *kFS = SHADER(
             beam *= smoothstep(miny - 2.f, maxy - 0.5f, pix.xx);
             beam *= 1.5f / (maxy - miny + 1.f);
         }
-        rendercol += sqrt(beam.x * vec3(0.2, 0.4, 0.8) + beam.y * vec3(0.8, 0.4, 0.2));
+        rendercol = max(vec3(0.), rendercol);
+        vec3 beamcol = vec3(0.2, 0.4, 0.8) * beam.x + vec3(0.8, 0.4, 0.2) * beam.y;
+        float grey = dot(rendercol, vec3(0.2126, 0.7152, 0.0722));
+        float cursor_col = 1.;
+        if (grey > 0.5) {
+            cursor_col = 0.;
+            beamcol = -beamcol * 2.;
+        }
+        rendercol += beamcol;
         rendercol.rgb = sqrt(rendercol.rgb); // filmicToneMapping(rendercol.rgb);
 
         vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y);
@@ -479,14 +489,11 @@ const char *kFS = SHADER(
         bg.x = float(char_attrib.a >> 4) * (1.f / 15.f);
         bg.y = float(char_attrib.a & 15u) * (1.f / 15.f);
         bg.z = float(char_attrib.b >> 4) * (1.f / 15.f);
-        float cursor_col = 1.;
         if (bg.x == 0. && bg.y == 0. && bg.z == 0.) {
             bg.w = 0.0;
-            float grey = dot(rendercol, vec3(0.2126, 0.7152, 0.0722));
             if (grey > 0.5) {
                 fg.xyz = vec3(1.) - fg.xyz;
-                cursor_col = 0.;
-            }
+            }    
         }
         
         vec2 fontpix = vec2(pixel - cell * uFontPx + 0.5f) / vec2(uFontPx);
@@ -515,6 +522,7 @@ GLuint prog = 0, prog2 = 0;
 GLuint vs = 0, fs = 0;
 GLuint loc_uScreenPx2 = 0;
 GLuint loc_iFrame2 = 0;
+GLuint loc_iTime2 = 0;
 GLuint loc_uFP2 = 0;
 GLuint try_to_compile_shader(void) {
     char *fs2_str = (char *)calloc(1, strlen(kFS2_prefix) + stbds_arrlen(edit_str.str) + strlen(kFS2_suffix) + 64);
@@ -526,6 +534,7 @@ GLuint try_to_compile_shader(void) {
         prog2 = new_prog2;
         loc_uScreenPx2 = glGetUniformLocation(prog2, "uScreenPx");
         loc_iFrame2 = glGetUniformLocation(prog2, "iFrame");
+        loc_iTime2 = glGetUniformLocation(prog2, "iTime");
         loc_uFP2 = glGetUniformLocation(prog2, "uFP");
     }
     if (!prog2)
@@ -1323,6 +1332,7 @@ int main(int argc, char **argv) {
         glUniform2i(loc_uScreenPx2, RESW, RESH);
         check_gl("uniform uScreenPx2");
         glUniform1ui(loc_iFrame2, iFrame);
+        glUniform1f(loc_iTime2, t);
         check_gl("uniform iFrame");
 
         glActiveTexture(GL_TEXTURE0);

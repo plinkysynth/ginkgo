@@ -77,6 +77,11 @@ char status_bar[512];
 double status_bar_time = 0;
 uint32_t status_bar_color = 0;
 
+static inline int is_ident_start(unsigned c) { return (c == '_') || ((c | 32) - 'a' < 26); }
+static inline int is_ident_cont(unsigned c) { return is_ident_start(c) || (c - '0' < 10); }
+static inline int is_space(unsigned c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+
+
 // --- colors 3 digits bg, 3 digits fg
 #define C_SELECTION 0xc48fffu
 
@@ -221,10 +226,10 @@ float STB_TEXTEDIT_GETWIDTH(EditableString *obj, int n, int i) {
 #define STB_TEXTEDIT_K_BACKSPACE GLFW_KEY_BACKSPACE
 #define STB_TEXTEDIT_K_UNDO GLFW_KEY_Z | (GLFW_MOD_SUPER << 16)
 #define STB_TEXTEDIT_K_REDO GLFW_KEY_Y | (GLFW_MOD_SUPER << 16)
-#define STB_TEXTEDIT_K_WORDLEFT GLFW_KEY_LEFT | (GLFW_MOD_SUPER << 16)
-#define STB_TEXTEDIT_K_WORDRIGHT GLFW_KEY_RIGHT | (GLFW_MOD_SUPER << 16)
-// #define STB_TEXTEDIT_K_LINESTART2 GLFW_KEY_LEFT | (GLFW_MOD_SUPER << 16)
-// #define STB_TEXTEDIT_K_LINEEND2 GLFW_KEY_RIGHT | (GLFW_MOD_SUPER << 16)
+//#define STB_TEXTEDIT_K_WORDLEFT GLFW_KEY_LEFT | (GLFW_MOD_SUPER << 16)
+//#define STB_TEXTEDIT_K_WORDRIGHT GLFW_KEY_RIGHT | (GLFW_MOD_SUPER << 16)
+#define STB_TEXTEDIT_K_LINESTART2 GLFW_KEY_LEFT | (GLFW_MOD_SUPER << 16)
+#define STB_TEXTEDIT_K_LINEEND2 GLFW_KEY_RIGHT | (GLFW_MOD_SUPER << 16)
 #define STB_TEXTEDIT_K_TEXTSTART2 (GLFW_KEY_UP | (GLFW_MOD_SUPER << 16))
 #define STB_TEXTEDIT_K_TEXTEND2 (GLFW_KEY_DOWN | (GLFW_MOD_SUPER << 16))
 
@@ -264,8 +269,8 @@ static int stb_move_word_right(EditableString *obj, int idx) {
         idx++;
     return idx > len ? len : idx;
 }
-#define STB_TEXTEDIT_MOVEWORDLEFT stb_move_word_left
-#define STB_TEXTEDIT_MOVEWORDRIGHT stb_move_word_right
+// #define STB_TEXTEDIT_MOVEWORDLEFT stb_move_word_left
+// #define STB_TEXTEDIT_MOVEWORDRIGHT stb_move_word_right
 
 #include "3rdparty/stb_textedit.h"
 int STB_TEXTEDIT_KEYTOTEXT(int key) {
@@ -559,8 +564,25 @@ static void adjust_font_size(int delta) {
     edit_str.scroll_y = (edit_str.scroll_y + yzoom) * edit_str.font_height;
 }
 
+static int find_line_index(const char *str, int n, int pos) {
+    int y = 0;
+    for (int i = 0; i < n && i < pos; i++) {
+        if (str[i] == '\n' || str[i] == 0) {
+            ++y;
+        }
+    }
+    return y;
+}
+
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+        if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods== GLFW_MOD_ALT)) {
+            glfwSetWindowShouldClose(win, GLFW_TRUE);
+        }
+        if (key == GLFW_KEY_ESCAPE && mods == 0) {
+            state.select_start = state.select_end = state.cursor;
+        }
+
         if (key == GLFW_KEY_TAB)
             key = '\t';
         if (key == GLFW_KEY_ENTER)
@@ -584,6 +606,33 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     if (str) {
                         stb_textedit_paste(&edit_str, &state, (STB_TEXTEDIT_CHARTYPE *)str, strlen(str));
                     }
+                }
+                if (key == GLFW_KEY_SLASH) {
+                    int ss = mini(state.select_start, state.select_end);
+                    int se = maxi(state.select_start, state.select_end);
+                    if (ss==se) ss=se=state.cursor;
+                    int first_line = find_line_index(edit_str.str, stbds_arrlen(edit_str.str), ss);
+                    int last_line = find_line_index(edit_str.str, stbds_arrlen(edit_str.str), se);
+                    int y = 0;
+                    for (int i = 0; i < arrlen(edit_str.str); i++) {
+                        if (y>=first_line && y<=last_line) {
+                            while (i<arrlen(edit_str.str) && edit_str.str[i]!='\n' && edit_str.str[i]!=0 && is_space(edit_str.str[i])) i++;
+                            // if it starts with //, remove it. otherwise add it.
+                            if (i+1<arrlen(edit_str.str) && edit_str.str[i]=='/' && edit_str.str[i+1]=='/') {
+                                arrdeln(edit_str.str, i, 2);
+                                if (i<arrlen(edit_str.str) && edit_str.str[i]==' ')
+                                    arrdel(edit_str.str, i);
+                            } else {
+                                arrinsn(edit_str.str, i, 3);
+                                edit_str.str[i]='/';
+                                edit_str.str[i+1]='/';
+                                edit_str.str[i+2]=' ';
+                            }
+                        }
+                        while (i<arrlen(edit_str.str) && edit_str.str[i]!='\n' && edit_str.str[i]!=0) i++;
+                        y++;
+                    }
+
                 }
                 if (key == GLFW_KEY_A) {
                     state.select_start = 0;
@@ -704,9 +753,6 @@ GLFWwindow *gl_init(int want_fullscreen) {
     return win;
 }
 
-static inline int is_ident_start(unsigned c) { return (c == '_') || ((c | 32) - 'a' < 26); }
-static inline int is_ident_cont(unsigned c) { return is_ident_start(c) || (c - '0' < 10); }
-static inline int is_space(unsigned c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 
 #define UC(lit, i, p) ((unsigned)p * (unsigned)(unsigned char)((lit)[i]))
 
@@ -1066,7 +1112,6 @@ int code_color(uint32_t *ptr) {
             if (ch == '\t')
                 t.x += 2;
             else if (ch == '\n' || ch == 0) {
-                if (ch==0) printf("t.y: %d\n", t.y);
                 // look for an error message
                 const char *errline = hmget(error_msgs, t.y);
                 if (errline) {
@@ -1215,9 +1260,6 @@ int main(int argc, char **argv) {
             stb_textedit_drag(&edit_str, &state, mx - 64., my + edit_str.scroll_y);
             edit_str.need_scroll_update = true;
         }
-        int kEsc = glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-        if (kEsc)
-            glfwSetWindowShouldClose(win, GLFW_TRUE);
 
         glfwGetFramebufferSize(win, &fbw, &fbh);
         // printf("fbw: %d, fbh: %d\n", fbw, fbh);

@@ -12,11 +12,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef void * (*dsp_fn_t)(void *G, float *o, const float *i, int frames);
+typedef void *(*dsp_fn_t)(void *G, float *o, const float *i, int frames);
 
-static _Atomic(dsp_fn_t) g_dsp_req = NULL; // current callback
+static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
 static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
-static void *G = NULL;                  // the state
+static void *G = NULL;                      // the state
 static void *g_handle = NULL;
 static int g_version = 0;
 
@@ -61,19 +61,18 @@ static bool kick_compile(void) {
         return false;
     }
     atomic_store_explicit(&g_dsp_req, f, memory_order_release);
-    while (g_handle!=0 && atomic_load_explicit(&g_dsp_used, memory_order_acquire) != f) {
+    while (g_handle != 0 && atomic_load_explicit(&g_dsp_used, memory_order_acquire) != f) {
         usleep(1000);
     }
     if (g_handle)
         dlclose(g_handle);
     g_handle = h;
     g_version = version;
-    fprintf(stderr,"compile %s succeeded in %.3fms\n", cmd, (t1-t0)/1000.0);
-    snprintf(cmd, sizeof(cmd), "build/dsp.%d.so", version-1);
+    fprintf(stderr, "compile %s succeeded in %.3fms\n", cmd, (t1 - t0) / 1000.0);
+    snprintf(cmd, sizeof(cmd), "build/dsp.%d.so", version - 1);
     unlink(cmd);
     return true;
 }
-
 
 int main(void) {
     printf("foobar - " __DATE__ " " __TIME__ "\n");

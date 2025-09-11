@@ -1,78 +1,77 @@
 #!/usr/bin/env python3
-
-# eg:
-# python scripts/font.py /Users/alexe/Downloads/oldschool_pc_font_pack_v2.2_FULL/ttf\ -\ Px\ \(pixel\ outline\)/Px437_FMTowns_re_8x16.ttf --size 16 --offy 2 --start 32 -o scripts/font_256.png --no-aa && open scripts/font_256.png
-
-import argparse
+import argparse, numpy as np
 from PIL import Image, ImageDraw, ImageFont
-import tqdm
+from scipy.ndimage import distance_transform_edt as edt
 
+def render_mask(ch, font, W, H, baseline):
+    asc, _ = font.getmetrics()
+    img = Image.new('L', (W, H), 0)
+    ImageDraw.Draw(img).text((0, baseline - asc), ch, 255, font=font)
+    return (np.asarray(img) >= 128)
 
-W,H,NC,NR = 128,128,16,8
-CW,CH = W//NC, H//NR
+def sdf_from_mask(mask):
+    inside = edt(mask)
+    outside = edt(~mask)
+    return outside - inside  # >0 outside, <0 inside, 0 at edge
 
-def max_bbox_for_size(ttf, size, chars):
-    f = ImageFont.truetype(ttf, size=size)
-    asc, dsc = f.getmetrics()
-    w = max(int(f.getlength(c)) for c in chars)
-    h = asc + dsc
-    return w,h
+def resize_sdf(sdf, out_w, out_h):
+    im = Image.fromarray(sdf.astype(np.float32), mode='F')
+    while im.width >= out_w*2 and im.height >= out_h*2:
+        im = im.resize((im.width//2, im.height//2), resample=Image.Resampling.BILINEAR)
+    im = im.resize((out_w, out_h), resample=Image.Resampling.BILINEAR)
+    return np.asarray(im).astype(np.float32)
 
-def autoselect_size(ttf, chars, limit=(CW,CH)):
-    lo,hi = 1, 256
-    while lo<hi:
-        mid = (lo+hi+1)//2
-        w,h = max_bbox_for_size(ttf, mid, chars)
-        if w<=limit[0] and h<=limit[1]: lo=mid
-        else: hi=mid-1
-    return lo
+def encode_u8(sdf, spread):
+    return np.clip(128.0 + sdf * (-127.0 / float(spread)), 0, 255).astype(np.uint8)
 
-def render(ttf, out, size, start, end, offx, offy, aa, index):
-    chars = [chr(c) for c in range(start, end+1)][:NC*NR]
-    if size<=0: size = autoselect_size(ttf, chars)
-    print(size)
+def dump_font_variants(font):
+    from fontTools.ttLib import TTCollection
 
-    font = ImageFont.truetype(ttf, size=size, index=index)
-    asc, dsc = font.getmetrics()
-    baseline_y = int(0.75*size) + offy  # fixed baseline within each 16x32 cell
+    ttc = TTCollection(font)
+    for i, ttfont in enumerate(ttc.fonts):
+        name_table = ttfont["name"]
+        family = name_table.getDebugName(1)   # Font Family
+        subfam = name_table.getDebugName(2)   # Font Subfamily
+        full   = name_table.getDebugName(4)   # Full name
+        print(i, family, subfam)
 
-    img = Image.new("L", (W,H), 255)
-    for i,c in tqdm.tqdm(enumerate(chars)):
-        r,cx = divmod(i, NC)
-        x0,y0 = cx*CW, r*CH
-        cell = Image.new("L", (CW,CH), 255)
-        cd = ImageDraw.Draw(cell)
-
-        adv = int(round(font.getlength(c)))
-        px = max(0, min(CW-adv, (CW-adv)//2 + offx))  # center horizontally (monospace)
-        py = baseline_y - asc                         # align by baseline; may clip, that's fine
-
-        cd.text((px, py), c, 0, font=font)
-        img.paste(cell, (x0, y0))
-
-    if not aa:
-        img = img.point(lambda v: 0 if v<128 else 255, mode="1").convert("L")
-    img.save(out)
-
-if __name__ == "__main__":
+def main():
     p = argparse.ArgumentParser()
-    p.add_argument("ttf")
-    p.add_argument("--index", type=int, default=0, help="font face index (weight/style) in collection")
-    p.add_argument("-o","--out", default="font_256.png")
-    p.add_argument("--size", type=int, default=24, help="0=auto")
-    p.add_argument("--start", type=int, default=32)
-    p.add_argument("--end", type=int, default=127)
-    p.add_argument("--offx", type=int, default=0)
-    p.add_argument("--offy", type=int, default=2)
-    aa = p.add_mutually_exclusive_group()
-    aa.add_argument("--aa", dest="aa", action="store_true")
-    aa.add_argument("--no-aa", dest="aa", action="store_false")
-    p.set_defaults(aa=True)
-    a = p.parse_args()
-    try:
-        for i in range(64):  # arbitrary upper bound
-            f = ImageFont.truetype(a.ttf, size=12, index=i)
-            print(f"{'*' if i==a.index else ' '} index {i}: {f.getname()}")
-    except OSError:
-        pass
-    render(a.ttf, a.out, a.size, a.start, a.end, a.offx, a.offy, a.aa, a.index)
+    p.add_argument('--font', default='/Users/alexe/Library/Fonts/Iosevka.ttc', help='.ttc/.ttf path')
+    p.add_argument('--index', type=int, default=-1, help='subfamily index in TTC')
+    p.add_argument('--size', type=int, default=480, help='font size (px)')
+    p.add_argument('--baseline', type=int, default=400, help='baseline y in the 256x512 canvas')
+    p.add_argument('--tmp_w', type=int, default=256)
+    p.add_argument('--tmp_h', type=int, default=512)
+    p.add_argument('--tile_w', type=int, default=32)
+    p.add_argument('--tile_h', type=int, default=64)
+    p.add_argument('--spread', type=float, default=64.0, help='SDF spread in output px')
+    p.add_argument('--out', default='assets/font_sdf.png')
+    args = p.parse_args()
+
+    if args.index == -1:
+        dump_font_variants(args.font)
+        exit()
+
+    font = ImageFont.truetype(args.font, args.size, index=args.index)
+    chars = list(range(32, 128))  # 96 glyphs to fill 16x6
+    cols, rows = 16, 6
+    assert len(chars) == cols * rows, "tile grid must match char count"
+
+    atlas = Image.new('L', (cols * args.tile_w, rows * args.tile_h), 0)
+
+    for i, cp in enumerate(chars):
+        ch = chr(cp)
+        mask = render_mask(ch, font, args.tmp_w, args.tmp_h, args.baseline)
+        sdf = sdf_from_mask(mask)
+        sdf_small = resize_sdf(sdf, args.tile_w, args.tile_h)
+        tile_u8 = encode_u8(sdf_small, args.spread)
+        tile_img = Image.fromarray(tile_u8, mode='L')
+        x = (i % cols) * args.tile_w
+        y = (i // cols) * args.tile_h
+        atlas.paste(tile_img, (x, y))
+
+    atlas.save(args.out)
+
+if __name__ == '__main__':
+    main()

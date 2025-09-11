@@ -193,7 +193,7 @@ float STB_TEXTEDIT_GETWIDTH(EditableString *obj, int n, int i) {
     char c = obj->str[i + n];
     if (c == '\t')
         return obj->font_width * 2;
-    if (c == '\n')
+    if (c == '\n' || c==0)
         return STB_TEXTEDIT_GETWIDTH_NEWLINE;
     return obj->font_width;
 }
@@ -286,7 +286,7 @@ void STB_TEXTEDIT_LAYOUTROW(StbTexteditRow *r, EditableString *obj, int n) {
     r->num_chars = len - n;
     r->x1 = obj->font_width * r->num_chars;
     for (int i = n; i < len; ++i) {
-        if (obj->str[i] == '\n') {
+        if (obj->str[i] == '\n' || obj->str[i] == 0) {
             r->num_chars = i - n + 1;
             r->x1 = obj->font_width * (r->num_chars - 1);
             break;
@@ -479,9 +479,16 @@ const char *kFS = SHADER(
         bg.x = float(char_attrib.a >> 4) * (1.f / 15.f);
         bg.y = float(char_attrib.a & 15u) * (1.f / 15.f);
         bg.z = float(char_attrib.b >> 4) * (1.f / 15.f);
+        float cursor_col = 1.;
         if (bg.x == 0. && bg.y == 0. && bg.z == 0.) {
             bg.w = 0.0;
+            float grey = dot(rendercol, vec3(0.2126, 0.7152, 0.0722));
+            if (grey > 0.5) {
+                fg.xyz = vec3(1.) - fg.xyz;
+                cursor_col = 0.;
+            }
         }
+        
         vec2 fontpix = vec2(pixel - cell * uFontPx + 0.5f) / vec2(uFontPx);
         fontpix.x += (thechar & 15);
         fontpix.y += (thechar >> 4);
@@ -496,7 +503,7 @@ const char *kFS = SHADER(
         fcursor += cursor_delta * cursor_t;
         if (fcursor.x >= -2.f && fcursor.x <= 2.f && fcursor.y >= -float(uFontPx.y) && fcursor.y <= 0.f) {
             float cursor_alpha = 1.f - cursor_t * cursor_t;
-            fontcol = mix(fontcol, vec4(1.), cursor_alpha);
+            fontcol = mix(fontcol, vec4(vec3(cursor_col), 1.), cursor_alpha);
         }
         o_color = vec4(rendercol.xyz * (1.-fontcol.w) + fontcol.xyz, 1.0);
     });
@@ -582,6 +589,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                             fclose(f);
                             if (rename("f.tmp", "f.glsl")==0) {
                                 set_status_bar(C_OK, "saved shader");
+                            } else {
                                 f=0;
                             }
                         }
@@ -865,7 +873,7 @@ typedef struct tokenizer_t {
     char prev_nonspace; // previous non-space char
 } tokenizer_t;
 
-char tok_get(tokenizer_t *t, int i) { return (i < t->n && i >= 0) ? t->str[i] : ' '; }
+char tok_get(tokenizer_t *t, int i) { return (i < t->n && i >= 0) ? t->str[i] : 0; }
 
 #define PUSH_BRACKET(opc, count)                                                                                                   \
     if (t.sp < MAX_BRACK)                                                                                                          \
@@ -891,7 +899,7 @@ int code_color(uint32_t *ptr) {
     bool wasinclude = false;
     int se = mini(state.select_start, state.select_end);
     int ee = maxi(state.select_start, state.select_end);
-    for (int i = 0; i <= t.n;) {
+    for (int i = 0; i <= t.n + 10;) {
         unsigned h = 0;
         char c = tok_get(&t, i);
         uint32_t col = C_DEF;
@@ -1049,6 +1057,7 @@ int code_color(uint32_t *ptr) {
             if (ch == '\t')
                 t.x += 2;
             else if (ch == '\n' || ch == 0) {
+                if (ch==0) printf("t.y: %d\n", t.y);
                 // look for an error message
                 const char *errline = hmget(error_msgs, t.y);
                 if (errline) {
@@ -1099,20 +1108,20 @@ int main(int argc, char **argv) {
     int want_fullscreen = (argc > 1 && (strcmp(argv[1], "--fullscreen") == 0 || strcmp(argv[1], "-f") == 0));
     GLFWwindow *win = gl_init(want_fullscreen);
 
-    FILE *f = fopen("f.glsl", "r");
-    assert(f);
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    stbds_arrsetlen(edit_str.str, len + 1);
-    fseek(f, 0, SEEK_SET);
-    fread(edit_str.str, 1, len, f);
-    fclose(f);
-    edit_str.str[len] = '\0';
 
     vs = compile_shader(GL_VERTEX_SHADER, kVS);
     fs = compile_shader(GL_FRAGMENT_SHADER, kFS);
     prog = link_program(vs, fs);
     glDeleteShader(fs);
+
+    FILE *f = fopen("f.glsl", "r");
+    assert(f);
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    stbds_arrsetlen(edit_str.str, len);
+    fseek(f, 0, SEEK_SET);
+    fread(edit_str.str, 1, len, f);
+    fclose(f);
     try_to_compile_shader();
 
     GLint loc_uText = glGetUniformLocation(prog, "uText");

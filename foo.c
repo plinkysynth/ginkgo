@@ -12,25 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef void *(*dsp_fn_t)(void *G, float *o, const float *i, int frames);
-
-static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
-static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
-static void *G = NULL;                      // the state
-static void *g_handle = NULL;
-static int g_version = 0;
-
-static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) {
-    float *o = (float *)out;
-    const float *i = (const float *)in;
-    for (ma_uint32 k = 0; k < frames * 2; k++)
-        o[k] = 0.f;
-    dsp_fn_t dsp = atomic_load_explicit(&g_dsp_req, memory_order_acquire);
-    if (!dsp)
-        return;
-    G = dsp(G, o, i, frames);
-    atomic_store_explicit(&g_dsp_used, dsp, memory_order_release);
-}
 
 int64_t get_time_us(void) {
     struct timeval tv;

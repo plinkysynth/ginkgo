@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# defaults work for iosevka.ttc
+# other examples:
+# python scripts/font.py --font '/Users/alexe/Downloads/_decterm.ttf' --out assets/font_term.png --size 512 --baseline 480
+
 import argparse, numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import distance_transform_edt as edt
@@ -48,10 +52,13 @@ def main():
     p.add_argument('--spread', type=float, default=64.0, help='SDF spread in output px')
     p.add_argument('--out', default='assets/font_sdf.png')
     args = p.parse_args()
+    if not '.ttc' in args.font:
+        args.index = 0
 
     if args.index == -1:
         dump_font_variants(args.font)
         exit()
+
 
     font = ImageFont.truetype(args.font, args.size, index=args.index)
     chars = list(range(32, 128))  # 96 glyphs to fill 16x6

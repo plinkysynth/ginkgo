@@ -66,13 +66,6 @@ static inline stereo saturate_stereo(stereo s) {
     return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)};
 }
 
-typedef struct error_msg_t {
-    int key;           // a line number
-    const char *value; // a line of text (terminated by \n)
-} error_msg_t;
-
-char *last_compile_log = NULL;
-error_msg_t *error_msgs = NULL;
 char status_bar[512];
 double status_bar_time = 0;
 uint32_t status_bar_color = 0;
@@ -82,20 +75,24 @@ static inline int is_ident_cont(unsigned c) { return is_ident_start(c) || (c - '
 static inline int is_space(unsigned c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 
 
-// --- colors 3 digits bg, 3 digits fg
-#define C_SELECTION 0xc48fffu
+// --- colors 3 digits bg, 3 digits fg, 2 digits character. 
+#define C_BOLD 0x80
+#define C_SELECTION 0xc48fff00u
+#define C_NUM 0x000cc700u
+#define C_DEF 0x000fff00u
+#define C_KW 0x0009ac00u
+#define C_TYPE 0x000a9c00u
+#define C_PREPROC 0x0009a900u
+#define C_STR 0x00088600u
+#define C_COM 0x000fd800u
+#define C_PUN 0x000aaa00u
+#define C_ERR 0xf00fff00u
+#define C_OK 0x080fff00u
+#define C_WARNING 0x860fff00u
 
-#define C_NUM 0x000cc7u
-#define C_DEF 0x000fffu
-#define C_KW 0x0009acu
-#define C_TYPE 0x000a9cu
-#define C_PREPROC 0x0009a9u
-#define C_STR 0x000886u
-#define C_COM 0x000fd8u
-#define C_PUN 0x000aaau
-#define C_ERR 0xf00fffu
-#define C_OK 0x080fffu
-#define C_WARNING 0x860fffu
+uint32_t invert_color(uint32_t col) { // swap fg and bg
+    return ((col >> 12) & 0xfff00) + ((col & 0xfff00) << 12) + (col & 0xff);
+}
 
 void set_status_bar(uint32_t color, const char *msg, ...) {
     va_list args;
@@ -172,45 +169,19 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     }
 }
 
-typedef struct EditableString {
-    char *str; // stb stretchy buffer
-    float scroll_y;
-    float scroll_y_target;
-    int intscroll; // how many lines we scrolled.
-    int cursor_x;
-    int cursor_y;
-    int num_lines;
-    int need_scroll_update;
-    float prev_cursor_x;
-    float prev_cursor_y;
-    int font_width;
-    int font_height;
-} EditableString;
-
+typedef struct EditorState EditorState;
+float STB_TEXTEDIT_GETWIDTH(EditorState *obj, int n, int i);
+int STB_TEXTEDIT_INSERTCHARS(EditorState *obj, int i, const char *c, int n);                                                                  
 #define STB_TEXTEDIT_CHARTYPE char
 #define STB_TEXTEDIT_POSITIONTYPE int
 #define STB_TEXTEDIT_UNDOSTATECOUNT 99
 #define STB_TEXTEDIT_UNDOCHARCOUNT 999
-#define STB_TEXTEDIT_STRING EditableString
+#define STB_TEXTEDIT_STRING EditorState
 #define STB_TEXTEDIT_STRINGLEN(obj) stbds_arrlen(obj->str)
 #define STB_TEXTEDIT_GETWIDTH_NEWLINE -1.f
-float STB_TEXTEDIT_GETWIDTH(EditableString *obj, int n, int i) {
-    char c = obj->str[i + n];
-    if (c == '\t')
-        return obj->font_width * 2;
-    if (c == '\n' || c==0)
-        return STB_TEXTEDIT_GETWIDTH_NEWLINE;
-    return obj->font_width;
-}
 #define STB_TEXTEDIT_NEWLINE '\n'
 #define STB_TEXTEDIT_GETCHAR(obj, i) obj->str[i]
 #define STB_TEXTEDIT_DELETECHARS(obj, i, n) stbds_arrdeln(obj->str, i, n)
-#define STB_TEXTEDIT_INSERTCHARS(obj, i, c, n)                                                                                     \
-    ({                                                                                                                             \
-        stbds_arrinsn(obj->str, i, n);                                                                                             \
-        memcpy(obj->str + i, c, n);                                                                                                \
-        1;                                                                                                                         \
-    })
 #define STB_TEXTEDIT_K_SHIFT (GLFW_MOD_SHIFT << 16)
 #define STB_TEXTEDIT_K_LEFT GLFW_KEY_LEFT
 #define STB_TEXTEDIT_K_RIGHT GLFW_KEY_RIGHT
@@ -233,46 +204,49 @@ float STB_TEXTEDIT_GETWIDTH(EditableString *obj, int n, int i) {
 #define STB_TEXTEDIT_K_TEXTSTART2 (GLFW_KEY_UP | (GLFW_MOD_SUPER << 16))
 #define STB_TEXTEDIT_K_TEXTEND2 (GLFW_KEY_DOWN | (GLFW_MOD_SUPER << 16))
 
-static int char_is_separator(char c) {
-    return c == ',' || c == '.' || c == ';' || c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']' || c == '|' ||
-           c == '!' || c == '\\' || c == '/' || c == '\n' || c == '\r' || c == '<' || c == '>' || c == '#' || c == '\'' || c == '"';
-}
-static int char_is_blank(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
-static int is_word_boundary_from_right(EditableString *obj, int idx) {
-    char curr_c = obj->str[idx];
-    char prev_c = (idx > 0) ? obj->str[idx - 1] : '\0';
-    bool prev_white = char_is_blank(prev_c);
-    bool prev_separ = char_is_separator(prev_c);
-    bool curr_white = char_is_blank(curr_c);
-    bool curr_separ = char_is_separator(curr_c);
-    return ((prev_white || prev_separ) && !(curr_separ || curr_white)) || (curr_separ && !prev_separ);
-}
-static int is_word_boundary_from_left(EditableString *obj, int idx) {
-    char curr_c = obj->str[idx];
-    char prev_c = (idx > 0) ? obj->str[idx - 1] : '\0';
-    bool prev_white = char_is_blank(prev_c);
-    bool prev_separ = char_is_separator(prev_c);
-    bool curr_white = char_is_blank(curr_c);
-    bool curr_separ = char_is_separator(curr_c);
-    return ((prev_white) && !(curr_separ || curr_white)) || (curr_separ && !prev_separ);
-}
-static int stb_move_word_left(EditableString *obj, int idx) {
-    idx--;
-    while (idx >= 0 && !is_word_boundary_from_right(obj, idx))
-        idx--;
-    return idx < 0 ? 0 : idx;
-}
-static int stb_move_word_right(EditableString *obj, int idx) {
-    int len = stbds_arrlen(obj->str);
-    idx++;
-    while (idx < len && !is_word_boundary_from_left(obj, idx))
-        idx++;
-    return idx > len ? len : idx;
-}
-// #define STB_TEXTEDIT_MOVEWORDLEFT stb_move_word_left
-// #define STB_TEXTEDIT_MOVEWORDRIGHT stb_move_word_right
-
 #include "3rdparty/stb_textedit.h"
+
+typedef struct error_msg_t {
+    int key;           // a line number
+    const char *value; // a line of text (terminated by \n)
+} error_msg_t;
+
+typedef struct EditorState {
+    char *str; // stb stretchy buffer
+    float scroll_y;
+    float scroll_y_target;
+    int intscroll; // how many lines we scrolled.
+    int cursor_x;
+    int cursor_y;
+    int num_lines;
+    int need_scroll_update;
+    float prev_cursor_x;
+    float prev_cursor_y;
+    int font_width;
+    int font_height;    
+    char *last_compile_log;
+    error_msg_t *error_msgs;
+    STB_TexteditState state;
+} EditorState;
+
+float STB_TEXTEDIT_GETWIDTH(EditorState *obj, int n, int i) {
+    char c = obj->str[i + n];
+    if (c == '\t')
+        return obj->font_width * 2;
+    if (c == '\n' || c==0)
+        return STB_TEXTEDIT_GETWIDTH_NEWLINE;
+    return obj->font_width;
+}
+
+int STB_TEXTEDIT_INSERTCHARS(EditorState *obj, int i, const char *c, int n) {
+    stbds_arrinsn(obj->str, i, n);                                                                                         
+    memcpy(obj->str + i, c, n);                                                                                            
+    return 1;
+}
+
+static inline int get_select_start(EditorState *obj) { return mini(obj->state.select_end, obj->state.select_start); }
+static inline int get_select_end(EditorState *obj) { return maxi(obj->state.select_end, obj->state.select_start); }
+
 int STB_TEXTEDIT_KEYTOTEXT(int key) {
     if (key == '\n' || key == GLFW_KEY_ENTER)
         return '\n';
@@ -282,7 +256,7 @@ int STB_TEXTEDIT_KEYTOTEXT(int key) {
         return -1;
     return key;
 }
-void STB_TEXTEDIT_LAYOUTROW(StbTexteditRow *r, EditableString *obj, int n) {
+void STB_TEXTEDIT_LAYOUTROW(StbTexteditRow *r, EditorState *obj, int n) {
     r->x0 = 0;
     r->baseline_y_delta = obj->font_height;
     r->ymin = 0;
@@ -314,35 +288,6 @@ static void check_gl(const char *where) {
 }
 
 
-static GLuint compile_shader(GLenum type, const char *src) {
-    GLuint s = glCreateShader(type);
-    glShaderSource(s, 1, &src, NULL);
-    glCompileShader(s);
-    GLint ok = 0;
-    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
-    free(last_compile_log);
-    last_compile_log = NULL;
-    hmfree(error_msgs);
-    error_msgs = NULL;
-    if (!ok) {
-        GLint len = 0;
-        glGetShaderiv(s, GL_INFO_LOG_LENGTH, &len);
-        last_compile_log = (char *)malloc(len > 1 ? len : 1);
-        glGetShaderInfoLog(s, len, NULL, last_compile_log);
-        fprintf(stderr, "Shader compile failed:\n[%s]\n", last_compile_log);
-        for (const char *c = last_compile_log; *c; c++) {
-            int col = 0, line = 0;
-            if (sscanf(c, "ERROR: %d:%d:", &col, &line) == 2) {
-                hmput(error_msgs, line - 1, c);
-            }
-            while (*c && *c != '\n')
-                c++;
-        }
-        set_status_bar(C_ERR, "Shader compile failed - %d errors", (int)hmlen(error_msgs));
-        return 0;
-    }
-    return s;
-}
 
 static GLuint link_program(GLuint vs, GLuint fs) {
     GLuint p = glCreateProgram();
@@ -484,10 +429,8 @@ const char *kFS = SHADER(
         ivec2 pixel = ivec2(fpixel);
         ivec2 cell = pixel / uFontPx; 
         uvec4 char_attrib = texelFetch(uText, cell, 0);
-        int thechar = int(char_attrib.r) - 32;
-        vec4 fg = vec4(1.0);
-        vec4 bg = vec4(1.0);
-        // bbbfffcc -> bb bf ff cc ( A B G R )
+        int thechar = (int(char_attrib.r & 127u)) - 32;
+        vec4 fg = vec4(1.0), bg = vec4(1.0);
         fg.x = float(char_attrib.b & 15u) * (1.f / 15.f);
         fg.y = float(char_attrib.g >> 4u) * (1.f / 15.f);
         fg.z = float(char_attrib.g & 15u) * (1.f / 15.f);
@@ -506,7 +449,8 @@ const char *kFS = SHADER(
         fontpix.y += (thechar >> 4);
         fontpix *= vec2(1./16.,1./6.); // 16 x 6 atlas
         float aa = uFontPx.x / 2.f;
-        float fontlvl = (thechar >= 0) ? sqrt(saturate((texture(uFont, fontpix).r-0.5) * aa + 0.5)) : 0.0;
+        float sdf_level = ((char_attrib.r & 128u)!=0u) ? 0.25f : 0.5f; // bold or not.
+        float fontlvl = (thechar >= 0) ? sqrt(saturate((texture(uFont, fontpix).r-sdf_level) * aa + 0.5)) : 0.0;
         vec4 fontcol = mix(bg, fg, fontlvl);
         vec2 fcursor = vec2(cursor.x, cursor.y) - fpixel;
         vec2 fcursor_prev = vec2(cursor.z, cursor.w) - fpixel;
@@ -521,17 +465,48 @@ const char *kFS = SHADER(
     });
 // clang-format on
 
-EditableString edit_str = {};
-STB_TexteditState state = {};
+EditorState edit_str = {};
+EditorState *E = &edit_str;
 GLuint prog = 0, prog2 = 0;
 GLuint vs = 0, fs = 0;
 GLuint loc_uScreenPx2 = 0;
 GLuint loc_iFrame2 = 0;
 GLuint loc_iTime2 = 0;
 GLuint loc_uFP2 = 0;
+
+static GLuint compile_shader(GLenum type, const char *src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    GLint ok = 0;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    free(E->last_compile_log);
+    E->last_compile_log = NULL;
+    hmfree(E->error_msgs);
+    E->error_msgs = NULL;
+    if (!ok) {
+        GLint len = 0;
+        glGetShaderiv(s, GL_INFO_LOG_LENGTH, &len);
+        E->last_compile_log = (char *)malloc(len > 1 ? len : 1);
+        glGetShaderInfoLog(s, len, NULL, E->last_compile_log);
+        fprintf(stderr, "Shader compile failed:\n[%s]\n", E->last_compile_log);
+        for (const char *c = E->last_compile_log; *c; c++) {
+            int col = 0, line = 0;
+            if (sscanf(c, "ERROR: %d:%d:", &col, &line) == 2) {
+                hmput(E->error_msgs, line - 1, c);
+            }
+            while (*c && *c != '\n')
+                c++;
+        }
+        set_status_bar(C_ERR, "Shader compile failed - %d errors", (int)hmlen(E->error_msgs));
+        return 0;
+    }
+    return s;
+}
+
 GLuint try_to_compile_shader(void) {
-    char *fs2_str = (char *)calloc(1, strlen(kFS2_prefix) + stbds_arrlen(edit_str.str) + strlen(kFS2_suffix) + 64);
-    sprintf(fs2_str, "%s\n#line 1\n%.*s\n%s", kFS2_prefix, (int)stbds_arrlen(edit_str.str), edit_str.str, kFS2_suffix);
+    char *fs2_str = (char *)calloc(1, strlen(kFS2_prefix) + stbds_arrlen(E->str) + strlen(kFS2_suffix) + 64);
+    sprintf(fs2_str, "%s\n#line 1\n%.*s\n%s", kFS2_prefix, (int)stbds_arrlen(E->str), E->str, kFS2_suffix);
     GLuint fs2 = compile_shader(GL_FRAGMENT_SHADER, fs2_str);
     GLuint new_prog2 = fs2 ? link_program(vs, fs2) : 0;
     if (new_prog2) {
@@ -555,13 +530,13 @@ int tmw, tmh; // current textmap size in cells
 float retina = 1.0f;
 
 static void adjust_font_size(int delta) {
-    float yzoom = edit_str.cursor_y;
-    edit_str.scroll_y_target = edit_str.scroll_y_target / edit_str.font_height - yzoom;
-    edit_str.scroll_y = edit_str.scroll_y / edit_str.font_height - yzoom;
-    edit_str.font_width = clampi(edit_str.font_width + delta, 8, 256);
-    edit_str.font_height = edit_str.font_width * 2;
-    edit_str.scroll_y_target = (edit_str.scroll_y_target + yzoom) * edit_str.font_height;
-    edit_str.scroll_y = (edit_str.scroll_y + yzoom) * edit_str.font_height;
+    float yzoom = E->cursor_y;
+    E->scroll_y_target = E->scroll_y_target / E->font_height - yzoom;
+    E->scroll_y = E->scroll_y / E->font_height - yzoom;
+    E->font_width = clampi(E->font_width + delta, 8, 256);
+    E->font_height = E->font_width * 2;
+    E->scroll_y_target = (E->scroll_y_target + yzoom) * E->font_height;
+    E->scroll_y = (E->scroll_y + yzoom) * E->font_height;
 }
 
 static int find_line_index(const char *str, int n, int pos) {
@@ -580,7 +555,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
             glfwSetWindowShouldClose(win, GLFW_TRUE);
         }
         if (key == GLFW_KEY_ESCAPE && mods == 0) {
-            state.select_start = state.select_end = state.cursor;
+            E->state.select_start = E->state.select_end = E->state.cursor;
         }
 
         if (key == GLFW_KEY_TAB)
@@ -591,59 +566,62 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key < 32 || key > 126 || (mods & GLFW_MOD_SUPER)) {
             if (mods == GLFW_MOD_SUPER) {
                 if (key == GLFW_KEY_C || key == GLFW_KEY_X) {
-                    int se = mini(state.select_end, state.select_start);
-                    int ee = maxi(state.select_end, state.select_start);
+                    int se = get_select_start(E);
+                    int ee = get_select_end(E);
                     char *str = calloc(1, ee - se + 1);
-                    memcpy(str, edit_str.str + se, ee - se);
+                    memcpy(str, E->str + se, ee - se);
                     glfwSetClipboardString(win, str);
                     free(str);
                     if (key == GLFW_KEY_X) {
-                        stb_textedit_cut(&edit_str, &state);
+                        stb_textedit_cut(E, &E->state);
                     }
                 }
                 if (key == GLFW_KEY_V) {
                     const char *str = glfwGetClipboardString(win);
                     if (str) {
-                        stb_textedit_paste(&edit_str, &state, (STB_TEXTEDIT_CHARTYPE *)str, strlen(str));
+                        stb_textedit_paste(E, &E->state, (STB_TEXTEDIT_CHARTYPE *)str, strlen(str));
                     }
                 }
                 if (key == GLFW_KEY_SLASH) {
-                    int ss = mini(state.select_start, state.select_end);
-                    int se = maxi(state.select_start, state.select_end);
-                    if (ss==se) ss=se=state.cursor;
-                    int first_line = find_line_index(edit_str.str, stbds_arrlen(edit_str.str), ss);
-                    int last_line = find_line_index(edit_str.str, stbds_arrlen(edit_str.str), se);
+                    int n = stbds_arrlen(E->str);
+                    int ss = get_select_start(E);
+                    int se = get_select_end(E);
+                    if (ss==se) ss=se=E->state.cursor;
+                    int first_line = find_line_index(E->str, n, ss);
+                    int last_line = find_line_index(E->str, n, se);
                     int y = 0;
-                    for (int i = 0; i < arrlen(edit_str.str); i++) {
+                    for (int i = 0; i < arrlen(E->str); i++) {
+                        int n = stbds_arrlen(E->str);
                         if (y>=first_line && y<=last_line) {
-                            while (i<arrlen(edit_str.str) && edit_str.str[i]!='\n' && edit_str.str[i]!=0 && is_space(edit_str.str[i])) i++;
+                            while (i<n && E->str[i]!='\n' && E->str[i]!=0 && is_space(E->str[i])) i++;
                             // if it starts with //, remove it. otherwise add it.
-                            if (i+1<arrlen(edit_str.str) && edit_str.str[i]=='/' && edit_str.str[i+1]=='/') {
-                                arrdeln(edit_str.str, i, 2);
-                                if (i<arrlen(edit_str.str) && edit_str.str[i]==' ')
-                                    arrdel(edit_str.str, i);
+                            if (i+1<n && E->str[i]=='/' && E->str[i+1]=='/') {
+                                arrdeln(E->str, i, 2);
+                                if (i<n-2 && E->str[i]==' ')
+                                    arrdel(E->str, i);
                             } else {
-                                arrinsn(edit_str.str, i, 3);
-                                edit_str.str[i]='/';
-                                edit_str.str[i+1]='/';
-                                edit_str.str[i+2]=' ';
+                                arrinsn(E->str, i, 3);
+                                E->str[i]='/';
+                                E->str[i+1]='/';
+                                E->str[i+2]=' ';
                             }
                         }
-                        while (i<arrlen(edit_str.str) && edit_str.str[i]!='\n' && edit_str.str[i]!=0) i++;
+                        n = stbds_arrlen(E->str);
+                        while (i<n && E->str[i]!='\n' && E->str[i]!=0) i++;
                         y++;
                     }
 
                 }
                 if (key == GLFW_KEY_A) {
-                    state.select_start = 0;
-                    state.select_end = stbds_arrlen(edit_str.str);
+                    E->state.select_start = 0;
+                    E->state.select_end = stbds_arrlen(E->str);
                 }
                 if (key == GLFW_KEY_S) {
                     bool compiled = try_to_compile_shader() != 0;
                     if (compiled) {
                         FILE *f = fopen("f.tmp", "w");
                         if (f) {
-                            fwrite(edit_str.str, 1, stbds_arrlen(edit_str.str), f);
+                            fwrite(E->str, 1, stbds_arrlen(E->str), f);
                             fclose(f);
                             if (rename("f.tmp", "f.glsl")==0) {
                                 set_status_bar(C_OK, "saved shader");
@@ -668,22 +646,22 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                 }
             }
             // printf("key: %d, mods: %d\n", key, mods);
-            stb_textedit_key(&edit_str, &state, key | (mods << 16));
+            stb_textedit_key(E, &E->state, key | (mods << 16));
             // printf("cursor %d , select_start %d, select_end %d\n", state.cursor, state.select_start, state.select_end);
-            edit_str.need_scroll_update = true;
+            E->need_scroll_update = true;
         }
     }
 }
 
 static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
     // printf("scroll: %f\n", yoffset);
-    edit_str.scroll_y_target -= yoffset * edit_str.font_height;
+    E->scroll_y_target -= yoffset * E->font_height;
 }
 
 static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     // printf("char: %d\n", codepoint);
-    stb_textedit_key(&edit_str, &state, codepoint);
-    edit_str.need_scroll_update = true;
+    stb_textedit_key(E, &E->state, codepoint);
+    E->need_scroll_update = true;
 }
 
 static void mouse_button_callback(GLFWwindow *win, int button, int action, int mods) {
@@ -693,8 +671,8 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         glfwGetCursorPos(win, &mx, &my);
         mx *= retina;
         my *= retina;
-        stb_textedit_click(&edit_str, &state, mx - 64., my + edit_str.scroll_y);
-        edit_str.need_scroll_update = true;
+        stb_textedit_click(E, &E->state, mx - 64., my + E->scroll_y);
+        E->need_scroll_update = true;
     }
     if (action == GLFW_RELEASE) {
         // printf("mouse button: %d, mods: %d\n", button, mods);
@@ -702,8 +680,8 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         glfwGetCursorPos(win, &mx, &my);
         mx *= retina;
         my *= retina;
-        stb_textedit_drag(&edit_str, &state, mx - 64., my + edit_str.scroll_y);
-        edit_str.need_scroll_update = true;
+        stb_textedit_drag(E, &E->state, mx - 64., my + E->scroll_y);
+        E->need_scroll_update = true;
     }
 }
 
@@ -915,45 +893,72 @@ static inline int scan_block_comment(const char *s, int i, int n) {
     return j;
 }
 
-// --- simple LIFO for brackets ---
-
 #define MAX_BRACK 256
 typedef struct tokenizer_t {
     int n;           // num chars
     const char *str; // source
     char stk[MAX_BRACK];
+    int stk_x[MAX_BRACK];
+    int stk_y[MAX_BRACK];
     int sp, paren, brack, brace;
-    int x, y;           // cursor position
+    int x, y;           // write position
+    int cursor_x, cursor_y; // cursor position
     uint32_t *ptr;      // destination
     char prev_nonspace; // previous non-space char
 } tokenizer_t;
 
 char tok_get(tokenizer_t *t, int i) { return (i < t->n && i >= 0) ? t->str[i] : 0; }
 
-#define PUSH_BRACKET(opc, count)                                                                                                   \
-    if (t.sp < MAX_BRACK)                                                                                                          \
-        t.stk[t.sp++] = opc;                                                                                                       \
-    count++;                                                                                                                       \
-    col = C_PUN;
+int push_bracket(tokenizer_t *t, int *count, char opc) {
+    if (t->sp < MAX_BRACK) {
+        t->stk_x[t->sp] = t->x;
+        t->stk_y[t->sp] = t->y;
+        t->stk[t->sp++] = opc;
+    }
+    (*count)++;
+    if (t->x == t->cursor_x-1 && t->y == t->cursor_y) {
+        // over this opening bracket.
+        return invert_color(C_PUN) | C_BOLD;
+    }
+    return C_PUN;
+}
 
-#define CLOSE_BRACKET(opc, count)                                                                                                  \
-    col = (t.sp > 0 && t.stk[t.sp - 1] == opc) ? C_PUN : C_ERR;                                                                    \
-    if (t.sp > 0)                                                                                                                  \
-        t.sp--;                                                                                                                    \
-    if (count > 0)                                                                                                                 \
-        count--;
+int close_bracket(tokenizer_t *t, int *count, char opc) {
+    if (t->sp > 0 && t->stk[t->sp - 1] == opc) {
+        t->sp--;
+        (*count)++;
+        int ox = t->stk_x[t->sp], oy = t->stk_y[t->sp];
+        if (t->x == t->cursor_x-1 && t->y == t->cursor_y) {
+            // over this closing bracket. hilight the opening bracket
+            if (oy>=0 && oy<TMH && ox>=0 && ox<TMW) {
+                uint32_t char_and_col = t->ptr[oy * TMW + ox];
+                t->ptr[oy * TMW + ox] = invert_color(char_and_col) | C_BOLD;
+                return invert_color(C_PUN) | C_BOLD;    
+            }
+        }
+        if (ox == t->cursor_x-1 && oy == t->cursor_y) {
+            // over the opening bracket. hilight this closing bracket
+            return invert_color(C_PUN) | C_BOLD;
+        }
+        return C_PUN;
+    }
+    return C_ERR;
+}
+
 
 int code_color(uint32_t *ptr) {
-    int left = 64 / edit_str.font_width;
+    int left = 64 / E->font_width;
     tokenizer_t t = {.ptr = ptr,
-                     .str = edit_str.str,
-                     .n = stbds_arrlen(edit_str.str),
+                     .str = E->str,
+                     .n = stbds_arrlen(E->str),
                      .x = left,
-                     .y = -edit_str.intscroll,
+                     .y = -E->intscroll,
+                     .cursor_x = E->cursor_x,
+                     .cursor_y = E->cursor_y - E->intscroll,
                      .prev_nonspace = ';'};
     bool wasinclude = false;
-    int se = mini(state.select_start, state.select_end);
-    int ee = maxi(state.select_start, state.select_end);
+    int se = get_select_start(E);
+    int ee = get_select_end(E);
     for (int i = 0; i <= t.n + 10;) {
         unsigned h = 0;
         char c = tok_get(&t, i);
@@ -961,22 +966,22 @@ int code_color(uint32_t *ptr) {
         int j = i + 1;
         switch (c) {
         case '(':
-            PUSH_BRACKET('(', t.paren);
+            col = push_bracket(&t, &t.paren, '(');
             break;
         case '[':
-            PUSH_BRACKET('[', t.brack);
+            col = push_bracket(&t, &t.brack, '[');
             break;
         case '{':
-            PUSH_BRACKET('{', t.brace);
+            col = push_bracket(&t, &t.brace, '{');
             break;
         case ')':
-            CLOSE_BRACKET('(', t.paren);
+            col = close_bracket(&t, &t.paren, '(');
             break;
         case ']':
-            CLOSE_BRACKET('[', t.brack);
+            col = close_bracket(&t, &t.brack, '[');
             break;
         case '}':
-            CLOSE_BRACKET('{', t.brace);
+            col = close_bracket(&t, &t.brace, '{');
             break;
         case '/': {
             char c2 = tok_get(&t, i + 1);
@@ -1099,13 +1104,13 @@ int code_color(uint32_t *ptr) {
             wasinclude = false;
         for (; i < j; ++i) {
             char ch = tok_get(&t, i);
-            uint32_t ccol = col << 8;
+            uint32_t ccol = col;
             if (i >= se && i < ee)
-                ccol = C_SELECTION << 8;
+                ccol = C_SELECTION;
 
-            if (i == state.cursor) {
-                edit_str.cursor_x = t.x;
-                edit_str.cursor_y = t.y + edit_str.intscroll;
+            if (i == E->state.cursor) {
+                E->cursor_x = t.x;
+                E->cursor_y = t.y + E->intscroll;
             }
             if (t.x < TMW && t.y >= 0 && t.y < TMH)
                 t.ptr[t.y * TMW + t.x] = (ccol) | (unsigned char)(ch);
@@ -1113,7 +1118,7 @@ int code_color(uint32_t *ptr) {
                 t.x += 2;
             else if (ch == '\n' || ch == 0) {
                 // look for an error message
-                const char *errline = hmget(error_msgs, t.y);
+                const char *errline = hmget(E->error_msgs, t.y);
                 if (errline) {
                     for (; *errline && *errline != '\n'; errline++) {
                         if (t.x < TMW && t.y >= 0 && t.y < TMH)
@@ -1129,8 +1134,8 @@ int code_color(uint32_t *ptr) {
                 t.prev_nonspace = ch;
         }
     }
-    edit_str.num_lines = t.y + 1 + edit_str.intscroll;
-    return edit_str.num_lines;
+    E->num_lines = t.y + 1 + E->intscroll;
+    return E->num_lines;
 }
 
 int main(int argc, char **argv) {
@@ -1172,9 +1177,9 @@ int main(int argc, char **argv) {
     assert(f);
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
-    stbds_arrsetlen(edit_str.str, len);
+    stbds_arrsetlen(E->str, len);
     fseek(f, 0, SEEK_SET);
-    fread(edit_str.str, 1, len, f);
+    fread(E->str, 1, len, f);
     fclose(f);
     try_to_compile_shader();
 
@@ -1238,9 +1243,9 @@ int main(int argc, char **argv) {
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
 
-    edit_str.font_width = 12;
-    edit_str.font_height = 24;
-    stb_textedit_initialize_state(&state, 0);
+    E->font_width = 12;
+    E->font_height = 24;
+    stb_textedit_initialize_state(&E->state, 0);
     glfwSetKeyCallback(win, key_callback);
     glfwSetCharCallback(win, char_callback);
     glfwSetScrollCallback(win, scroll_callback);
@@ -1257,23 +1262,23 @@ int main(int argc, char **argv) {
         int m0 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         int m1 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         if (m0) {
-            stb_textedit_drag(&edit_str, &state, mx - 64., my + edit_str.scroll_y);
-            edit_str.need_scroll_update = true;
+            stb_textedit_drag(E, &E->state, mx - 64., my + E->scroll_y);
+            E->need_scroll_update = true;
         }
 
         glfwGetFramebufferSize(win, &fbw, &fbh);
         // printf("fbw: %d, fbh: %d\n", fbw, fbh);
-        tmw = fbw / edit_str.font_width;
-        tmh = fbh / edit_str.font_height;
+        tmw = fbw / E->font_width;
+        tmh = fbh / E->font_height;
         if (tmw > 512)
             tmw = 512;
         if (tmh > 256 - 8)
             tmh = 256 - 8;
 
         double t = glfwGetTime() - t0;
-        edit_str.scroll_y += (edit_str.scroll_y_target - edit_str.scroll_y) * 0.1;
-        if (edit_str.scroll_y < 0)
-            edit_str.scroll_y = 0;
+        E->scroll_y += (E->scroll_y_target - E->scroll_y) * 0.1;
+        if (E->scroll_y < 0)
+            E->scroll_y = 0;
 
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[pbo_index]);
         glBufferData(GL_PIXEL_UNPACK_BUFFER, textBytes, NULL, GL_STREAM_DRAW);
@@ -1281,7 +1286,7 @@ int main(int argc, char **argv) {
                                                      GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
         if (ptr) {
             memset(ptr, 0, textBytes);
-            edit_str.intscroll = (int)(edit_str.scroll_y / edit_str.font_height);
+            E->intscroll = (int)(E->scroll_y / E->font_height);
             code_color(ptr);
             if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
                 int x = 0;
@@ -1291,15 +1296,15 @@ int main(int argc, char **argv) {
             } else {
                status_bar_color = 0;
             }
-            if (edit_str.need_scroll_update) {
-                edit_str.need_scroll_update = false;
-                if (edit_str.cursor_y >= edit_str.intscroll + tmh - 4) {
-                    edit_str.scroll_y_target = (edit_str.cursor_y - tmh + 4) * edit_str.font_height;
-                } else if (edit_str.cursor_y < edit_str.intscroll + 4) {
-                    edit_str.scroll_y_target = (edit_str.cursor_y - 4) * edit_str.font_height;
+            if (E->need_scroll_update) {
+                E->need_scroll_update = false;
+                if (E->cursor_y >= E->intscroll + tmh - 4) {
+                    E->scroll_y_target = (E->cursor_y - tmh + 4) * E->font_height;
+                } else if (E->cursor_y < E->intscroll + 4) {
+                    E->scroll_y_target = (E->cursor_y - 4) * E->font_height;
                 }
             }
-            edit_str.scroll_y_target = clampf(edit_str.scroll_y_target, 0, (edit_str.num_lines - tmh + 4) * edit_str.font_height);
+            E->scroll_y_target = clampf(E->scroll_y_target, 0, (E->num_lines - tmh + 4) * E->font_height);
             // now find a zero crossing in the scope, and copy the relevant section
             // scope cant be more than 2048 as that's how many slots we have in the texture.
             uint32_t scope_start = scope_pos - 1024;
@@ -1404,15 +1409,15 @@ int main(int argc, char **argv) {
         glBindTexture(GL_TEXTURE_2D, texFPRT[iFrame % 2]);
 
         glUniform2i(loc_uScreenPx, fbw, fbh);
-        glUniform2i(loc_uFontPx, edit_str.font_width, edit_str.font_height);
+        glUniform2i(loc_uFontPx, E->font_width, E->font_height);
         glUniform1i(loc_status_bar_size, status_bar_color ? 1 : 0);
         glUniform1f(loc_iTime, t);
-        glUniform1f(loc_scroll_y, edit_str.scroll_y - edit_str.intscroll * edit_str.font_height);
-        float f_cursor_x = edit_str.cursor_x * edit_str.font_width;
-        float f_cursor_y = (edit_str.cursor_y - edit_str.intscroll) * edit_str.font_height;
-        glUniform4f(loc_cursor, f_cursor_x, f_cursor_y, edit_str.prev_cursor_x, edit_str.prev_cursor_y);
-        edit_str.prev_cursor_x += (f_cursor_x - edit_str.prev_cursor_x) * 0.2f;
-        edit_str.prev_cursor_y += (f_cursor_y - edit_str.prev_cursor_y) * 0.2f;
+        glUniform1f(loc_scroll_y, E->scroll_y - E->intscroll * E->font_height);
+        float f_cursor_x = E->cursor_x * E->font_width;
+        float f_cursor_y = (E->cursor_y - E->intscroll) * E->font_height;
+        glUniform4f(loc_cursor, f_cursor_x, f_cursor_y, E->prev_cursor_x, E->prev_cursor_y);
+        E->prev_cursor_x += (f_cursor_x - E->prev_cursor_x) * 0.2f;
+        E->prev_cursor_y += (f_cursor_y - E->prev_cursor_y) * 0.2f;
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         check_gl("draw text");

@@ -13,7 +13,7 @@ static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread comp
 static void *G = NULL;                      // the state
 static void *g_handle = NULL;
 static int g_version = 0;
-
+static uint32_t sampleidx = 0;
 static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) {
     stereo *o = (stereo *)out;
     const stereo *i = (const stereo *)in;
@@ -23,19 +23,23 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     dsp_fn_t old_dsp = atomic_load_explicit(&g_dsp_used, memory_order_acquire);
     stereo *audio = (stereo *)alloca(OVERSAMPLE * frames * sizeof(stereo));
     static stereo prev_input;
-    static_assert(OVERSAMPLE == 2, "OVERSAMPLE must be 2");
-    // upsample the input audio...
-    for (int k = 0; k < frames; k++) {
-        stereo new_input = i[k];
-        audio[k * 2 + 0].l =(prev_input.l + new_input.l)* 0.5f;
-        audio[k * 2 + 0].r =(prev_input.r + new_input.r)* 0.5f;
-        audio[k * 2 + 1] = new_input;
-        prev_input = new_input;
+    static_assert(OVERSAMPLE == 2 || OVERSAMPLE == 1, "OVERSAMPLE must be 2 or 1");
+    if (OVERSAMPLE == 2) {
+        // upsample the input audio...
+        for (int k = 0; k < frames; k++) {
+            stereo new_input = i[k];
+            audio[k * 2 + 0].l =(prev_input.l + new_input.l)* 0.5f;
+            audio[k * 2 + 0].r =(prev_input.r + new_input.r)* 0.5f;
+            audio[k * 2 + 1] = new_input;
+            prev_input = new_input;
+        }
+    } else {
+        memcpy(audio, i, frames * sizeof(stereo));
     }
     if (dsp)
-        G = dsp(G, audio, (int)frames * 2, dsp != old_dsp);
+        G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp, sampleidx);
+    sampleidx += frames * OVERSAMPLE;
     // downsample the output audio and update the scopes...
-
 #define K 16 // the kernel has this many non-center non-zero taps.
     // example with K=3:
     // x . x . x 0.5 x . x . x <- x = non zero taps
@@ -50,19 +54,24 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     static uint32_t history_pos = 0;
     for (ma_uint32 k = 0; k < frames; ++k) {
         // saturation on output...
-        history[history_pos & 63] = saturate_stereo_tanh(audio[k*2+0]);
-        history[(history_pos + 1) & 63] = saturate_stereo_tanh(audio[k*2+1]);
-        history_pos += 2;
-        // 2x downsample FIR
-        int center_idx = history_pos - K * 2;
-        stereo acc = history[center_idx & 63]; // center tap
-        acc.l *= fir_center_tap;
-        acc.r *= fir_center_tap;
-        for (int tap = 0; tap < K; ++tap) {
-            stereo t0 = history[(center_idx + tap * 2 + 1) & 63];
-            stereo t1 = history[(center_idx - tap * 2 - 1) & 63];
-            acc.l += fir_kernel[tap] * (t0.l + t1.l);
-            acc.r += fir_kernel[tap] * (t0.r + t1.r);
+        stereo acc;
+        if (OVERSAMPLE == 2) {
+            history[history_pos & 63] = saturate_stereo_hard(audio[k*2+0]);
+            history[(history_pos + 1) & 63] = saturate_stereo_hard(audio[k*2+1]);
+            history_pos += 2;
+            // 2x downsample FIR
+            int center_idx = history_pos - K * 2;
+            acc = history[center_idx & 63]; // center tap
+            acc.l *= fir_center_tap;
+            acc.r *= fir_center_tap;
+            for (int tap = 0; tap < K; ++tap) {
+                stereo t0 = history[(center_idx + tap * 2 + 1) & 63];
+                stereo t1 = history[(center_idx - tap * 2 - 1) & 63];
+                acc.l += fir_kernel[tap] * (t0.l + t1.l);
+                acc.r += fir_kernel[tap] * (t0.r + t1.r);
+            }
+        } else {
+            acc = saturate_stereo_hard(audio[k]);
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;
@@ -89,15 +98,25 @@ int64_t get_time_us(void) {
     return tv.tv_sec * 1000000L + tv.tv_usec;
 }
 
-static bool kick_compile(const char *fname) {
+static bool try_to_compile_audio(const char *fname) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    snprintf(cmd, sizeof(cmd), "clang -std=c11 -O2 -fPIC  -dynamiclib -o build/dsp.%d.so %s", version, fname);
+    #define CLANG_OPTIONS "-x c -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics"
+    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so - 2>&1", fname, version);
     int64_t t0 = get_time_us();
-    int rc = system(cmd);
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        fprintf(stderr, "popen %s failed: %s\n", cmd, strerror(errno));
+        return false;
+    }
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), fp)) {
+        fprintf(stderr, "%s", buf);
+    }
+    int rc = pclose(fp);
     int64_t t1 = get_time_us();
-    if (!(rc != -1 && WIFEXITED(rc) && WEXITSTATUS(rc) == 0))
+    if (rc!=0)
         return false;
     snprintf(cmd, sizeof(cmd), "build/dsp.%d.so", version);
     void *h = dlopen(cmd, RTLD_NOW | RTLD_LOCAL);

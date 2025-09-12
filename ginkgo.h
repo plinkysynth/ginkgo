@@ -1,5 +1,5 @@
 #pragma once
-// this header tries to be a one-stop shop for the hot-recompiled audio function. 
+// this header tries to be a one-stop shop for the hot-recompiled audio function.
 #include <stdint.h>
 #include <stdlib.h>
 #include <math.h>
@@ -14,8 +14,8 @@
 
 #define countof(array) (sizeof(array) / sizeof(array[0]))
 
-static inline uint32_t pcg_mix(uint32_t word) {    return (word >> 22u) ^ word; }
-static inline uint32_t pcg_next(uint32_t seed) { return seed * 747796405u + 2891336453u; } 
+static inline uint32_t pcg_mix(uint32_t word) { return (word >> 22u) ^ word; }
+static inline uint32_t pcg_next(uint32_t seed) { return seed * 747796405u + 2891336453u; }
 
 static inline int mini(int a, int b) { return a < b ? a : b; }
 static inline int maxi(int a, int b) { return a > b ? a : b; }
@@ -48,21 +48,15 @@ typedef struct stereo {
 static inline float mid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float side(stereo s) { return (s.l - s.r) * 0.5f; }
 
-static inline float saturate_soft(float x) { return atanf(x) * (2.f/PI); }
+static inline float saturate_soft(float x) { return atanf(x) * (2.f / PI); }
 static inline float saturate_tanh(float x) { return tanhf(x); }
-static inline float saturate_hard(float x) { return clampf(-1.f, 1.f, x); }
+static inline float saturate_hard(float x) { return clampf(x, -1.f, 1.f); }
 
-static inline stereo saturate_stereo_soft(stereo s) {
-    return (stereo){.l = atanf(s.l) * (2.f/PI),.r = atanf(s.r) * (2.f/PI)};
-}
+static inline stereo saturate_stereo_soft(stereo s) { return (stereo){.l = atanf(s.l) * (2.f / PI), .r = atanf(s.r) * (2.f / PI)}; }
 
-static inline stereo saturate_stereo_tanh(stereo s) {
-    return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)};
-}
+static inline stereo saturate_stereo_tanh(stereo s) { return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)}; }
 
-static inline stereo saturate_stereo_hard(stereo s) {
-    return (stereo){.l = clampf(-1.f, 1.f, s.l), .r = clampf(-1.f, 1.f, s.r)};
-}
+static inline stereo saturate_stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r,-1.f, 1.f)}; }
 
 static inline float lpf_1pole(float state[1], float inp, float k) { return state[0] += (inp - state[0]) * k; }
 
@@ -85,26 +79,45 @@ static inline float polyblep(float phase, float dt) {
     return 0;
 }
 
-static inline float sino(float state[1], float dphase) { 
-    float phase = state[0] = fracf(state[0] + dphase);
+static inline float sino(float phase, float dphase) {
     return sinf(TAU * phase);
 }
 
-static inline float sawo(float state[1], float dphase) { 
-    float phase = state[0] = fracf(state[0] + dphase);
+static inline float sawo(float phase, float dphase) {
+    phase=fracf(phase);
     return 2.f * phase - 1.f - polyblep(phase, dphase);
 }
+static inline float sawo_aliased(float phase, float dphase) {
+    phase=fracf(phase);
+    return 2.f * phase - 1.f;
+}
+
 
 // midi note 69 is A4 (440hz)
-// what note is 48khz? 
+// what note is 48khz?
 // 150.2326448623 :)
 float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f) * (1.f / 12.f)); }
 
-#define FREQ2LPF(freq) 1.f - exp2f(-freq * (TAU / SAMPLE_RATE))   // more accurate for lpf with high cutoff
+#define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
 
-#define EXPORT __attribute__((visibility("default"))) 
+typedef void *(*dsp_fn_t)(void *G, stereo *audio, int frames, int reloaded, uint32_t sampleidx);
 
-typedef void *(*dsp_fn_t)(void *G, stereo *audio, int frames, int reloaded);
-
-// declare a dsp function like this:
-// EXPORT void *dsp(void *G, stereo *audio, int frames, int reloaded)
+#define STATE_VERSION(version, ...)                                                                                                \
+    typedef struct state {                                                                                                         \
+        int _ver;                                                                                                                  \
+        int _size;                                                                                                                 \
+        __VA_ARGS__                                                                                                                \
+    } state;                                                                                                                       \
+    stereo do_sample(state *G, stereo inp, uint32_t sampleidx);                                                                                        \
+    __attribute__((visibility("default"))) void *dsp(void *_G, stereo *audio, int frames, int reloaded, uint32_t sampleidx) {                          \
+        state *G = (state *)_G;                                                                                                    \
+        if (!G || G->_ver != version || G->_size != sizeof(state)) {                                                           \
+            free(G);                                                                                                               \
+            G = calloc(1, sizeof(state));                                                                                          \
+            G->_ver = version;                                                                                                 \
+            G->_size = sizeof(state);                                                                                              \
+        }                                                                                                                          \
+        for (int i = 0; i < frames; i++)                                                                                           \
+            audio[i] = do_sample((state *)G, audio[i], sampleidx++);                                                                            \
+        return G;                                                                                                                  \
+    }

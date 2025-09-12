@@ -56,7 +56,6 @@ uint32_t invert_color(uint32_t col) { // swap fg and bg
     return ((col >> 12) & 0xfff00) + ((col & 0xfff00) << 12) + (col & 0xff);
 }
 
-
 void set_status_bar(uint32_t color, const char *msg, ...) {
     va_list args;
     va_start(args, msg);
@@ -172,7 +171,7 @@ const char *kFS = SHADER(
         // rendercol += texture(uFP, v_uv - vec2(-dx, dy)).rgb;
         // rendercol *= 0.2;
         rendercol = max(vec3(0.), rendercol);
-        float grey = dot(rendercol, vec3(0.2126, 0.7152, 0.0722));
+        float grey = dot(rendercol, vec3(0.2126 * 1.5, 0.7152 * 1.5, 0.0722 * 1.5));
 
         vec2 pix = v_uv * vec2(uScreenPx.x, 2048.f);
         float fftx = uScreenPx.x - pix.x;
@@ -195,7 +194,7 @@ const char *kFS = SHADER(
             vec2 maxy = max(prevy, nexty);
             vec2 beam = 1.f - smoothstep(miny - 0.5f, maxy + 1.f, pix.xx);
             if (is_fft) {
-                beam *= (100.f + fftx * fftx) * (0.5f / 16384.f);
+                beam *= 0.25;
             } else {
                 beam *= smoothstep(miny - 2.f, maxy - 0.5f, pix.xx);
                 beam *= 1.5f / (maxy - miny + 1.f);
@@ -261,9 +260,9 @@ const char *kFS = SHADER(
     });
 // clang-format on
 
-EditorState audio_tab = {.fname="dsp.c", .is_shader=false};
-EditorState shader_tab = {.fname="f.glsl", .is_shader=true};
-EditorState *curE = &shader_tab;
+EditorState audio_tab = {.fname = "dsp.c", .is_shader = false};
+EditorState shader_tab = {.fname = "f.glsl", .is_shader = true};
+EditorState *curE = &audio_tab;
 GLuint prog = 0, prog2 = 0;
 GLuint vs = 0, fs = 0;
 GLuint loc_uScreenPx2 = 0;
@@ -459,13 +458,13 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
 
                 if (key == GLFW_KEY_ENTER || key == '\n') {
                     if (E->is_shader)
-                     try_to_compile_shader(E);
+                        try_to_compile_shader(E);
                 }
                 if (key == GLFW_KEY_MINUS) {
                     adjust_font_size(E, -1);
                 }
                 if (key == GLFW_KEY_EQUAL) {
-                    adjust_font_size(E,1);
+                    adjust_font_size(E, 1);
                 }
             }
             // printf("key: %d, mods: %d\n", key, mods);
@@ -896,7 +895,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 if (errline) {
                     for (; *errline && *errline != '\n'; errline++) {
                         if (t.x < TMW && t.y >= 0 && t.y < TMH)
-                            t.ptr[t.y * TMW + t.x] = (C_ERR << 8) | (unsigned char)(*errline);
+                            t.ptr[t.y * TMW + t.x] = C_ERR | (unsigned char)(*errline);
                         t.x++;
                     }
                 }
@@ -1010,8 +1009,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         scope_dst = ptr + (TMH - 20) * TMW;
         for (int y = 0; y < 64; ++y) {
             for (int x = 0; x < 64; ++x) {
-                int level = xyscope[y * 2][x * 2] + xyscope[y * 2 + 1][x * 2] + xyscope[y * 2][x * 2 + 1] +
-                            xyscope[y * 2 + 1][x * 2 + 1];
+                int level =
+                    xyscope[y * 2][x * 2] + xyscope[y * 2 + 1][x * 2] + xyscope[y * 2][x * 2 + 1] + xyscope[y * 2 + 1][x * 2 + 1];
                 *scope_dst++ = level;
             }
         }
@@ -1048,8 +1047,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
                 squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) - peak_mag;
             // if (magl_db < minv) {minv = magl_db;mini = i;}
             // if (magl_db > maxv) {maxv = magl_db;maxi = i;}
-            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 4.f, 0.f, 255.f));
-            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 4.f, 0.f, 255.f));
+            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 2.f, 0.f, 255.f));
+            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 2.f, 0.f, 255.f));
             scope_dst[i] = (l8 << 0) | (r8 << 8);
         }
         // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, mini, maxv, maxi);
@@ -1062,7 +1061,6 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     pbo_index = (pbo_index + 1) % 3;
     check_gl("update text tex");
-
 }
 
 int main(int argc, char **argv) {
@@ -1233,7 +1231,7 @@ int main(int argc, char **argv) {
         struct stat st;
         if (stat(audio_tab.fname, &st) == 0 && st.st_mtime != last) {
             last = st.st_mtime;
-            kick_compile(audio_tab.fname);
+            try_to_compile_audio(audio_tab.fname);
         }
     }
     ma_device_stop(&dev);
@@ -1247,7 +1245,6 @@ int main(int argc, char **argv) {
     glDeleteFramebuffers(2, fbo);
     glDeleteProgram(prog);
     glDeleteBuffers(3, pbos);
-    // free(staging);
 
     glfwDestroyWindow(win);
     glfwTerminate();

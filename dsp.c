@@ -1,28 +1,18 @@
-#include "ginkgo.h"
-
-typedef struct state {
-    int saw;
-} state;
-
-////////////////////////////////////////////////////////////////////////////////////
-//                  _ _       
-//   __ _ _   _  __| (_) ___  
-//  / _` | | | |/ _` | |/ _ \ 
+//   __ _ _   _  __| (_) ___
+//  / _` | | | |/ _` | |/ _ \
 // | (_| | |_| | (_| | | (_) |
-//  \__,_|\__,_|\__,_|_|\___/ 
+//  \__,_|\__,_|\__,_|_|\___/
 //                            
-////////////////////////////////////////////////////////////////////////////////////
 
-stereo do_sample(state *G, stereo inp) {
-    float saw=sinf(G->saw++ * 0.03253f) * 1.f;
-    return (stereo){saw,saw};
-}
+STATE_VERSION(1,
+  float saw1;
+  float saw2;
+	float saw3;
+)
 
-
-////////////////////////////////////////////////////////////////////////////////////
-EXPORT void *dsp(void *G, stereo *audio, int frames, int reloaded) {
-    if (!G) G = calloc(1, sizeof(state));
-    for (int i = 0; i < frames; i++) 
-        audio[i] = do_sample((state*)G, audio[i]);
-    return G;
+stereo do_sample(state *G, stereo inp, uint32_t sampleidx) {
+		float dt = 0.0132 / OVERSAMPLE;
+    float osc1=sawo(G->saw1,dt);//sawo(G->saw1+0.0125,dt);
+    G->saw1=fracf(G->saw1+dt);
+    return (stereo){osc1*0.25, osc1*0.25};
 }

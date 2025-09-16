@@ -1,6 +1,6 @@
 CFLAGS  = -g -std=c11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include
 LDFLAGS = -L/opt/homebrew/opt/glfw/lib -lglfw \
-          -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL
+          -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework CoreMIDI
 
 SRC = ginkgo.c
 OBJ = $(SRC:%.c=build/%.o)

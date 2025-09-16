@@ -28,7 +28,12 @@
 #include "ginkgo.h"
 #include "text_editor.h"
 #include "audio_host.h"
+#include "midi_mac.h"
 
+typedef struct basic_state_t {
+    STATE_BASIC_FIELDS
+} _basic_state_t;
+   
 char status_bar[512];
 double status_bar_time = 0;
 uint32_t status_bar_color = 0;
@@ -183,7 +188,8 @@ const char *kFS = SHADER(
             if (fftx < 128.f) {
                 ampscale = 0.5f;
                 is_fft = true;
-                pix.y = (48.f / 48000.f * 8192.f) * pow(500.f, v_uv.y); // 24hz to nyquist
+                float dither = fract(pix.x*23.5325f) / 2048.f;
+                pix.y = (48.f / 48000.f * 4096.f) * pow(1000.f, v_uv.y + dither); // 24hz to nyquist
                 base_y = 256 - 12;
                 pix.x = fftx;
                 nextx = pix.y * 1.003;
@@ -1022,8 +1028,13 @@ void editor_update(EditorState *E, GLFWwindow *win) {
             fft_setup = pffft_new_setup(FFT_SIZE, PFFFT_REAL);
             fft_work = (float *)pffft_aligned_malloc(FFT_SIZE * 2 * sizeof(float));
             fft_window = (float *)pffft_aligned_malloc(FFT_SIZE * sizeof(float));
+
+
+            const float a0 = 0.42f, a1 = 0.5f, a2 = 0.08f;
+            const float scale = (float)(2.0 * M_PI) / (float)(FFT_SIZE - 1);
             for (int i = 0; i < FFT_SIZE; ++i) {
-                fft_window[i] = 0.5f - 0.5f * cosf(2.f * M_PI * i / FFT_SIZE);
+                float x = i * scale;
+                fft_window[i] = a0 - a1 * cosf(x) + a2 * cosf(2.0f * x);
             }
         }
 
@@ -1047,8 +1058,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
                 squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) - peak_mag;
             // if (magl_db < minv) {minv = magl_db;mini = i;}
             // if (magl_db > maxv) {maxv = magl_db;maxi = i;}
-            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 2.f, 0.f, 255.f));
-            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 2.f, 0.f, 255.f));
+            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 3.f, 0.f, 255.f));
+            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 3.f, 0.f, 255.f));
             scope_dst[i] = (l8 << 0) | (r8 << 8);
         }
         // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, mini, maxv, maxi);
@@ -1063,8 +1074,41 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     check_gl("update text tex");
 }
 
+
+void on_midi_input(uint8_t data[3], void *user) {
+    _basic_state_t *_G = ( _basic_state_t *)G;
+    if (!_G) return;
+    if (data[0] == 0xb0 && data[1] < 128) {
+        _G->midi_cc_raw[data[1]] = data[2];
+    }
+    //printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
+}
+
 int main(int argc, char **argv) {
     printf("ginkgo - " __DATE__ " " __TIME__ "\n");
+    
+    int num_inputs = midi_get_num_inputs();
+    int num_outputs = midi_get_num_outputs();
+    printf("midi: %d inputs, %d outputs\n", num_inputs, num_outputs);
+    int midi_input_idx = 0;
+    for (int i = 0; i < num_inputs; ++i) {
+        const char *name = midi_get_input_name(i);
+        if (strstr(name, "Music Thing")) {
+            midi_input_idx = i;
+            break;
+        }
+    }
+    for (int i = 0; i < num_inputs; ++i) {
+        const char *name = midi_get_input_name(i);
+        printf("input %d: %c%s\n", i, (i==midi_input_idx) ? '*' : ' ', name);
+     
+    }
+    // for (int i = 0; i < num_outputs; ++i) {
+    //     printf("output %d: %s\n", i, midi_get_output_name(i));
+    // }
+    midi_init(on_midi_input, NULL);
+    midi_open_input(midi_input_idx);
+    
     ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
     cfg.sampleRate = SAMPLE_RATE_OUTPUT;
     cfg.capture.format = cfg.playback.format = ma_format_f32;

@@ -48,6 +48,72 @@ typedef struct stereo {
 static inline float mid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float side(stereo s) { return (s.l - s.r) * 0.5f; }
 
+inline float fast_tanh(float x) {
+    float x2 = x * x;
+    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+}
+
+// ladder filter
+// adapted from https://www.kvraudio.com/forum/viewtopic.php?f=33&t=349859
+//// LICENSE TERMS: Copyright 2012 Teemu Voipio
+//
+// You can use this however you like for pretty much any purpose,
+// as long as you don't claim you wrote it. There is no warranty.
+//
+// Distribution of substantial portions of this code in source form
+// must include this copyright notice and list of conditions.
+//
+
+// tanh(x)/x approximation, flatline at very high inputs
+// so might not be safe for very large feedback gains
+// [limit is 1/15 so very large means ~15 or +23dB]
+static inline float tanhXdX(float x) {
+    float a = x * x;
+    // IIRC I got this as Pade-approx for tanh(sqrt(x))/sqrt(x)
+    return ((a + 105) * a + 945) / ((15 * a + 420) * a + 945);
+}
+// double f = tan(M_PI * cutoff);
+// double r = (40.0/9.0) * resonance;
+
+static inline float ladder(float inp, float s[5], float f, float r) {
+    r *= 40.f / 9.f;
+    // input with half delay, for non-linearities
+    // we use s[4] as zi in the original code
+    float ih = 0.5f * (inp + s[4]);
+    s[4] = inp;
+
+    // evaluate the non-linear gains
+    float t0 = tanhXdX(ih - r * s[3]);
+    float t1 = tanhXdX(s[0]);
+    float t2 = tanhXdX(s[1]);
+    float t3 = tanhXdX(s[2]);
+    float t4 = tanhXdX(s[3]);
+
+    // g# the denominators for solutions of individual stages
+    float g0 = 1.f / (1.f + f * t1), g1 = 1.f / (1.f + f * t2);
+    float g2 = 1.f / (1.f + f * t3), g3 = 1.f / (1.f + f * t4);
+
+    // f# are just factored out of the feedback solution
+    float f3 = f * t3 * g3, f2 = f * t2 * g2 * f3, f1 = f * t1 * g1 * f2, f0 = f * t0 * g0 * f1;
+
+    // solve feedback
+    float y3 = (g3 * s[3] + f3 * g2 * s[2] + f2 * g1 * s[1] + f1 * g0 * s[0] + f0 * inp) / (1.f + r * f0);
+
+    // then solve the remaining outputs (with the non-linear gains here)
+    float xx = t0 * (inp - r * y3);
+    float y0 = t1 * g0 * (s[0] + f * xx);
+    float y1 = t2 * g1 * (s[1] + f * y0);
+    float y2 = t3 * g2 * (s[2] + f * y1);
+
+    // update state
+    s[0] += 2.f * f * (xx - y0);
+    s[1] += 2.f * f * (y0 - y1);
+    s[2] += 2.f * f * (y1 - y2);
+    s[3] += 2.f * f * (y2 - t4 * y3);
+
+    return y3;
+}
+
 static inline float saturate_soft(float x) { return atanf(x) * (2.f / PI); }
 static inline float saturate_tanh(float x) { return tanhf(x); }
 static inline float saturate_hard(float x) { return clampf(x, -1.f, 1.f); }
@@ -167,7 +233,7 @@ typedef void *(*dsp_fn_t)(void *G, stereo *audio, int frames, int reloaded, uint
             audio[i] = do_sample((state *)G, audio[i], sampleidx++);                                                               \
             for (int i = 0; i < 128; i++) {                                                                                        \
                 float target = G->midi_cc_raw[i] / 127.f;                                                                          \
-                G->cc[i] += (target - G->cc[i]) * 0.001f;                                                                            \
+                G->cc[i] += (target - G->cc[i]) * 0.001f;                                                                          \
             }                                                                                                                      \
         }                                                                                                                          \
         return G;                                                                                                                  \

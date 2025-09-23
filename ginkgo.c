@@ -33,7 +33,7 @@
 typedef struct basic_state_t {
     STATE_BASIC_FIELDS
 } _basic_state_t;
-   
+
 char status_bar[512];
 double status_bar_time = 0;
 uint32_t status_bar_color = 0;
@@ -344,141 +344,61 @@ GLuint try_to_compile_shader(EditorState *E) {
 int fbw, fbh; // current framebuffer size in pixels
 float retina = 1.0f;
 
-static void adjust_font_size(EditorState *E, int delta) {
-    float yzoom = E->cursor_y;
-    E->scroll_y_target = E->scroll_y_target / E->font_height - yzoom;
-    E->scroll_y = E->scroll_y / E->font_height - yzoom;
-    E->font_width = clampi(E->font_width + delta, 8, 256);
-    E->font_height = E->font_width * 2;
-    E->scroll_y_target = (E->scroll_y_target + yzoom) * E->font_height;
-    E->scroll_y = (E->scroll_y + yzoom) * E->font_height;
-}
-
-static int find_line_index(const char *str, int n, int pos) {
-    int y = 0;
-    for (int i = 0; i < n && i < pos; i++) {
-        if (str[i] == '\n' || str[i] == 0) {
-            ++y;
-        }
-    }
-    return y;
-}
-
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
     EditorState *E = curE;
-    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        if (mods == 0) {
-            if (key == GLFW_KEY_ESCAPE) {
-                E->state.select_start = E->state.select_end = E->state.cursor;
-            }
-
-            if (key == GLFW_KEY_F1) {
-                E = curE = &shader_tab;
-            }
-            if (key == GLFW_KEY_F2) {
-                E = curE = &audio_tab;
-            }
-        }
-        if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
-            glfwSetWindowShouldClose(win, GLFW_TRUE);
+    if (action != GLFW_PRESS && action != GLFW_REPEAT)
+        return;
+    if (mods == 0) {
+        if (key == GLFW_KEY_ESCAPE) {
+            E->select_idx = E->cursor_idx;
         }
 
-        if (key == GLFW_KEY_TAB)
-            key = '\t';
-        if (key == GLFW_KEY_ENTER)
-            key = '\n';
-
-        if (key < 32 || key > 126 || (mods & GLFW_MOD_SUPER)) {
-            if (mods == GLFW_MOD_SUPER) {
-                if (key == GLFW_KEY_C || key == GLFW_KEY_X) {
-                    int se = get_select_start(E);
-                    int ee = get_select_end(E);
-                    char *str = calloc(1, ee - se + 1);
-                    memcpy(str, E->str + se, ee - se);
-                    glfwSetClipboardString(win, str);
-                    free(str);
-                    if (key == GLFW_KEY_X) {
-                        stb_textedit_cut(E, &E->state);
-                    }
-                }
-                if (key == GLFW_KEY_V) {
-                    const char *str = glfwGetClipboardString(win);
-                    if (str) {
-                        stb_textedit_paste(E, &E->state, (STB_TEXTEDIT_CHARTYPE *)str, strlen(str));
-                    }
-                }
-                if (key == GLFW_KEY_SLASH) {
-                    int n = stbds_arrlen(E->str);
-                    int ss = get_select_start(E);
-                    int se = get_select_end(E);
-                    if (ss == se)
-                        ss = se = E->state.cursor;
-                    int first_line = find_line_index(E->str, n, ss);
-                    int last_line = find_line_index(E->str, n, se);
-                    int y = 0;
-                    for (int i = 0; i < arrlen(E->str); i++) {
-                        int n = stbds_arrlen(E->str);
-                        if (y >= first_line && y <= last_line) {
-                            while (i < n && E->str[i] != '\n' && E->str[i] != 0 && isspace(E->str[i]))
-                                i++;
-                            // if it starts with //, remove it. otherwise add it.
-                            if (i + 1 < n && E->str[i] == '/' && E->str[i + 1] == '/') {
-                                arrdeln(E->str, i, 2);
-                                if (i < n - 2 && E->str[i] == ' ')
-                                    arrdel(E->str, i);
-                            } else {
-                                arrinsn(E->str, i, 3);
-                                E->str[i] = '/';
-                                E->str[i + 1] = '/';
-                                E->str[i + 2] = ' ';
-                            }
-                        }
-                        n = stbds_arrlen(E->str);
-                        while (i < n && E->str[i] != '\n' && E->str[i] != 0)
-                            i++;
-                        y++;
-                    }
-                }
-                if (key == GLFW_KEY_A) {
-                    E->state.select_start = 0;
-                    E->state.select_end = stbds_arrlen(E->str);
-                }
-                if (key == GLFW_KEY_S) {
-                    bool compiled = true;
-                    if (!E->is_shader || try_to_compile_shader(E) != 0) {
-                        FILE *f = fopen("editor.tmp", "w");
-                        if (f) {
-                            fwrite(E->str, 1, stbds_arrlen(E->str), f);
-                            fclose(f);
-                            if (rename("editor.tmp", E->fname) == 0) {
-                                set_status_bar(C_OK, "saved shader");
-                            } else {
-                                f = 0;
-                            }
-                        }
-                        if (!f) {
-                            set_status_bar(C_ERR, "failed to save shader");
-                        }
-                    }
-                }
-
-                if (key == GLFW_KEY_ENTER || key == '\n') {
-                    if (E->is_shader)
-                        try_to_compile_shader(E);
-                }
-                if (key == GLFW_KEY_MINUS) {
-                    adjust_font_size(E, -1);
-                }
-                if (key == GLFW_KEY_EQUAL) {
-                    adjust_font_size(E, 1);
-                }
-            }
-            // printf("key: %d, mods: %d\n", key, mods);
-            stb_textedit_key(E, &E->state, key | (mods << 16));
-            // printf("cursor %d , select_start %d, select_end %d\n", state.cursor, state.select_start, state.select_end);
-            E->need_scroll_update = true;
+        if (key == GLFW_KEY_F1) {
+            E = curE = &shader_tab;
+        }
+        if (key == GLFW_KEY_F2) {
+            E = curE = &audio_tab;
         }
     }
+    if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
+        glfwSetWindowShouldClose(win, GLFW_TRUE);
+    }
+
+    if (key == GLFW_KEY_TAB)
+        key = '\t';
+    if (key == GLFW_KEY_ENTER)
+        key = '\n';
+    if (mods == GLFW_MOD_SUPER) {
+        if (key == GLFW_KEY_S) {
+            bool compiled = true;
+            if (!E->is_shader || try_to_compile_shader(E) != 0) {
+                FILE *f = fopen("editor.tmp", "w");
+                if (f) {
+                    fwrite(E->str, 1, stbds_arrlen(E->str), f);
+                    fclose(f);
+                    if (rename("editor.tmp", E->fname) == 0) {
+                        set_status_bar(C_OK, "saved shader");
+                    } else {
+                        f = 0;
+                    }
+                }
+                if (!f) {
+                    set_status_bar(C_ERR, "failed to save shader");
+                }
+            }
+        }
+        if (key == GLFW_KEY_ENTER || key == '\n') {
+            if (E->is_shader)
+                try_to_compile_shader(E);
+        }
+    }
+
+    // printf("key: %d, mods: %d\n", key, mods);
+    // stb_textedit_key(E, &E->state, key | (mods << 16));
+    if ((mods & (GLFW_MOD_CONTROL | GLFW_MOD_SUPER)) || key > 127 || key == '\b' || key == '\n' || key == '\t')
+        editor_key(win, E, key | (mods << 16));
+    // printf("cursor %d , select_start %d, select_end %d\n", state.cursor, state.select_start, state.select_end);
+    E->need_scroll_update = true;
 }
 
 static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
@@ -488,7 +408,8 @@ static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
 
 static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     // printf("char: %d\n", codepoint);
-    stb_textedit_key(curE, &curE->state, codepoint);
+    // stb_textedit_key(curE, &curE->state, codepoint);
+    editor_key(win, curE, codepoint);
     curE->need_scroll_update = true;
 }
 
@@ -499,7 +420,8 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         glfwGetCursorPos(win, &mx, &my);
         mx *= retina;
         my *= retina;
-        stb_textedit_click(curE, &curE->state, mx - 64., my + curE->scroll_y);
+        // stb_textedit_click(curE, &curE->state, mx - 64., my + curE->scroll_y);
+        editor_click(curE, mx - 64., my + curE->scroll_y, 0);
         curE->need_scroll_update = true;
     }
     if (action == GLFW_RELEASE) {
@@ -508,7 +430,8 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         glfwGetCursorPos(win, &mx, &my);
         mx *= retina;
         my *= retina;
-        stb_textedit_drag(curE, &curE->state, mx - 64., my + curE->scroll_y);
+        // stb_textedit_drag(curE, &curE->state, mx - 64., my + curE->scroll_y);
+        editor_click(curE, mx - 64., my + curE->scroll_y, 1);
         curE->need_scroll_update = true;
     }
 }
@@ -887,14 +810,14 @@ int code_color(EditorState *E, uint32_t *ptr) {
             if (i >= se && i < ee)
                 ccol = C_SELECTION;
 
-            if (i == E->state.cursor) {
+            if (i == E->cursor_idx) {
                 E->cursor_x = t.x;
                 E->cursor_y = t.y + E->intscroll;
             }
             if (t.x < TMW && t.y >= 0 && t.y < TMH)
                 t.ptr[t.y * TMW + t.x] = (ccol) | (unsigned char)(ch);
             if (ch == '\t')
-                t.x += 2;
+                t.x = next_tab(t.x - left) + left;
             else if (ch == '\n' || ch == 0) {
                 // look for an error message
                 const char *errline = hmget(E->error_msgs, t.y);
@@ -921,7 +844,7 @@ void load_file(EditorState *E, bool init) {
     if (init) {
         E->font_width = 12;
         E->font_height = 24;
-        stb_textedit_initialize_state(&E->state, 0);
+        // stb_textedit_initialize_state(&E->state, 0);
     }
     FILE *f = fopen(E->fname, "r");
     if (!f) {
@@ -948,7 +871,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     int m0 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     int m1 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     if (m0) {
-        stb_textedit_drag(E, &E->state, mx - 64., my + E->scroll_y);
+        // stb_textedit_drag(E, &E->state, mx - 64., my + E->scroll_y);
+        editor_click(E, mx - 64., my + E->scroll_y, 1);
         E->need_scroll_update = true;
     }
 
@@ -1029,7 +953,6 @@ void editor_update(EditorState *E, GLFWwindow *win) {
             fft_work = (float *)pffft_aligned_malloc(FFT_SIZE * 2 * sizeof(float));
             fft_window = (float *)pffft_aligned_malloc(FFT_SIZE * sizeof(float));
 
-
             const float a0 = 0.42f, a1 = 0.5f, a2 = 0.08f;
             const float scale = (float)(2.0 * M_PI) / (float)(FFT_SIZE - 1);
             for (int i = 0; i < FFT_SIZE; ++i) {
@@ -1074,19 +997,19 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     check_gl("update text tex");
 }
 
-
 void on_midi_input(uint8_t data[3], void *user) {
-    _basic_state_t *_G = ( _basic_state_t *)G;
-    if (!_G) return;
+    _basic_state_t *_G = (_basic_state_t *)G;
+    if (!_G)
+        return;
     if (data[0] == 0xb0 && data[1] < 128) {
         _G->midi_cc_raw[data[1]] = data[2];
     }
-    //printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
+    // printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
 }
 
 int main(int argc, char **argv) {
     printf("ginkgo - " __DATE__ " " __TIME__ "\n");
-    
+
     int num_inputs = midi_get_num_inputs();
     int num_outputs = midi_get_num_outputs();
     printf("midi: %d inputs, %d outputs\n", num_inputs, num_outputs);
@@ -1100,15 +1023,14 @@ int main(int argc, char **argv) {
     }
     for (int i = 0; i < num_inputs; ++i) {
         const char *name = midi_get_input_name(i);
-        printf("input %d: %c%s\n", i, (i==midi_input_idx) ? '*' : ' ', name);
-     
+        printf("input %d: %c%s\n", i, (i == midi_input_idx) ? '*' : ' ', name);
     }
     // for (int i = 0; i < num_outputs; ++i) {
     //     printf("output %d: %s\n", i, midi_get_output_name(i));
     // }
     midi_init(on_midi_input, NULL);
     midi_open_input(midi_input_idx);
-    
+
     ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
     cfg.sampleRate = SAMPLE_RATE_OUTPUT;
     cfg.capture.format = cfg.playback.format = ma_format_f32;

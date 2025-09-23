@@ -190,7 +190,10 @@ int count_leading_spaces(EditorState *E, int start_idx) {
     return x;
 }
 
-void editor_click(EditorState *E, float x, float y, int is_drag) {
+static inline bool isseparator(char c) { return c==' ' || c=='\t' || c=='\n' || c=='\r' || c==';' || c==',' || c==':' || c=='.' || c=='(' || c==')' || c=='[' || c==']' || c=='{' || c=='}' || c=='\'' || c=='\"' || c=='`'; }
+static inline bool isnewline(char c) { return c=='\n' || c=='\r'; }
+
+void editor_click(EditorState *E, float x, float y, int is_drag, int click_count) {
     int cx = (int)(x / E->font_width + 0.5f);
     int cy = (int)(y / E->font_height);
     E->cursor_idx = xy_to_idx(E, cx, cy);
@@ -198,6 +201,22 @@ void editor_click(EditorState *E, float x, float y, int is_drag) {
         E->select_idx = E->cursor_idx;
     idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
     E->cursor_x_target = E->cursor_x;
+    if (is_drag<0 && click_count==2) {
+        // double click - select word
+        int idx,idx2;
+        for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isseparator(E->str[idx])) break;
+        for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isseparator(E->str[idx2])) break;
+        E->select_idx = idx2+1;
+        E->cursor_idx = idx;
+    }
+    if (is_drag<0 && click_count==3) {
+        // triple click - select line
+        int idx,idx2;
+        for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isnewline(E->str[idx])) break;
+        for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isnewline(E->str[idx2])) break;
+        E->select_idx = idx2+1;
+        E->cursor_idx = idx;
+    }
 }
 
 static inline bool isspaceortab(char c) { return c==' ' || c=='\t'; }

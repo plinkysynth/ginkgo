@@ -413,6 +413,9 @@ static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     curE->need_scroll_update = true;
 }
 
+static double click_mx, click_my, click_time;
+static int click_count;
+
 static void mouse_button_callback(GLFWwindow *win, int button, int action, int mods) {
     if (action == GLFW_PRESS) {
         // printf("mouse button: %d, mods: %d\n", button, mods);
@@ -420,8 +423,15 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         glfwGetCursorPos(win, &mx, &my);
         mx *= retina;
         my *= retina;
+        click_mx = mx;
+        click_my = my;
+        double t = glfwGetTime();
+        if (t - click_time > 0.25) {
+            click_count = 0;
+        }
+        click_time = t;
         // stb_textedit_click(curE, &curE->state, mx - 64., my + curE->scroll_y);
-        editor_click(curE, mx - 64., my + curE->scroll_y, 0);
+        editor_click(curE, mx - 64., my + curE->scroll_y, 0, click_count);
         curE->need_scroll_update = true;
     }
     if (action == GLFW_RELEASE) {
@@ -430,8 +440,14 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         glfwGetCursorPos(win, &mx, &my);
         mx *= retina;
         my *= retina;
+        double release_time = glfwGetTime();
+        if (release_time - click_time < 0.4 && fabs(mx - click_mx) < 3.f && fabs(my - click_my) < 3.f) {
+            click_count++;
+        } else {
+            click_count = 0;
+        }
         // stb_textedit_drag(curE, &curE->state, mx - 64., my + curE->scroll_y);
-        editor_click(curE, mx - 64., my + curE->scroll_y, 1);
+        editor_click(curE, mx - 64., my + curE->scroll_y, -1, click_count);
         curE->need_scroll_update = true;
     }
 }
@@ -872,7 +888,7 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     int m1 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     if (m0) {
         // stb_textedit_drag(E, &E->state, mx - 64., my + E->scroll_y);
-        editor_click(E, mx - 64., my + E->scroll_y, 1);
+        editor_click(E, mx - 64., my + E->scroll_y, 1, 0);
         E->need_scroll_update = true;
     }
 

@@ -12,7 +12,7 @@ uint32_t scope_pos = 0;
 
 static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
 static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
-static void *G = NULL;                      // the state
+static basic_state_t *G = NULL;                      // the state
 static void *g_handle = NULL;
 static int g_version = 0;
 static uint32_t sampleidx = 0;
@@ -117,7 +117,7 @@ static bool try_to_compile_audio(const char *fname) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    #define CLANG_OPTIONS "-x c -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics"
+    #define CLANG_OPTIONS "-x c -g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -D LIVECODE"
     snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");

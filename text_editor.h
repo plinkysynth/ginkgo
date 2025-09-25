@@ -35,6 +35,9 @@ typedef struct EditorState {
     int font_height;
     char *last_compile_log;
     error_msg_t *error_msgs;
+    float click_fx;
+    float click_fy;
+    float click_slider_value;
 } EditorState;
 
 char *make_cstring_from_span(const char *str, int start, int end, int alloc_extra) {
@@ -193,9 +196,37 @@ int count_leading_spaces(EditorState *E, int start_idx) {
 static inline bool isseparator(char c) { return c==' ' || c=='\t' || c=='\n' || c=='\r' || c==';' || c==',' || c==':' || c=='.' || c=='(' || c==')' || c=='[' || c==']' || c=='{' || c=='}' || c=='\'' || c=='\"' || c=='`'; }
 static inline bool isnewline(char c) { return c=='\n' || c=='\r'; }
 
-void editor_click(EditorState *E, float x, float y, int is_drag, int click_count) {
-    int cx = (int)(x / E->font_width + 0.5f);
-    int cy = (int)(y / E->font_height);
+void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
+    y += E->scroll_y;
+    int tmw = fbw / E->font_width;
+    float fx = (x / E->font_width + 0.5f);
+    float fy = (y / E->font_height);
+    int cx = (int)fx;
+    int cy = (int)fy;
+    if (!is_drag) {
+        E->click_fx = fx;
+        E->click_fy = fy;
+    }
+    if (G && E->click_fx >= tmw-24 && E->click_fx < tmw) {
+        for (int slideridx=0;slideridx<16;++slideridx) {
+            for (int i=0;i<G->sliders[slideridx].n;i+=2) {
+                int line = G->sliders[slideridx].data[i+1] - E->intscroll;
+                if (line==(int)E->click_fy) {
+                    if (!is_drag) {
+                        E->click_slider_value = G->sliders[slideridx].data[i];
+                    } else {
+                        float newvalue = clampf(E->click_slider_value + (fx-E->click_fx)/20.f, 0.f, 1.f);
+                        G->sliders[slideridx].data[i] = newvalue;
+                    }
+                    return;
+                }
+            }
+        }
+    }
+    // adjust for the left margin of the code view
+    int left = 64 / E->font_width;
+    cx -= left;
+
     E->cursor_idx = xy_to_idx(E, cx, cy);
     if (!is_drag)
         E->select_idx = E->cursor_idx;

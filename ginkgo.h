@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 
 #define OVERSAMPLE 2
 #define SAMPLE_RATE_OUTPUT 48000
@@ -207,13 +209,96 @@ float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f) * (1.f / 1
 
 #define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
 
+#define RARE(x) __builtin_expect(x, 0)
+#define COMMON(x) __builtin_expect(x, 1)
+#define noinline __attribute__((noinline))
+#define alwaysinline __attribute__((always_inline))
+
 typedef void *(*dsp_fn_t)(void *G, stereo *audio, int frames, int reloaded, uint32_t sampleidx);
+
+typedef struct bump_array_t {
+    int i, n; // n is the high watermark, the data array points at data4 if possible, or allocates in blocks of power of 2
+    float *data;
+    float data4[4];
+} bump_array_t;
+
+static noinline void ba_grow(bump_array_t *sa, int newn) {
+    int oldallocsize = (sa->n + 1023) & ~1023;
+    int newallocsize = (newn + 1023) & ~1023;
+    if (oldallocsize == newallocsize)
+        return;
+    float *newdata = (newn <= 4) ? sa->data4 : calloc(newallocsize, sizeof(float));
+    memcpy(newdata, sa->data, sa->n * sizeof(float));
+    // if (sa->data != sa->data4)
+    //     free(sa->data); // let it leak :)
+    sa->data = newdata;
+    sa->n = newn;
+}
+
+static inline float *ba_get(bump_array_t *sa, int count) {
+    int i = sa->i;
+    if (RARE(i + count > sa->n))
+        ba_grow(sa, i + count);
+    sa->i += count;
+    return &sa->data[i];
+}
 
 #define STATE_BASIC_FIELDS                                                                                                         \
     int _ver;                                                                                                                      \
     int _size;                                                                                                                     \
-    uint8_t midi_cc_raw[128];                                                                                                      \
-    float cc[128];
+    int reloaded;                                                                                                                  \
+    uint8_t midi_cc[128];                                                                                                          \
+    uint32_t midi_cc_gen[128];                                                                                                      \
+    int cursor_x, cursor_y;                                                                                                        \
+    float mx, my;                                                                                                                  \
+    int mb;                                                                                                                        \
+    double iTime;                                                                                                                  \
+    bump_array_t sliders[16];
+
+typedef struct basic_state_t {
+    STATE_BASIC_FIELDS
+} basic_state_t;
+
+static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
+    slider_idx &= 15;
+    myline &= 255;
+    float *value_line = ba_get(&G->sliders[slider_idx], 2);
+    value_line[1] = myline - 1; // we count lines from 0
+    return value_line[0];
+}
+
+#define S_(slider_idx) do_slider(slider_idx, (basic_state_t*)G, __LINE__)
+#define S0 S_(0)
+#define S1 S_(1)
+#define S2 S_(2)
+#define S3 S_(3)
+#define S4 S_(4)
+#define S5 S_(5)
+#define S6 S_(6)
+#define S7 S_(7)
+#define S8 S_(8)
+#define S9 S_(9)
+#define S10 S_(10)
+#define S11 S_(11)
+#define S12 S_(12)
+#define S13 S_(13)
+#define S14 S_(14)
+#define S15 S_(15)
+#define SA S_(10)
+#define SB S_(11)
+#define SC S_(12)
+#define SD S_(13)
+#define SE S_(14)
+#define SF S_(15)
+#define LOG(...)                                                                                                                   \
+    {                                                                                                                              \
+        static int count = 0;                                                                                                      \
+        count++;                                                                                                                   \
+        if (RARE(count > 100000)) {                                                                                                \
+            count = 0;                                                                                                             \
+            fprintf(stderr, __VA_ARGS__);                                                                                          \
+        }                                                                                                                          \
+    }
 
 #define STATE_VERSION(version, ...)                                                                                                \
     typedef struct state {                                                                                                         \
@@ -224,17 +309,19 @@ typedef void *(*dsp_fn_t)(void *G, stereo *audio, int frames, int reloaded, uint
     __attribute__((visibility("default"))) void *dsp(void *_G, stereo *audio, int frames, int reloaded, uint32_t sampleidx) {      \
         state *G = (state *)_G;                                                                                                    \
         if (!G || G->_ver != version || G->_size != sizeof(state)) {                                                               \
-            free(G);                                                                                                               \
+            /* free(G); - safer to just let it leak :)  virtual memory ftw  */                                                     \
             G = calloc(1, sizeof(state));                                                                                          \
             G->_ver = version;                                                                                                     \
             G->_size = sizeof(state);                                                                                              \
         }                                                                                                                          \
+        G->reloaded = reloaded;                                                                                                    \
         for (int i = 0; i < frames; i++) {                                                                                         \
+            for (int slider_idx = 0; slider_idx < 16; slider_idx++)                                                                \
+                G->sliders[slider_idx].i = 0;                                                                                      \
             audio[i] = do_sample((state *)G, audio[i], sampleidx++);                                                               \
-            for (int i = 0; i < 128; i++) {                                                                                        \
-                float target = G->midi_cc_raw[i] / 127.f;                                                                          \
-                G->cc[i] += (target - G->cc[i]) * 0.001f;                                                                          \
-            }                                                                                                                      \
+            for (int slider_idx = 0; slider_idx < 16; slider_idx++)                                                                \
+                G->sliders[slider_idx].n = G->sliders[slider_idx].i;                                                                                      \
+            G->reloaded = 0;                                                                                                       \
         }                                                                                                                          \
         return G;                                                                                                                  \
     }

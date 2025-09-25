@@ -1,3 +1,4 @@
+
 // clang -std=c11 -O2 gpu.c -o gpu -I$(brew --prefix glfw)/include -L$(brew --prefix glfw)/lib -lglfw -framework OpenGL -framework
 // Cocoa -framework IOKit -framework CoreVideo
 #define STB_IMAGE_IMPLEMENTATION
@@ -26,13 +27,11 @@
 #include <OpenGL/gl3.h> // core profile headers
 
 #include "ginkgo.h"
+int fbw, fbh; // current framebuffer size in pixels
 #include "text_editor.h"
 #include "audio_host.h"
 #include "midi_mac.h"
 
-typedef struct basic_state_t {
-    STATE_BASIC_FIELDS
-} _basic_state_t;
 
 char status_bar[512];
 double status_bar_time = 0;
@@ -56,6 +55,20 @@ uint32_t status_bar_color = 0;
 #define C_ERR 0xf00fff00u
 #define C_OK 0x080fff00u
 #define C_WARNING 0x860fff00u
+
+#define C_SLIDER 0x48f00000u
+#define C_SLIDER_RED 0xe43fff00u
+#define C_SLIDER_ORANGE 0xfa4fff00u
+#define C_SLIDER_YELLOW 0xee200000u
+#define C_SLIDER_WHITE 0xeff00000u
+
+static const uint32_t slidercols[17]={
+    C_SLIDER_RED, C_SLIDER_RED, 
+    C_SLIDER_ORANGE, C_SLIDER_ORANGE, C_SLIDER_YELLOW, C_SLIDER_YELLOW, C_SLIDER_WHITE, C_SLIDER_WHITE,
+    C_SLIDER_RED, C_SLIDER_RED, 
+    C_SLIDER_ORANGE, C_SLIDER_ORANGE, C_SLIDER_YELLOW, C_SLIDER_YELLOW, C_SLIDER_WHITE, C_SLIDER_WHITE,
+    C_SLIDER
+};
 
 uint32_t invert_color(uint32_t col) { // swap fg and bg
     return ((col >> 12) & 0xfff00) + ((col & 0xfff00) << 12) + (col & 0xff);
@@ -280,6 +293,9 @@ GLuint pbos[3];
 int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
 
+float* closest_slider[16]={}; // 16 closest sliders to the cursor, for midi cc
+
+
 static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, NULL);
@@ -341,7 +357,6 @@ GLuint try_to_compile_shader(EditorState *E) {
     return new_prog2;
 }
 
-int fbw, fbh; // current framebuffer size in pixels
 float retina = 1.0f;
 
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
@@ -394,7 +409,6 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     }
 
     // printf("key: %d, mods: %d\n", key, mods);
-    // stb_textedit_key(E, &E->state, key | (mods << 16));
     if ((mods & (GLFW_MOD_CONTROL | GLFW_MOD_SUPER)) || key > 127 || key == '\b' || key == '\n' || key == '\t')
         editor_key(win, E, key | (mods << 16));
     // printf("cursor %d , select_start %d, select_end %d\n", state.cursor, state.select_start, state.select_end);
@@ -408,7 +422,6 @@ static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
 
 static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     // printf("char: %d\n", codepoint);
-    // stb_textedit_key(curE, &curE->state, codepoint);
     editor_key(win, curE, codepoint);
     curE->need_scroll_update = true;
 }
@@ -430,8 +443,7 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
             click_count = 0;
         }
         click_time = t;
-        // stb_textedit_click(curE, &curE->state, mx - 64., my + curE->scroll_y);
-        editor_click(curE, mx - 64., my + curE->scroll_y, 0, click_count);
+        editor_click(curE, G, mx, my, 0, click_count);
         curE->need_scroll_update = true;
     }
     if (action == GLFW_RELEASE) {
@@ -446,8 +458,7 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         } else {
             click_count = 0;
         }
-        // stb_textedit_drag(curE, &curE->state, mx - 64., my + curE->scroll_y);
-        editor_click(curE, mx - 64., my + curE->scroll_y, -1, click_count);
+        editor_click(curE, G, mx, my, -1, click_count);
         curE->need_scroll_update = true;
     }
 }
@@ -500,15 +511,16 @@ GLFWwindow *gl_init(int want_fullscreen) {
 
 #define UC(lit, i, p) ((unsigned)p * (unsigned)(unsigned char)((lit)[i]))
 
+
 #define HASH_(x)                                                                                                                   \
-    UC(x, 0, 2) + UC(x, 1, 3) + UC(x, 2, 5) + UC(x, 3, 7) + UC(x, 4, 11) + UC(x, 5, 13) + UC(x, 6, 17) + UC(x, 7, 19) +            \
-        UC(x, 8, 23) + UC(x, 9, 29) + UC(x, 10, 31) + UC(x, 11, 37) + UC(x, 12, 41) + UC(x, 13, 43) + UC(x, 14, 47) +              \
-        UC(x, 15, 53)
+    UC(x, 0, 257) + UC(x, 1, 263) + UC(x, 2, 269) + UC(x, 3, 271) + UC(x, 4, 277) + UC(x, 5, 281) + UC(x, 6, 283) + UC(x, 7, 293) +            \
+        UC(x, 8, 307) + UC(x, 9, 311) + UC(x, 10, 313) + UC(x, 11, 317) + UC(x, 12, 331) + UC(x, 13, 337) + UC(x, 14, 347) +              \
+        UC(x, 15, 349)
 
 #define HASH(lit) HASH_(lit "                ") /* 16 spaces */
 
 static inline unsigned hash_span(const char *s, const char *e) {
-    static const unsigned primes[16] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53};
+    static const unsigned primes[16] = {257, 263, 269, 271, 277, 281, 283, 293, 307, 311, 313, 317, 331, 337, 347, 349};
     unsigned h = 0;
     for (int i = 0; i < 16; ++i, ++s) {
         unsigned c = (s < e) ? *s : ' ';
@@ -727,6 +739,32 @@ int code_color(EditorState *E, uint32_t *ptr) {
     bool wasinclude = false;
     int se = get_select_start(E);
     int ee = get_select_end(E);
+    float *sliders[TMH]= {};
+    int sliderindices[TMH];
+    float *new_closest_slider[16]={};
+    if (G) {
+        for (int slideridx=0;slideridx<16;++slideridx) {
+            for (int i=0;i<G->sliders[slideridx].n;i+=2) {
+                float*value_line = G->sliders[slideridx].data+i;
+                float value = value_line[0];
+                int line = (int)value_line[1];
+                int dist_to_old = new_closest_slider[slideridx]==NULL ? 1000000 : abs((int)new_closest_slider[slideridx][1]-E->cursor_y);
+                int dist_to_new = abs(line-E->cursor_y);
+                if (dist_to_old>dist_to_new) {
+                    new_closest_slider[slideridx] = value_line;
+                }
+                line -= E->intscroll;
+                if (line>=0 && line<TMH) {
+                    sliderindices[line] = slideridx;
+                    sliders[line] = value_line;
+                }
+            }
+        }
+        memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
+    } else {
+        memset(closest_slider, 0, sizeof(closest_slider));
+    }
+    int tmw = fbw / E->font_width;
     for (int i = 0; i <= t.n + 10;) {
         unsigned h = 0;
         char c = tok_get(&t, i);
@@ -783,6 +821,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     case HASH(x):                                                                                                                  \
     case HASH(y)
 #define CASE4(x, y, z, w) CASE2(x, y) : CASE2(z, w)
+#define CASE6(x, y, z, w, a, b) CASE2(x, y) : CASE2(z, w) : CASE2(a, b)
 #define CASE8(a, b, c, d, e, f, g, h) CASE4(a, b, c, d) : CASE4(e, f, g, h)
             if (is_ident_start((unsigned)c)) {
                 col = C_DEF;
@@ -801,6 +840,25 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     break;
                     CASE2("define", "pragma") : col = C_PREPROC;
                     break;
+                CASE8("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7"):
+                CASE2("S8", "S9"): {
+                    int slideridx = (t.str[i+1]-'0');
+                    if (closest_slider[slideridx]==NULL || closest_slider[slideridx][1]!=t.y+E->intscroll) slideridx=16;
+                    col=slidercols[slideridx];
+                    break; }
+                CASE6("S10", "S11", "S12", "S13", "S14", "S15"): {
+                    int slideridx = ((t.str[i+2]-'0')+10);
+                    if (closest_slider[slideridx]==NULL || closest_slider[slideridx][1]!=t.y+E->intscroll) slideridx=16;
+                    col=slidercols[slideridx];
+                    break; }
+                CASE6("SA", "SB", "SC", "SD", "SE", "SF"): {
+                    int slideridx = (t.str[i+1]-'A'+10);
+                    if (closest_slider[slideridx]==NULL || closest_slider[slideridx][1]!=t.y+E->intscroll) slideridx=16;
+                    col=slidercols[slideridx];
+                    break; }
+                case HASH("S_"):
+                col=C_SLIDER;
+                break;
                 case HASH("include"):
                     wasinclude = true;
                     col = C_PREPROC;
@@ -843,6 +901,25 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             t.ptr[t.y * TMW + t.x] = C_ERR | (unsigned char)(*errline);
                         t.x++;
                     }
+                } else if (t.y>=0 && t.y<TMH && sliders[t.y]) {
+                    int slider_idx = sliderindices[t.y];
+                    float value = *sliders[t.y];
+                    int x1 = maxi(0,tmw-24);
+                    int x2 = tmw;
+                    int xpuck = clampi((int)(value * 20), 0, 20);
+                    char valbuf[8];
+                    int valn = snprintf(valbuf, sizeof(valbuf), "%0.2f", value);
+                    char buf[32] = "[----------------------]";
+                    uint32_t col = slidercols[slider_idx];
+                    if (closest_slider[slider_idx]==NULL || closest_slider[slider_idx][1]!=t.y+E->intscroll) col=C_SLIDER; else {
+                        int midipuck = (G->midi_cc[slider_idx+16] * 20)/127;
+                        buf[midipuck] = '#';
+                    }
+                    memcpy(buf+xpuck, valbuf, valn); 
+                    for (int x=x1;x<x2;x++) {
+                        ch = buf[x-x1];
+                        t.ptr[t.y * TMW + x] = col | ch;
+                    }
                 }
                 t.x = left;
                 ++t.y;
@@ -860,7 +937,6 @@ void load_file(EditorState *E, bool init) {
     if (init) {
         E->font_width = 12;
         E->font_height = 24;
-        // stb_textedit_initialize_state(&E->state, 0);
     }
     FILE *f = fopen(E->fname, "r");
     if (!f) {
@@ -886,9 +962,16 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     my *= retina;
     int m0 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     int m1 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    if (G) {
+        G->mx = mx;
+        G->my = my;
+        G->mb = m0 + m1 * 2;
+        G->iTime = glfwGetTime();
+        G->cursor_x = E->cursor_x;
+        G->cursor_y = E->cursor_y;
+    }
     if (m0) {
-        // stb_textedit_drag(E, &E->state, mx - 64., my + E->scroll_y);
-        editor_click(E, mx - 64., my + E->scroll_y, 1, 0);
+        editor_click(E, G, mx, my, 1, 0);
         E->need_scroll_update = true;
     }
 
@@ -1013,12 +1096,29 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     check_gl("update text tex");
 }
 
+
+
 void on_midi_input(uint8_t data[3], void *user) {
-    _basic_state_t *_G = (_basic_state_t *)G;
-    if (!_G)
+    if (!G)
         return;
-    if (data[0] == 0xb0 && data[1] < 128) {
-        _G->midi_cc_raw[data[1]] = data[2];
+    int cc=data[1];
+    if (data[0] == 0xb0 && cc < 128) {
+        int oldccdata = G->midi_cc[cc];
+        int newccdata = data[2];
+        G->midi_cc[cc] = newccdata;
+        uint32_t gen = G->midi_cc_gen[cc]++;
+        if (gen==0) oldccdata = newccdata;
+        if (newccdata!=oldccdata && cc>=16 && cc<32 && closest_slider[cc-16]!=NULL) {
+            // 'pickup': if we are increasing and bigger, or decreasing and smaller, then pick up the value, or closer than 2
+            int sliderval = (int)clampf(closest_slider[cc-16][0]*127.f, 0.f, 127.f);
+            int mindata = mini(oldccdata, newccdata);
+            int maxdata = maxi(oldccdata, newccdata);
+            int vel = newccdata-oldccdata;
+            if (vel<0) maxdata+=(-vel)+16; else mindata-=(vel)+16; // add slop for velocity
+            if (sliderval>=mindata-4 && sliderval<=maxdata+4) {
+                closest_slider[cc-16][0] = newccdata / 127.f;
+            }
+        }
     }
     // printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
 }

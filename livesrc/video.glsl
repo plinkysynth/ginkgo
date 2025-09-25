@@ -6,7 +6,7 @@
 //        
 // just set something into vec3 o, or return a color.
 
-o=vec3(0.1,0.2,0.3) * 0.5;
+o=vec3(0.2,0.2,0.3) * 0.5;
 // o=vec3(uv*0.2,0.);
 
 // vec2 c = vec2(uv.x*3.5-2.5, uv.y*2.0-1.0), z = vec2(0.0);

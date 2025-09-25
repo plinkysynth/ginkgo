@@ -120,7 +120,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    #define CLANG_OPTIONS "-x c -g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -D LIVECODE"
+    #define CLANG_OPTIONS "-x c -g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -D LIVECODE -I. -Isrc/"
     snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");

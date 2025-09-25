@@ -280,8 +280,8 @@ const char *kFS = SHADER(
     });
 // clang-format on
 
-EditorState audio_tab = {.fname = "dsp.c", .is_shader = false};
-EditorState shader_tab = {.fname = "f.glsl", .is_shader = true};
+EditorState audio_tab = {.fname = "livesrc/audio.c", .is_shader = false};
+EditorState shader_tab = {.fname = "livesrc/video.glsl", .is_shader = true};
 EditorState *curE = &audio_tab;
 GLuint prog = 0, prog2 = 0;
 GLuint vs = 0, fs = 0;
@@ -307,8 +307,8 @@ static void parse_error_log(EditorState *E) {
         }
         if (c[0] == '.' && c[1] == '/') c+=2;
         if (strncmp(c, E->fname, fnamelen) == 0 && c[fnamelen] == ':') {
-            char *colend = c+fnamelen+1;
-            int line = strtol(colend, &colend, 10);
+            const char *colend = c+fnamelen+1;
+            int line = strtol(colend, (char **)&colend, 10);
             if (line) {
                 while (*colend && !isspace(*colend)) ++colend;
                 while (isspace(*colend)) ++colend;

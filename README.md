@@ -1,5 +1,7 @@
 live coding innit
 
+[link to initial video on bluesky](https://bsky.app/profile/mmalex.bsky.social/post/3lzopol4hbc2c)
+
 ** NOT INTENDED TO BE USABLE FOR ANYONE EXCEPT ME **
 code is public just in the spirit of sharing, not releasing OSS.
 I have not decided on a license yet, so for now 'all rights reserved'.

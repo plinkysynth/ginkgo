@@ -54,11 +54,13 @@ uint32_t status_bar_color = 0;
 #define C_PUN 0x000aaa00u
 #define C_ERR 0xf00fff00u
 #define C_OK 0x080fff00u
-#define C_WARNING 0x860fff00u
+#define C_WARNING 0xfa400000u
+
+#define C_NOTE 0x0000f400u
 
 #define C_SLIDER 0x48f00000u
 #define C_SLIDER_RED 0xe43fff00u
-#define C_SLIDER_ORANGE 0xfa4fff00u
+#define C_SLIDER_ORANGE 0xfa400000u
 #define C_SLIDER_YELLOW 0xee200000u
 #define C_SLIDER_WHITE 0xeff00000u
 
@@ -147,7 +149,6 @@ vec2 rnd_disc_cauchy() {
 }
 vec3 c(vec2 uv) { 
     vec3 o=vec3(0.0); 
-    float t = iTime;
     // user code follows
 );
     
@@ -295,6 +296,30 @@ GLuint texFont = 0, texText = 0;
 
 float* closest_slider[16]={}; // 16 closest sliders to the cursor, for midi cc
 
+static void parse_error_log(EditorState *E) {
+    hmfree(E->error_msgs);
+    E->error_msgs = NULL;
+    int fnamelen = strlen(E->fname);
+    for (const char *c = E->last_compile_log; *c; c++) {
+        int col = 0, line = 0;
+        if (sscanf(c, "ERROR: %d:%d:", &col, &line) == 2) {
+            hmput(E->error_msgs, line - 1, c);
+        }
+        if (c[0] == '.' && c[1] == '/') c+=2;
+        if (strncmp(c, E->fname, fnamelen) == 0 && c[fnamelen] == ':') {
+            char *colend = c+fnamelen+1;
+            int line = strtol(colend, &colend, 10);
+            if (line) {
+                while (*colend && !isspace(*colend)) ++colend;
+                while (isspace(*colend)) ++colend;
+                //printf("compile error on line %d, column %d, [%s]\n", line, col, colend);
+                hmput(E->error_msgs, line - 1, colend);
+            }
+        }
+        while (*c && *c != '\n')
+            c++;
+    }
+}
 
 static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
@@ -303,33 +328,23 @@ static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
     GLint ok = 0;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (E) {
-        free(E->last_compile_log);
+        stbds_arrfree(E->last_compile_log);
         E->last_compile_log = NULL;
-        hmfree(E->error_msgs);
+        stbds_hmfree(E->error_msgs);
         E->error_msgs = NULL;
     }
-    if (!ok) {
+    if (!ok && E) {
         GLint len = 0;
         glGetShaderiv(s, GL_INFO_LOG_LENGTH, &len);
-        char *last_compile_log = (char *)malloc(len > 1 ? len : 1);
+        stbds_arrsetlen(E->last_compile_log, len > 1 ? len : 1);
+        char *last_compile_log = E->last_compile_log;
         glGetShaderInfoLog(s, len, NULL, last_compile_log);
         fprintf(stderr, "Shader compile failed:\n[%s]\n", last_compile_log);
-        if (E) {
-            E->last_compile_log = last_compile_log;
-            for (const char *c = last_compile_log; *c; c++) {
-                int col = 0, line = 0;
-                if (sscanf(c, "ERROR: %d:%d:", &col, &line) == 2) {
-                    hmput(E->error_msgs, line - 1, c);
-                }
-                while (*c && *c != '\n')
-                    c++;
-            }
-            set_status_bar(C_ERR, "Shader compile failed - %d errors", (int)hmlen(E->error_msgs));
-        } else {
-            free(last_compile_log);
-        }
-        return 0;
+        parse_error_log(E);
+        set_status_bar(C_ERR, "Shader compile failed - %d errors", (int)hmlen(E->error_msgs));
     }
+    if (!ok)
+        return 0;
     return s;
 }
 
@@ -532,6 +547,22 @@ static inline unsigned hash_span(const char *s, const char *e) {
 static inline int is_ident_start(unsigned c) { return (c == '_') || ((c | 32) - 'a' < 26); }
 static inline int is_ident_cont(unsigned c) { return is_ident_start(c) || (c - '0' < 10); }
 static inline int is_space(unsigned c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+
+static inline int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
+    if (allow_p_prefix && e>s+2 && s[0]=='P' && s[1]=='_') {
+        s+=2;
+    }
+    if (s>=e) return -1;
+    if (s[0]<'A' || s[0]>'G') return -1;
+    const static int note_indices[7] = {9, 11, 0,2,4,5,7};
+    int note = note_indices[*s++-'A'];    
+    if (s>=e) return -1;
+    if (s[0]=='s') { note++; if (++s>=e) return -1; } else if (s[0]=='b') { note--; if (++s>=e) return -1; }
+    if (s[0]<'0' || s[0]>'9') return -1;
+    int octave = *s++-'0';
+    if (s!=e) return -1;
+    return note + octave*12;
+}
 
 static inline int unary_sign_context(unsigned prev) {
     return !(is_ident_cont(prev) || prev == ')' || prev == ']' || prev == '}' || prev == '.');
@@ -764,7 +795,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     } else {
         memset(closest_slider, 0, sizeof(closest_slider));
     }
-    int tmw = fbw / E->font_width;
+    int tmw = (fbw-64.f) / E->font_width;
     for (int i = 0; i <= t.n + 10;) {
         unsigned h = 0;
         char c = tok_get(&t, i);
@@ -827,6 +858,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 col = C_DEF;
                 j = scan_ident(t.str, i, t.n);
                 h = hash_span(t.str + i, t.str + j);
+                int midinote = parse_midinote(t.str + i, t.str + j, 1);
+                if (midinote>=0) {
+                    col = C_NOTE;
+                } else
                 switch (h) {
                     CASE8("void", "float", "double", "int", "uint", "char", "short", "long")
                         : CASE8("signed", "unsigned", "bool", "size_t", "ptrdiff_t", "ssize_t", "off_t", "time_t")
@@ -896,9 +931,11 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 // look for an error message
                 const char *errline = hmget(E->error_msgs, t.y);
                 if (errline) {
+                    uint32_t errcol = C_ERR;
+                    if (strncasecmp(errline, "warning:", 8) == 0) errcol = C_WARNING;
                     for (; *errline && *errline != '\n'; errline++) {
                         if (t.x < TMW && t.y >= 0 && t.y < TMH)
-                            t.ptr[t.y * TMW + t.x] = C_ERR | (unsigned char)(*errline);
+                            t.ptr[t.y * TMW + t.x] = errcol | (unsigned char)(*errline);
                         t.x++;
                     }
                 } else if (t.y>=0 && t.y<TMH && sliders[t.y]) {
@@ -1313,7 +1350,8 @@ int main(int argc, char **argv) {
         struct stat st;
         if (stat(audio_tab.fname, &st) == 0 && st.st_mtime != last) {
             last = st.st_mtime;
-            try_to_compile_audio(audio_tab.fname);
+            try_to_compile_audio(audio_tab.fname, &audio_tab.last_compile_log);
+            parse_error_log(&audio_tab);
         }
     }
     ma_device_stop(&dev);

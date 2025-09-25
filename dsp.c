@@ -5,39 +5,21 @@
 //
 
 
+STATE_VERSION(1, )
 
-
-
-
-
-
-
-
-
-STATE_VERSION(1, float saw1; float saw2; float saw3; float s[5];)
-
-stereo do_sample(state *G, stereo inp, uint32_t sampleidx) {
-    float dt = 0.01287235 / 8000. * G->mx;     //* (2.f+G->cc[16]*6.);
-    float osc1 = sawo(G->saw1, dt);// * G->my * 0.01; // sawo(G->saw1+0.0125,dt);
-
-
-
-    float x=S0;
-    
-    
-    
-    float y=S0;
-    float r = 0.7;
-    float f = sinf(sampleidx * 0.000310f);
-    if (f < 0.f)
-        f = 0.f;
-    // f=tanf(f * PI/2.f);
-    f = f * f * f * f;
-    //osc1 = ladder(osc1, G->s, f, r);
-
-    G->saw1 = fracf(G->saw1 + dt);
-    return (stereo){osc1 * 0.25, osc1 * 0.25};
+stereo do_sample(stereo inp, U sampleidx) {
+    F chord1 = sawo(P_C3) + sawo(P_Eb4) + sawo(P_G4);
+    F chord2 = sawo(P_C3) + sawo(P_F4) + sawo(P_A4);
+    F chord3 = sawo(P_G3) + sawo(P_D3) + sawo(P_B3);
+    chord1 = chord1 * S0 + 
+        chord2 * S1 +
+        chord3 * S2;
+    F out = lpf4(chord1, 0.3);
+    //out = sino(0.125);
+    return (stereo){out * 0.25, out * 0.25};
 }
+
+
 
 
 

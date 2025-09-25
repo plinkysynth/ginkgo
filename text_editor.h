@@ -198,7 +198,7 @@ static inline bool isnewline(char c) { return c=='\n' || c=='\r'; }
 
 void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
     y += E->scroll_y;
-    int tmw = fbw / E->font_width;
+    int tmw = (fbw-64.f) / E->font_width;
     float fx = (x / E->font_width + 0.5f);
     float fy = (y / E->font_height);
     int cx = (int)fx;
@@ -357,8 +357,10 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                     
                 }
                 push_edit_op(E, ss, se, str, 0);
-                // E->select_idx = ss;
-                // E->cursor_idx = ss+strlen(str);
+                if (sy!=ey) {
+                    E->select_idx = ss;
+                    E->cursor_idx = ss+strlen(str);
+                }
                 free(str);
                 break;
             }        

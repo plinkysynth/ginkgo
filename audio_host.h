@@ -12,7 +12,6 @@ uint32_t scope_pos = 0;
 
 static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
 static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
-static basic_state_t *G = NULL;                      // the state
 static void *g_handle = NULL;
 static int g_version = 0;
 static uint32_t sampleidx = 0;
@@ -113,7 +112,11 @@ int64_t get_time_us(void) {
     return tv.tv_sec * 1000000L + tv.tv_usec;
 }
 
-static bool try_to_compile_audio(const char *fname) {
+static bool try_to_compile_audio(const char *fname, char **errorlog) {
+    if (errorlog) {
+        stbds_arrfree(*errorlog);
+        *errorlog = NULL;
+    }
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
@@ -126,9 +129,32 @@ static bool try_to_compile_audio(const char *fname) {
         return false;
     }
     char buf[1024];
+    int n = strlen(fname);
+    fprintf(stderr, "compile %s\n", fname);
+    
     while (fgets(buf, sizeof(buf), fp)) {
         fprintf(stderr, "%s", buf);
+        int n = strlen(buf);
+        char* errbuf = stbds_arraddnptr(*errorlog, n);
+        memcpy(errbuf, buf, n);
+        // char *errmsg = buf;
+        // if (errmsg[0] == '.' && errmsg[1] == '/') errmsg+=2;
+        // if (strncmp(errmsg, fname, n) == 0 && errmsg[n] == ':') {
+        //     char *colend = errmsg+n+1;
+        //     int col = strtol(colend, &colend, 10);
+        //     int line = 0;
+        //     if (*colend != ':') {
+        //         line = col;
+        //     } else line = strtol(colend+1, &colend, 10);
+        //     if (line) {
+        //         if (*colend==':') ++colend;
+        //         while (isspace(*colend)) ++colend;
+        //         //printf("compile error on line %d, column %d, [%s]\n", line, col, colend);
+        //         hmput(*error_msgs, line - 1, colend);
+        //     }
+        // }
     }
+    stbds_arrput(*errorlog, 0);
     int rc = pclose(fp);
     int64_t t1 = get_time_us();
     if (rc!=0)

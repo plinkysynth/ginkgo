@@ -9,6 +9,72 @@
 #define OVERSAMPLE 2
 #define SAMPLE_RATE_OUTPUT 48000
 #define SAMPLE_RATE (SAMPLE_RATE_OUTPUT * OVERSAMPLE)
+#define RARE(x) __builtin_expect(x, 0)
+#define COMMON(x) __builtin_expect(x, 1)
+#define noinline __attribute__((noinline))
+#define alwaysinline __attribute__((always_inline))
+
+typedef float F;
+typedef int I;
+typedef uint32_t U;
+
+#include "notes.h"
+
+typedef struct bump_array_t {
+    int i, n; // n is the high watermark, the data array points at data4 if possible, or allocates in blocks of power of 2
+    float *data;
+    float data4[4];
+} bump_array_t;
+
+static inline int next_pow2(int n) {
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    return n + 1;
+}
+
+static noinline void ba_grow(bump_array_t *sa, int newn) {
+    int oldallocsize = next_pow2(sa->n);
+    int newallocsize = next_pow2(newn);
+    if (oldallocsize == newallocsize)
+        return;
+    float *newdata = (newn <= 4) ? sa->data4 : calloc(newallocsize, sizeof(float));
+    memcpy(newdata, sa->data, sa->n * sizeof(float));
+    // if (sa->data != sa->data4)
+    //     free(sa->data); // let it leak :)
+    sa->data = newdata;
+    sa->n = newn;
+}
+
+static inline float *ba_get(bump_array_t *sa, int count) {
+    int i = sa->i;
+    if (RARE(i + count > sa->n))
+        ba_grow(sa, i + count);
+    sa->i += count;
+    return &sa->data[i];
+}
+
+#define STATE_BASIC_FIELDS                                                                                                         \
+    int _ver;                                                                                                                      \
+    int _size;                                                                                                                     \
+    int reloaded;                                                                                                                  \
+    uint8_t midi_cc[128];                                                                                                          \
+    uint32_t midi_cc_gen[128];                                                                                                     \
+    int cursor_x, cursor_y;                                                                                                        \
+    float mx, my;                                                                                                                  \
+    int mb;                                                                                                                        \
+    double iTime;                                                                                                                  \
+    bump_array_t sliders[16];                                                                                                      \
+    bump_array_t audio_bump;
+
+typedef struct basic_state_t {
+    STATE_BASIC_FIELDS
+} basic_state_t;
+
+basic_state_t *G;
 
 #define PI 3.14159265358979323846f
 #define TAU 6.28318530717958647692f
@@ -32,6 +98,11 @@ static inline float maxf(float a, float b) { return a > b ? a : b; }
 static inline float clampf(float a, float min, float max) { return a < min ? min : a > max ? max : a; }
 static inline float squaref(float x) { return x * x; }
 static inline float fracf(float x) { return x - floorf(x); }
+
+static inline float pow2(float x) { return x * x; }
+static inline float pow4(float x) { x=x*x; return x * x; }
+
+static inline float saturate(float x) { return clampf(x, 0.f, 1.f); }
 
 static inline float lin2db(float x) { return 8.6858896381f * logf(maxf(1e-20f, x)); }
 static inline float db2lin(float x) { return expf(x / 8.6858896381f); }
@@ -130,13 +201,54 @@ static inline stereo saturate_stereo_tanh(stereo s) { return (stereo){.l = tanhf
 
 static inline stereo saturate_stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
-static inline float lpf_1pole(float state[1], float inp, float k) { return state[0] += (inp - state[0]) * k; }
-
 static inline float biquad(float state[2], float x, float b0, float b1, float b2, float a1, float a2) {
     float y = b0 * x + state[0];
     state[0] = b1 * x - a1 * y + state[1];
     state[1] = b2 * x - a2 * y;
     return y;
+}
+static inline float alpha_butter_from_s(float s){ return 0.7071067811865475f * s; }
+
+static inline float biquad_lpf(float state[2], float x, float c, float alpha)
+{
+    const float k  = 1.0f / (1.0f + alpha);
+    const float b0 = 0.5f * (1.0f - c) * k;      // b2=b0, b1=2*b0
+    const float a1 = (-2.0f * c) * k;
+    const float a2 = (1.0f - alpha) * k;
+    //const float b1 = 2.f*b0, b2 = b0;
+    const float t = b0 * x;
+    const float y = t + state[0];
+    state[0] = (t + t) - a1 * y + state[1];      // b1*x = 2*b0*x
+    state[1] =  t       - a2 * y;                // b2*x = b0*x
+    return y;
+}
+
+static inline float biquad_hpf(float state[2], float x, float c, float alpha)
+{
+    const float k  = 1.0f / (1.0f + alpha);
+    const float b0 = 0.5f * (1.0f + c) * k;      // b2=b0, b1=-2*b0
+    const float a1 = (-2.0f * c) * k;
+    const float a2 = (1.0f - alpha) * k;
+    //const float b1 = -2.f*b0, b2 = b0;
+    const float t = b0 * x;
+    const float y = t + state[0];
+    state[0] = -(t + t) - a1 * y + state[1];     // b1*x = -2*b0*x
+    state[1] =   t       - a2 * y;               // b2*x = b0*x
+    return y;
+}
+
+static inline float lpfbq(float x, float fc) {
+    fc *= HALF_PI;
+    float s = sinf(fc), c=cosf(fc);
+    float *state = ba_get(&G->audio_bump, 2);
+    return biquad_lpf(state, x, c, alpha_butter_from_s(s));
+}
+
+static inline float hpfbq(float x, float fc) {
+    fc *= HALF_PI;
+    float s = sinf(fc), c=cosf(fc);
+    float *state = ba_get(&G->audio_bump, 2);
+    return biquad_hpf(state, x, c, alpha_butter_from_s(s));
 }
 
 static inline float sample_linear(float pos, const float *smpl) {
@@ -147,13 +259,7 @@ static inline float sample_linear(float pos, const float *smpl) {
     return s0 + t * (s1 - s0);
 }
 
-static inline float sample_catmull_rom(float pos, const float *smpl) {
-    int i = (int)floorf(pos);
-    float t = pos - (float)i;
-    float s0 = smpl[i + 0];
-    float s1 = smpl[i + 1];
-    float s2 = smpl[i + 2];
-    float s3 = smpl[i + 3];
+static inline float catmull_rom(float s0, float s1, float s2, float s3, float t) {
     // Catmull–Rom coefficients (a = -0.5)
     float c0 = s1;
     float c1 = 0.5f * (s2 - s0);
@@ -161,6 +267,19 @@ static inline float sample_catmull_rom(float pos, const float *smpl) {
     float c3 = -0.5f * s0 + 1.5f * s1 - 1.5f * s2 + 0.5f * s3;
     return ((c3 * t + c2) * t + c1) * t + c0;
 }
+
+static inline float sample_catmull_rom(float pos, const float *smpl) {
+    int i = (int)floorf(pos);
+    return catmull_rom(smpl[i + 0], smpl[i + 1], smpl[i + 2], smpl[i + 3], pos - (float)i);
+}
+  
+uint32_t rnd_seed = 1;
+
+static inline float rnd01(void) { rnd_seed = pcg_next(rnd_seed); return (float)(rnd_seed & 0xffffff) * (1.f/16777216.f); }
+static inline float rndt(void) { return rnd01() + rnd01() - 1.f; }
+static inline float rdnn(void) { float x = rnd01() + rnd01() + rnd01() + rnd01() + rnd01() + rnd01() - 3.f; return x * 1.4f; }
+
+
 static const int blep_os = 16;
 static const float minblep_table[129] = { // minBLEP correction for a unit step input; 16x oversampling
     -1.000000000f, -0.998811289f, -0.996531062f, -0.992795688f, -0.987211296f, -0.979364361f, -0.968834290f, -0.955206639f,
@@ -181,9 +300,13 @@ static const float minblep_table[129] = { // minBLEP correction for a unit step 
     -0.000953324f, -0.000495978f, -0.000134058f, 0.000123860f,  0.000276211f,  0.000327791f,  0.000288819f,  0.000173761f,
     0.000000000f};
 
-static inline float sino(float phase, float dphase) { return sinf(TAU * phase); }
+static inline float sino(float dphase) { 
+    float *phase = ba_get(&G->audio_bump, 1);
+    *phase=fracf(*phase + dphase);
+    return sinf(TAU * *phase); }
 
 static inline float minblep(float phase, float dphase) {
+    if (dphase<=0.f) return 0.f;
     float bleppos = (phase / dphase * (blep_os / OVERSAMPLE));
     if (bleppos >= 128 || bleppos < 0.f)
         return 0.f;
@@ -191,73 +314,89 @@ static inline float minblep(float phase, float dphase) {
     return minblep_table[i] + (minblep_table[i + 1] - minblep_table[i]) * (bleppos - i);
 }
 
-static inline float sawo(float phase, float dphase) {
-    phase = fracf(phase);
-    float saw = phase * 2. - 1.f;
-    saw -= 2.f * minblep(phase, dphase);
+static inline float rndsmooth(float dphase) { 
+    float *phase = ba_get(&G->audio_bump, 5);
+    float ph = (*phase + dphase);
+    if (RARE(ph>=1.f)) {
+        phase[1] = phase[2];
+        phase[2] = phase[3];
+        phase[3] = phase[4];
+        phase[4] = rndt();
+        ph-=1.f;
+    }
+    phase[0] = ph;
+    return catmull_rom(phase[1], phase[2], phase[3], phase[4], ph);
+}
+
+
+
+static inline float sawo(float dphase) {
+    float *phase = ba_get(&G->audio_bump, 1);
+    float ph = fracf(*phase);
+    float saw = ph * 2.f - 1.f;
+    saw -= 2.f * minblep(ph, dphase);
+    *phase = ph + dphase;
     return saw;
 }
-static inline float sawo_aliased(float phase, float dphase) {
-    phase = fracf(phase);
-    return 2.f * phase - 1.f;
+
+static inline float sawo_aliased(float dphase) {
+    float *phase = ba_get(&G->audio_bump, 1);
+    float ph = *phase = fracf(*phase+dphase);
+    return 2.f * ph - 1.f;
+}
+
+static inline float lpf1(float x, float f) {
+    float *state = ba_get(&G->audio_bump, 1);
+    return state[0] += (x - state[0]) * f;
+}
+static inline float lpf2(float x, float f) {
+    float *state = ba_get(&G->audio_bump, 2);
+    state[0] += (x - state[0]) * f;
+    return state[1] += (state[0] - state[1]) * f;
+}
+static inline float lpf4(float x, float f) {
+    float *state = ba_get(&G->audio_bump, 4);
+    state[0] += (x - state[0]) * f;
+    state[1] += (state[0] - state[1]) * f;
+    state[2] += (state[1] - state[2]) * f;
+    return state[3] += (state[2] - state[3]) * f;
+}
+
+
+
+static inline void lorenz_euler(float s[3], float dt, float sigma, float beta, float rho){
+    if (dt > 1e-3f) dt=1e-3f;
+    float x=s[0], y=s[1], z=s[2];
+    float dx = sigma*(y - x);
+    float dy = x*(rho - z) - y;
+    float dz = x*y - beta*z;
+    s[0] = x + dt*dx;
+    s[1] = y + dt*dy;
+    s[2] = z + dt*dz;
+}
+
+static inline float *lorenz(float dt) {
+    float *s = ba_get(&G->audio_bump, 3);
+    if (s[0]==0.f && s[1]==0.f && s[2]==0.f) {
+        s[0] = -1.f;
+        s[1] = 1.f;
+        s[2] = 10.f;
+    }
+    lorenz_euler(s, dt, 10.f, 2.66666666666666666666f, 28.f);
+    return s;
 }
 
 // midi note 69 is A4 (440hz)
 // what note is 48khz?
 // 150.2326448623 :)
-float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f) * (1.f / 12.f)); }
+static inline float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f - (OVERSAMPLE-1)*12.f) * (1.f / 12.f)); }
 
-#define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
+#define P_(x) midi2dphase(x)
 
-#define RARE(x) __builtin_expect(x, 0)
-#define COMMON(x) __builtin_expect(x, 1)
-#define noinline __attribute__((noinline))
-#define alwaysinline __attribute__((always_inline))
+//#define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
 
-typedef void *(*dsp_fn_t)(void *G, stereo *audio, int frames, int reloaded, uint32_t sampleidx);
 
-typedef struct bump_array_t {
-    int i, n; // n is the high watermark, the data array points at data4 if possible, or allocates in blocks of power of 2
-    float *data;
-    float data4[4];
-} bump_array_t;
-
-static noinline void ba_grow(bump_array_t *sa, int newn) {
-    int oldallocsize = (sa->n + 1023) & ~1023;
-    int newallocsize = (newn + 1023) & ~1023;
-    if (oldallocsize == newallocsize)
-        return;
-    float *newdata = (newn <= 4) ? sa->data4 : calloc(newallocsize, sizeof(float));
-    memcpy(newdata, sa->data, sa->n * sizeof(float));
-    // if (sa->data != sa->data4)
-    //     free(sa->data); // let it leak :)
-    sa->data = newdata;
-    sa->n = newn;
-}
-
-static inline float *ba_get(bump_array_t *sa, int count) {
-    int i = sa->i;
-    if (RARE(i + count > sa->n))
-        ba_grow(sa, i + count);
-    sa->i += count;
-    return &sa->data[i];
-}
-
-#define STATE_BASIC_FIELDS                                                                                                         \
-    int _ver;                                                                                                                      \
-    int _size;                                                                                                                     \
-    int reloaded;                                                                                                                  \
-    uint8_t midi_cc[128];                                                                                                          \
-    uint32_t midi_cc_gen[128];                                                                                                      \
-    int cursor_x, cursor_y;                                                                                                        \
-    float mx, my;                                                                                                                  \
-    int mb;                                                                                                                        \
-    double iTime;                                                                                                                  \
-    bump_array_t sliders[16];
-
-typedef struct basic_state_t {
-    STATE_BASIC_FIELDS
-} basic_state_t;
+typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G,stereo *audio, int frames, int reloaded, uint32_t sampleidx);
 
 static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
     slider_idx &= 15;
@@ -267,7 +406,7 @@ static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
     return value_line[0];
 }
 
-#define S_(slider_idx) do_slider(slider_idx, (basic_state_t*)G, __LINE__)
+#define S_(slider_idx) do_slider(slider_idx, (basic_state_t *)G, __LINE__)
 #define S0 S_(0)
 #define S1 S_(1)
 #define S2 S_(2)
@@ -300,28 +439,42 @@ static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
         }                                                                                                                          \
     }
 
+#ifdef LIVECODE
+typedef struct state state;
+stereo do_sample(stereo inp, uint32_t sampleidx);
+size_t get_state_size(void);
+int get_state_version(void);
+__attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded, uint32_t sampleidx) {
+    size_t state_size = get_state_size();
+    int version = get_state_version();
+    if (!_G || _G->_ver != version || _G->_size != state_size) {
+        /* free(G); - safer to just let it leak :)  virtual memory ftw  */
+        _G = calloc(1, state_size);
+        _G->_ver = version;
+        _G->_size = state_size;
+    }
+    G=_G;
+    G->reloaded = reloaded;
+    if (!G->audio_bump.data) {
+        ba_grow(&G->audio_bump, 65536);
+    }
+    for (int i = 0; i < frames; i++) {
+        for (int slider_idx = 0; slider_idx < 16; slider_idx++)
+            G->sliders[slider_idx].i = 0;
+        G->audio_bump.i = 0;
+        audio[i] = do_sample(audio[i], sampleidx++);
+        for (int slider_idx = 0; slider_idx < 16; slider_idx++)
+            G->sliders[slider_idx].n = G->sliders[slider_idx].i;
+        G->reloaded = 0;
+    }
+    return G;
+}
+#endif
+
 #define STATE_VERSION(version, ...)                                                                                                \
     typedef struct state {                                                                                                         \
         STATE_BASIC_FIELDS                                                                                                         \
         __VA_ARGS__                                                                                                                \
     } state;                                                                                                                       \
-    stereo do_sample(state *G, stereo inp, uint32_t sampleidx);                                                                    \
-    __attribute__((visibility("default"))) void *dsp(void *_G, stereo *audio, int frames, int reloaded, uint32_t sampleidx) {      \
-        state *G = (state *)_G;                                                                                                    \
-        if (!G || G->_ver != version || G->_size != sizeof(state)) {                                                               \
-            /* free(G); - safer to just let it leak :)  virtual memory ftw  */                                                     \
-            G = calloc(1, sizeof(state));                                                                                          \
-            G->_ver = version;                                                                                                     \
-            G->_size = sizeof(state);                                                                                              \
-        }                                                                                                                          \
-        G->reloaded = reloaded;                                                                                                    \
-        for (int i = 0; i < frames; i++) {                                                                                         \
-            for (int slider_idx = 0; slider_idx < 16; slider_idx++)                                                                \
-                G->sliders[slider_idx].i = 0;                                                                                      \
-            audio[i] = do_sample((state *)G, audio[i], sampleidx++);                                                               \
-            for (int slider_idx = 0; slider_idx < 16; slider_idx++)                                                                \
-                G->sliders[slider_idx].n = G->sliders[slider_idx].i;                                                                                      \
-            G->reloaded = 0;                                                                                                       \
-        }                                                                                                                          \
-        return G;                                                                                                                  \
-    }
+    size_t get_state_size(void) { return sizeof(state); }                                                                          \
+    int get_state_version(void) { return version; }

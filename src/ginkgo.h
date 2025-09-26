@@ -14,6 +14,15 @@
 #define noinline __attribute__((noinline))
 #define alwaysinline __attribute__((always_inline))
 
+#define ROOT2 1.41421356237309504880f
+#define SQRT2 1.41421356237309504880f
+#define ROOT3 1.73205080756887729352f
+#define SQRT3 1.73205080756887729352f
+#define ROOT5 2.23606797749978969640f
+#define SQRT5 2.23606797749978969640f
+#define SIN45 0.70710678118654752440f
+#define QBUTTER 0.70710678118654752440f
+
 typedef float F;
 typedef int I;
 typedef uint32_t U;
@@ -57,6 +66,11 @@ static inline float *ba_get(bump_array_t *sa, int count) {
     return &sa->data[i];
 }
 
+typedef struct bq_t {
+    float b0, b1, b2, a1, a2;
+} bq_t;
+
+
 #define STATE_BASIC_FIELDS                                                                                                         \
     int _ver;                                                                                                                      \
     int _size;                                                                                                                     \
@@ -68,6 +82,7 @@ static inline float *ba_get(bump_array_t *sa, int count) {
     int mb;                                                                                                                        \
     double iTime;                                                                                                                  \
     uint32_t sampleidx;                                                                                                            \
+    bq_t reverb_lpf, reverb_hpf;                                                                                                   \
     bump_array_t sliders[16];                                                                                                      \
     bump_array_t audio_bump;
 
@@ -75,7 +90,8 @@ typedef struct basic_state_t {
     STATE_BASIC_FIELDS
 } basic_state_t;
 
-basic_state_t *G;
+basic_state_t *_BG;
+#define G _BG
 
 #define PI 3.14159265358979323846f
 #define TAU 6.28318530717958647692f
@@ -101,7 +117,11 @@ static inline float squaref(float x) { return x * x; }
 static inline float fracf(float x) { return x - floorf(x); }
 
 static inline float pow2(float x) { return x * x; }
-static inline float pow4(float x) { x=x*x; return x * x; }
+static inline float pow4(float x) {
+    x = x * x;
+    return x * x;
+}
+static inline float vol(float x) { return pow4(x); } // a nice volume curve thats kinda db-like but goes to exactly 0 and 1.
 
 static inline float saturate(float x) { return clampf(x, 0.f, 1.f); }
 
@@ -119,7 +139,8 @@ typedef struct stereo {
     float l, r;
 } stereo;
 
-#define STEREO(l, r) (stereo){l, r}
+#define STEREO(l, r)                                                                                                               \
+    (stereo) { l, r }
 
 static inline stereo stadd(stereo a, stereo b) { return STEREO(a.l + b.l, a.r + b.r); }
 static inline stereo stsub(stereo a, stereo b) { return STEREO(a.l - b.l, a.r - b.r); }
@@ -209,54 +230,120 @@ static inline stereo stereo_medium(stereo s) { return (stereo){.l = tanhf(s.l), 
 
 static inline stereo stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
-static inline float biquad(float state[2], float x, float b0, float b1, float b2, float a1, float a2) {
-    float y = b0 * x + state[0];
-    state[0] = b1 * x - a1 * y + state[1];
-    state[1] = b2 * x - a2 * y;
-    return y;
-}
-static inline float alpha_butter_from_s(float s){ return 0.7071067811865475f * s; }
 
-static inline float biquad_lpf(float state[2], float x, float c, float alpha)
-{
-    const float k  = 1.0f / (1.0f + alpha);
-    const float b0 = 0.5f * (1.0f - c) * k;      // b2=b0, b1=2*b0
-    const float a1 = (-2.0f * c) * k;
-    const float a2 = (1.0f - alpha) * k;
-    //const float b1 = 2.f*b0, b2 = b0;
-    const float t = b0 * x;
-    const float y = t + state[0];
-    state[0] = (t + t) - a1 * y + state[1];      // b1*x = 2*b0*x
-    state[1] =  t       - a2 * y;                // b2*x = b0*x
-    return y;
+bq_t bqlpf(float fc, float q) {
+    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
+    float alpha = s / (2.0f * q);
+    float k = 1.0f / (1.0f + alpha);
+    return (bq_t){.b0 = 0.5f * (1.0f - c) * k,
+                  .b1 = (1.0f - c) * k, // was wrong in your snippet
+                  .b2 = 0.5f * (1.0f - c) * k,
+                  .a1 = -2.0f * c * k,
+                  .a2 = (1.0f - alpha) * k};
 }
 
-static inline float biquad_hpf(float state[2], float x, float c, float alpha)
-{
-    const float k  = 1.0f / (1.0f + alpha);
-    const float b0 = 0.5f * (1.0f + c) * k;      // b2=b0, b1=-2*b0
-    const float a1 = (-2.0f * c) * k;
-    const float a2 = (1.0f - alpha) * k;
-    //const float b1 = -2.f*b0, b2 = b0;
-    const float t = b0 * x;
-    const float y = t + state[0];
-    state[0] = -(t + t) - a1 * y + state[1];     // b1*x = -2*b0*x
-    state[1] =   t       - a2 * y;               // b2*x = b0*x
+bq_t bqhpf(float fc, float q) {
+    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
+    float alpha = s / (2.0f * q);
+    float k = 1.0f / (1.0f + alpha);
+    return (bq_t){.b0 = 0.5f * (1.0f + c) * k,
+                  .b1 = -(1.0f + c) * k,
+                  .b2 = 0.5f * (1.0f + c) * k,
+                  .a1 = -2.0f * c * k,
+                  .a2 = (1.0f - alpha) * k};
+}
+
+bq_t bqpeaking(float fc, float q, float gain_db) {
+    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
+    float alpha = s / (2.0f * q);
+    float A = powf(10.0f, gain_db / 40.0f); // linear gain for peaking EQ
+    float a0 = 1.0f + alpha / A;
+    float k = 1.0f / a0;
+    return (bq_t){.b0 = (1.0f + alpha * A) * k,
+                  .b1 = -2.0f * c * k,
+                  .b2 = (1.0f - alpha * A) * k,
+                  .a1 = -2.0f * c * k,
+                  .a2 = (1.0f - alpha / A) * k};
+}
+
+static inline bq_t bq_bandpass(float fc, float q) {
+    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
+    float alpha=s/(2.0f*q), k=1.0f/(1.0f+alpha);
+    return (bq_t){
+        .b0= alpha*k,
+        .b1= 0.0f,
+        .b2=-alpha*k,
+        .a1=-2.0f*c*k,
+        .a2=(1.0f-alpha)*k
+    };
+}
+
+static inline bq_t bq_notch(float fc, float q) {
+    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
+    float alpha=s/(2.0f*q), k=1.0f/(1.0f+alpha);
+    return (bq_t){
+        .b0= 1.0f*k,
+        .b1=-2.0f*c*k,
+        .b2= 1.0f*k,
+        .a1=-2.0f*c*k,
+        .a2=(1.0f-alpha)*k
+    };
+}
+
+static inline bq_t bq_lowshelf(float fc, float slope, float gain_db) {
+    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
+    float A=powf(10.0f, gain_db/40.0f);
+    float alpha=0.5f*s*sqrtf((A+1.0f/A)*(1.0f/slope-1.0f)+2.0f);
+    float t=2.0f*sqrtf(A)*alpha;
+
+    float a0=(A+1.0f)+(A-1.0f)*c + t; float k=1.0f/a0;
+    return (bq_t){
+        .b0= A*((A+1.0f)-(A-1.0f)*c + t)*k,
+        .b1= 2.0f*A*((A-1.0f)-(A+1.0f)*c)*k,
+        .b2= A*((A+1.0f)-(A-1.0f)*c - t)*k,
+        .a1=-2.0f*((A-1.0f)+(A+1.0f)*c)*k,
+        .a2=((A+1.0f)+(A-1.0f)*c - t)*k
+    };
+}
+
+static inline bq_t bq_highshelf(float fc, float slope, float gain_db) {
+    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
+    float A=powf(10.0f, gain_db/40.0f);
+    float alpha=0.5f*s*sqrtf((A+1.0f/A)*(1.0f/slope-1.0f)+2.0f);
+    float t=2.0f*sqrtf(A)*alpha;
+
+    float a0=(A+1.0f)-(A-1.0f)*c + t; float k=1.0f/a0;
+    return (bq_t){
+        .b0= A*((A+1.0f)+(A-1.0f)*c + t)*k,
+        .b1=-2.0f*A*((A-1.0f)+(A+1.0f)*c)*k,
+        .b2= A*((A+1.0f)+(A-1.0f)*c - t)*k,
+        .a1= 2.0f*((A-1.0f)-(A+1.0f)*c)*k,
+        .a2=((A+1.0f)-(A-1.0f)*c - t)*k
+    };
+}
+
+
+static inline float bqfilter(float state[2], float x, bq_t coeffs) {
+    float y = coeffs.b0 * x + state[0];
+    state[0] = coeffs.b1 * x - coeffs.a1 * y + state[1];
+    state[1] = coeffs.b2 * x - coeffs.a2 * y;
     return y;
 }
 
-static inline float lpfbq(float x, float fc) {
-    fc *= HALF_PI;
-    float s = sinf(fc), c=cosf(fc);
+static inline float bq(float x, bq_t coeffs) {
     float *state = ba_get(&G->audio_bump, 2);
-    return biquad_lpf(state, x, c, alpha_butter_from_s(s));
+    return bqfilter(state, x, coeffs);
 }
 
-static inline float hpfbq(float x, float fc) {
-    fc *= HALF_PI;
-    float s = sinf(fc), c=cosf(fc);
-    float *state = ba_get(&G->audio_bump, 2);
-    return biquad_hpf(state, x, c, alpha_butter_from_s(s));
+static inline stereo stbq(stereo s, bq_t coeffs) {
+    float *state = ba_get(&G->audio_bump, 4);
+    return (stereo){bqfilter(state, s.l, coeffs), bqfilter(state + 2, s.r, coeffs)};
+}
+
+static void init_basic_state(void) {
+    // init the darkening / downsampling filter for the reverb.
+    G->reverb_lpf = bqlpf(0.0625, QBUTTER);
+    G->reverb_hpf = bqhpf(0.125, QBUTTER);
 }
 
 static inline float sample_linear(float pos, const float *smpl) {
@@ -280,13 +367,18 @@ static inline float sample_catmull_rom(float pos, const float *smpl) {
     int i = (int)floorf(pos);
     return catmull_rom(smpl[i + 0], smpl[i + 1], smpl[i + 2], smpl[i + 3], pos - (float)i);
 }
-  
+
 uint32_t rnd_seed = 1;
 
-static inline float rnd01(void) { rnd_seed = pcg_next(rnd_seed); return (float)(rnd_seed & 0xffffff) * (1.f/16777216.f); }
+static inline float rnd01(void) {
+    rnd_seed = pcg_next(rnd_seed);
+    return (float)(rnd_seed & 0xffffff) * (1.f / 16777216.f);
+}
 static inline float rndt(void) { return rnd01() + rnd01() - 1.f; }
-static inline float rdnn(void) { float x = rnd01() + rnd01() + rnd01() + rnd01() + rnd01() + rnd01() - 3.f; return x * 1.4f; }
-
+static inline float rdnn(void) {
+    float x = rnd01() + rnd01() + rnd01() + rnd01() + rnd01() + rnd01() - 3.f;
+    return x * 1.4f;
+}
 
 static const int blep_os = 8;
 static const float minblep_table[129] = { // minBLEP correction for a unit step input; 16x oversampling
@@ -308,13 +400,15 @@ static const float minblep_table[129] = { // minBLEP correction for a unit step 
     -0.000953324f, -0.000495978f, -0.000134058f, 0.000123860f,  0.000276211f,  0.000327791f,  0.000288819f,  0.000173761f,
     0.000000000f};
 
-static inline float sino(float dphase) { 
+static inline float sino(float dphase) {
     float *phase = ba_get(&G->audio_bump, 1);
-    *phase=fracf(*phase + dphase);
-    return sinf(TAU * *phase); }
+    *phase = fracf(*phase + dphase);
+    return sinf(TAU * *phase);
+}
 
 static inline float minblep(float phase, float dphase) {
-    if (dphase<=0.f) return 0.f;
+    if (dphase <= 0.f)
+        return 0.f;
     float bleppos = (phase / dphase * (blep_os / OVERSAMPLE));
     if (bleppos >= 128 || bleppos < 0.f)
         return 0.f;
@@ -322,21 +416,19 @@ static inline float minblep(float phase, float dphase) {
     return minblep_table[i] + (minblep_table[i + 1] - minblep_table[i]) * (bleppos - i);
 }
 
-static inline float rndsmooth(float dphase) { 
+static inline float rndsmooth(float dphase) {
     float *phase = ba_get(&G->audio_bump, 5);
     float ph = (*phase + dphase);
-    if (RARE(ph>=1.f)) {
+    if (RARE(ph >= 1.f)) {
         phase[1] = phase[2];
         phase[2] = phase[3];
         phase[3] = phase[4];
         phase[4] = rndt();
-        ph-=1.f;
+        ph -= 1.f;
     }
     phase[0] = ph;
     return catmull_rom(phase[1], phase[2], phase[3], phase[4], ph);
 }
-
-
 
 static inline float sawo(float dphase) {
     float *phase = ba_get(&G->audio_bump, 1);
@@ -359,21 +451,20 @@ static inline float pwmo(float dphase, float duty) {
     return saw;
 }
 
-static inline float squareo(float dphase) {
-    return pwmo(dphase, 0.5f);
-}
+static inline float squareo(float dphase) { return pwmo(dphase, 0.5f); }
 
 static inline float trio(float dphase) {
     float *phase = ba_get(&G->audio_bump, 2);
     float ph = *phase = fracf(*phase + dphase);
     float tri = ph * 4.f - 1.f;
-    if (tri > 1.f) tri = 2.f - tri;
-    return phase[1] += (tri-phase[1]) * 0.25f;
+    if (tri > 1.f)
+        tri = 2.f - tri;
+    return phase[1] += (tri - phase[1]) * 0.25f;
 }
 
 static inline float sawo_aliased(float dphase) {
     float *phase = ba_get(&G->audio_bump, 1);
-    float ph = *phase = fracf(*phase+dphase);
+    float ph = *phase = fracf(*phase + dphase);
     return 2.f * ph - 1.f;
 }
 
@@ -406,9 +497,6 @@ static inline float lpf4(float x, float f) {
 //     if (envlevel>=1.f) state[0]=1; // switch to decay phase
 //     return state[1] = envlevel;
 
-
-
-
 //     if (gate<=0.f) {
 //         // release phase
 //     } else {
@@ -421,50 +509,100 @@ static inline float lpf4(float x, float f) {
 //     }
 //     }
 
+// }
 
-// } 
+static float reverbbuf[65536];
+static int reverb_pos = 0;
+#define AP(len)                                                                                                                    \
+  {                                                                                                                                \
+    int j = (i + len) & 65535;                                                                                                     \
+    float d = reverbbuf[j];                                                                                                        \
+    reverbbuf[i] = acc -= d * 0.5;                                                                                                 \
+    acc = (acc * 0.5) + d;                                                                                                         \
+    i = j;                                                                                                                         \
+  }
+#define DELAY(len)                                                                                                                 \
+  {                                                                                                                                \
+    reverbbuf[i] = acc;                                                                                                            \
+    int j = (i + len) & 65535;                                                                                                     \
+    acc = reverbbuf[j];                                                                                                            \
+    i = j;                                                                                                                         \
+  }
+
 
 static inline stereo reverb_internal(stereo inp) { // runs at 4x downsampled rate
-    return inp;
+    float acc = inp.l + inp.r;
+    const float decay = 0.95f;
+    static float top, right_fb;
+    float lout, rout;
+    int i = reverb_pos;
+    reverb_pos = (reverb_pos - 1) & 65535;
+    AP(142);
+    AP(107);
+    AP(379);
+    AP(277);
+    top=acc;
+    // left branch
+    acc=top + right_fb * decay;
+    AP(672); // wobble
+    lout=acc;
+    DELAY(4453);
+    acc*=decay;
+    AP(1800);
+    DELAY(3720);
+    // right branch
+    acc=top + acc * decay;
+    AP(908); // wobble
+    rout = acc;
+    DELAY(4217);
+    acc *=decay;
+    AP(2656);
+    DELAY(3162); // +1
+    right_fb = acc;
+
+    return STEREO(lout, rout);
 }
 
 static inline stereo reverb(stereo inp) {
-    stereo *state = (stereo*)ba_get(&G->audio_bump, (1+4+1)*2); // 1 accumulator for input, 4 for output, 1 for dc
+
+    float *state = ba_get(&G->audio_bump, 8 + 8); // 8 for filters, 8 for 4x stereo output samples
+    stereo *state2 = (stereo *)(state + 8);
     ////////////////////////// 4x DOWNSAMPLE
-    const static float lpf_factor = 0.065f; // quite dark
-    const static float hpf_factor = 0.015f;
-    inp = state[0] = (stereo){state[0].l + (inp.l - state[0].l) * lpf_factor, state[0].r + (inp.r - state[0].r) * lpf_factor};
-    stereo hpf = state[1] = (stereo){state[1].l + (inp.l - state[1].l) * hpf_factor, state[1].r + (inp.r - state[1].r) * hpf_factor};
-    inp = stsub(inp, hpf);
-    state+=2;
-    int outslot = (G->sampleidx>>2)&3;
+    inp = (stereo){
+        bqfilter(state, inp.l, G->reverb_lpf),
+        bqfilter(state+2, inp.r, G->reverb_lpf),
+    };
+    int outslot = (G->sampleidx >> 2) & 3;
     if ((G->sampleidx & 3) == 0) {
-        state[outslot] = reverb_internal(inp);
+        inp = (stereo){
+            bqfilter(state+4, inp.l, G->reverb_hpf),
+            bqfilter(state+6, inp.r, G->reverb_hpf),
+        };
+        state2[outslot] = reverb_internal(inp);
     }
     ////////////////////////// 4x CATMULL ROM UPSAMPLE
-    int t0 = (outslot-3)&3, t1 = (outslot-2)&3, t2 = (outslot-1)&3, t3 = outslot;
-    float f = ((G->sampleidx&3)+1) * 0.25f;
-    float lout = catmull_rom(state[t0].l, state[t1].l, state[t2].l, state[t3].l, f);
-    float rout = catmull_rom(state[t0].r, state[t1].r, state[t2].r, state[t3].r, f);
+    int t0 = (outslot - 3) & 3, t1 = (outslot - 2) & 3, t2 = (outslot - 1) & 3, t3 = outslot;
+    float f = ((G->sampleidx & 3) + 1) * 0.25f;
+    float lout = catmull_rom(state2[t0].l, state2[t1].l, state2[t2].l, state2[t3].l, f);
+    float rout = catmull_rom(state2[t0].r, state2[t1].r, state2[t2].r, state2[t3].r, f);
     return (stereo){lout, rout};
 }
 
-
-
-static inline void lorenz_euler(float s[3], float dt, float sigma, float beta, float rho){
-    if (dt > 1e-3f) dt=1e-3f;
-    float x=s[0], y=s[1], z=s[2];
-    float dx = sigma*(y - x);
-    float dy = x*(rho - z) - y;
-    float dz = x*y - beta*z;
-    s[0] = x + dt*dx;
-    s[1] = y + dt*dy;
-    s[2] = z + dt*dz;
+static inline void lorenz_euler(float s[3], float dt, float sigma, float beta, float rho) {
+    if (dt > 1e-3f)
+        dt = 1e-3f;
+    float x = s[0], y = s[1], z = s[2];
+    float dx = sigma * (y - x);
+    float dy = x * (rho - z) - y;
+    float dz = x * y - beta * z;
+    s[0] = x + dt * dx;
+    s[1] = y + dt * dy;
+    s[2] = z + dt * dz;
 }
 
 static inline float *lorenz(float dt) {
     float *s = ba_get(&G->audio_bump, 3);
-    if (s[0]==0.f && s[1]==0.f && s[2]==0.f) {
+    if (s[0] == 0.f && s[1] == 0.f && s[2] == 0.f) {
         s[0] = -1.f;
         s[1] = 1.f;
         s[2] = 10.f;
@@ -476,14 +614,13 @@ static inline float *lorenz(float dt) {
 // midi note 69 is A4 (440hz)
 // what note is 48khz?
 // 150.2326448623 :)
-static inline float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f - (OVERSAMPLE-1)*12.f) * (1.f / 12.f)); }
+static inline float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f - (OVERSAMPLE - 1) * 12.f) * (1.f / 12.f)); }
 
 #define P_(x) midi2dphase(x)
 
-//#define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
+// #define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
 
-
-typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G,stereo *audio, int frames, int reloaded);
+typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G, stereo *audio, int frames, int reloaded);
 
 static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
     slider_idx &= 15;
@@ -529,6 +666,7 @@ static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
 #ifdef LIVECODE
 typedef struct state state;
 stereo do_sample(stereo inp);
+void init_state(void);
 size_t get_state_size(void);
 int get_state_version(void);
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
@@ -540,8 +678,12 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
         _G->_ver = version;
         _G->_size = state_size;
     }
-    G=_G;
+    G = _G;
     G->reloaded = reloaded;
+    if (reloaded) {
+        init_basic_state();
+        init_state();
+    }
     if (!G->audio_bump.data) {
         ba_grow(&G->audio_bump, 65536);
     }
@@ -566,3 +708,8 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
     } state;                                                                                                                       \
     size_t get_state_size(void) { return sizeof(state); }                                                                          \
     int get_state_version(void) { return version; }
+
+#ifdef LIVECODE
+#undef G
+#define G ((state *)_BG)
+#endif

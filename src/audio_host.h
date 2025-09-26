@@ -14,7 +14,6 @@ static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
 static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
 static void *g_handle = NULL;
 static int g_version = 0;
-static uint32_t sampleidx = 0;
 static FILE *wav_recording = NULL;
 static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) {
     stereo *o = (stereo *)out;
@@ -39,7 +38,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         memcpy(audio, i, frames * sizeof(stereo));
     }
     if (dsp)
-        G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp, sampleidx);
+        G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp);
     // if (!wav_recording) {
     //     wav_recording = fopen("recording.wav", "wb");
     //     write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
@@ -48,11 +47,11 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         fwrite(audio, sizeof(stereo), frames * OVERSAMPLE, wav_recording);
         int pos = ftell(wav_recording);
         fseek(wav_recording, 0, SEEK_SET);
-        write_wav_header(wav_recording, sampleidx, SAMPLE_RATE, 2);
+        write_wav_header(wav_recording, G->sampleidx, SAMPLE_RATE, 2);
         fseek(wav_recording, 0, SEEK_END);
     }
     
-    sampleidx += frames * OVERSAMPLE;
+    
     // downsample the output audio and update the scopes...
 #define K 16 // the kernel has this many non-center non-zero taps.
     // example with K=3:
@@ -70,8 +69,8 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         // saturation on output...
         stereo acc;
         if (OVERSAMPLE == 2) {
-            history[history_pos & 63] = saturate_stereo_hard(ensure_finite_stereo(audio[k*2+0]));
-            history[(history_pos + 1) & 63] = saturate_stereo_hard(ensure_finite_stereo(audio[k*2+1]));
+            history[history_pos & 63] = stereo_hard(ensure_finite_stereo(audio[k*2+0]));
+            history[(history_pos + 1) & 63] = stereo_hard(ensure_finite_stereo(audio[k*2+1]));
             history_pos += 2;
             // 2x downsample FIR
             int center_idx = history_pos - K * 2;
@@ -85,7 +84,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
                 acc.r += fir_kernel[tap] * (t0.r + t1.r);
             }
         } else {
-            acc = saturate_stereo_hard(audio[k]);
+            acc = stereo_hard(audio[k]);
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;

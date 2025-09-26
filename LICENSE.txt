@@ -6,3 +6,4 @@ TODO: full license info
 
 3rdparty/miniaudio.* and 3rdparty/stb_* are public domain
 
+brutalita font is from https://github.com/javierbyte/brutalita, Copyright (c) 2021, Javier Bórquez, All rights reserved.

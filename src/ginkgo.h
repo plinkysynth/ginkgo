@@ -67,6 +67,7 @@ static inline float *ba_get(bump_array_t *sa, int count) {
     float mx, my;                                                                                                                  \
     int mb;                                                                                                                        \
     double iTime;                                                                                                                  \
+    uint32_t sampleidx;                                                                                                            \
     bump_array_t sliders[16];                                                                                                      \
     bump_array_t audio_bump;
 
@@ -118,8 +119,15 @@ typedef struct stereo {
     float l, r;
 } stereo;
 
-static inline float mid(stereo s) { return (s.l + s.r) * 0.5f; }
-static inline float side(stereo s) { return (s.l - s.r) * 0.5f; }
+#define STEREO(l, r) (stereo){l, r}
+
+static inline stereo stadd(stereo a, stereo b) { return STEREO(a.l + b.l, a.r + b.r); }
+static inline stereo stsub(stereo a, stereo b) { return STEREO(a.l - b.l, a.r - b.r); }
+static inline stereo stmul(stereo a, float b) { return STEREO(a.l * b, a.r * b); }
+
+static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
+static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }
+static inline stereo midside2st(float mid, float side) { return STEREO(mid + side, mid - side); }
 
 inline float fast_tanh(float x) {
     float x2 = x * x;
@@ -187,19 +195,19 @@ static inline float ladder(float inp, float s[5], float f, float r) {
     return y3;
 }
 
-static inline float saturate_soft(float x) { return atanf(x) * (2.f / PI); }
-static inline float saturate_tanh(float x) { return tanhf(x); }
-static inline float saturate_hard(float x) { return clampf(x, -1.f, 1.f); }
+static inline float soft(float x) { return atanf(x) * (2.f / PI); }
+static inline float medium(float x) { return tanhf(x); }
+static inline float hard(float x) { return clampf(x, -1.f, 1.f); }
 
 static inline stereo ensure_finite_stereo(stereo s) {
     return (stereo){.l = isfinite(s.l) ? s.l : 0.f, .r = isfinite(s.r) ? s.r : 0.f};
 }
 
-static inline stereo saturate_stereo_soft(stereo s) { return (stereo){.l = atanf(s.l) * (2.f / PI), .r = atanf(s.r) * (2.f / PI)}; }
+static inline stereo stereo_soft(stereo s) { return (stereo){.l = atanf(s.l) * (2.f / PI), .r = atanf(s.r) * (2.f / PI)}; }
 
-static inline stereo saturate_stereo_tanh(stereo s) { return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)}; }
+static inline stereo stereo_medium(stereo s) { return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)}; }
 
-static inline stereo saturate_stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
+static inline stereo stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
 static inline float biquad(float state[2], float x, float b0, float b1, float b2, float a1, float a2) {
     float y = b0 * x + state[0];
@@ -280,7 +288,7 @@ static inline float rndt(void) { return rnd01() + rnd01() - 1.f; }
 static inline float rdnn(void) { float x = rnd01() + rnd01() + rnd01() + rnd01() + rnd01() + rnd01() - 3.f; return x * 1.4f; }
 
 
-static const int blep_os = 16;
+static const int blep_os = 8;
 static const float minblep_table[129] = { // minBLEP correction for a unit step input; 16x oversampling
     -1.000000000f, -0.998811289f, -0.996531062f, -0.992795688f, -0.987211296f, -0.979364361f, -0.968834290f, -0.955206639f,
     -0.938089255f, -0.917128234f, -0.892024074f, -0.862547495f, -0.828554201f, -0.789997837f, -0.746941039f, -0.699562613f,
@@ -339,6 +347,30 @@ static inline float sawo(float dphase) {
     return saw;
 }
 
+static inline float pwmo(float dphase, float duty) {
+    float *phase = ba_get(&G->audio_bump, 1);
+    float ph = fracf(*phase);
+    float saw = ph * 2.f - 1.f;
+    saw -= 2.f * minblep(ph, dphase);
+    *phase = ph + dphase;
+    ph = fracf(ph + duty);
+    saw -= ph * 2.f - 1.f;
+    saw += 2.f * minblep(ph, dphase);
+    return saw;
+}
+
+static inline float squareo(float dphase) {
+    return pwmo(dphase, 0.5f);
+}
+
+static inline float trio(float dphase) {
+    float *phase = ba_get(&G->audio_bump, 2);
+    float ph = *phase = fracf(*phase + dphase);
+    float tri = ph * 4.f - 1.f;
+    if (tri > 1.f) tri = 2.f - tri;
+    return phase[1] += (tri-phase[1]) * 0.25f;
+}
+
 static inline float sawo_aliased(float dphase) {
     float *phase = ba_get(&G->audio_bump, 1);
     float ph = *phase = fracf(*phase+dphase);
@@ -360,6 +392,61 @@ static inline float lpf4(float x, float f) {
     state[1] += (state[0] - state[1]) * f;
     state[2] += (state[1] - state[2]) * f;
     return state[3] += (state[2] - state[3]) * f;
+}
+
+// static inline float adsr(float gate, float attack, float decay, float sustain, float release) {
+//     float *state = ba_get(&G->audio_bump, 2);
+//     float decaying = state[0];
+//     float envlevel = state[1];
+//     bool down = gate>0.f;
+//     float target = gate ? (decaying) ? sustain : 1.2f : 0.f;
+//     float dlevel = target - envlevel;
+//     float k = lpf_k((dlevel > 0.f) ? attack : (decaying && down) ? decay : release));
+//     envlevel += (target - envlevel) * k;
+//     if (envlevel>=1.f) state[0]=1; // switch to decay phase
+//     return state[1] = envlevel;
+
+
+
+
+//     if (gate<=0.f) {
+//         // release phase
+//     } else {
+//         if (!decaying) {
+//             // attack phase
+//             if (envlevel>=1.f) state[0]=1; // switch to decay phase
+//         } else {
+//             // decay/sustain phase
+//         }
+//     }
+//     }
+
+
+// } 
+
+static inline stereo reverb_internal(stereo inp) { // runs at 4x downsampled rate
+    return inp;
+}
+
+static inline stereo reverb(stereo inp) {
+    stereo *state = (stereo*)ba_get(&G->audio_bump, (1+4+1)*2); // 1 accumulator for input, 4 for output, 1 for dc
+    ////////////////////////// 4x DOWNSAMPLE
+    const static float lpf_factor = 0.065f; // quite dark
+    const static float hpf_factor = 0.015f;
+    inp = state[0] = (stereo){state[0].l + (inp.l - state[0].l) * lpf_factor, state[0].r + (inp.r - state[0].r) * lpf_factor};
+    stereo hpf = state[1] = (stereo){state[1].l + (inp.l - state[1].l) * hpf_factor, state[1].r + (inp.r - state[1].r) * hpf_factor};
+    inp = stsub(inp, hpf);
+    state+=2;
+    int outslot = (G->sampleidx>>2)&3;
+    if ((G->sampleidx & 3) == 0) {
+        state[outslot] = reverb_internal(inp);
+    }
+    ////////////////////////// 4x CATMULL ROM UPSAMPLE
+    int t0 = (outslot-3)&3, t1 = (outslot-2)&3, t2 = (outslot-1)&3, t3 = outslot;
+    float f = ((G->sampleidx&3)+1) * 0.25f;
+    float lout = catmull_rom(state[t0].l, state[t1].l, state[t2].l, state[t3].l, f);
+    float rout = catmull_rom(state[t0].r, state[t1].r, state[t2].r, state[t3].r, f);
+    return (stereo){lout, rout};
 }
 
 
@@ -396,7 +483,7 @@ static inline float midi2dphase(float midi) { return exp2f((midi - 150.232644862
 //#define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
 
 
-typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G,stereo *audio, int frames, int reloaded, uint32_t sampleidx);
+typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G,stereo *audio, int frames, int reloaded);
 
 static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
     slider_idx &= 15;
@@ -441,10 +528,10 @@ static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
 
 #ifdef LIVECODE
 typedef struct state state;
-stereo do_sample(stereo inp, uint32_t sampleidx);
+stereo do_sample(stereo inp);
 size_t get_state_size(void);
 int get_state_version(void);
-__attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded, uint32_t sampleidx) {
+__attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
     size_t state_size = get_state_size();
     int version = get_state_version();
     if (!_G || _G->_ver != version || _G->_size != state_size) {
@@ -462,7 +549,8 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
             G->sliders[slider_idx].i = 0;
         G->audio_bump.i = 0;
-        audio[i] = do_sample(audio[i], sampleidx++);
+        audio[i] = do_sample(audio[i]);
+        G->sampleidx++;
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
             G->sliders[slider_idx].n = G->sliders[slider_idx].i;
         G->reloaded = 0;

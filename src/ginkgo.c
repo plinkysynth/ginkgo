@@ -1055,8 +1055,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         int bestscani = 0;
         float bestscan = 0.f;
         for (int i = 1; i < scan_max; ++i) {
-            float mono = mid(scope[(scope_start - i) & SCOPE_MASK]);
-            float mono_next = mid(scope[(scope_start - i + 1) & SCOPE_MASK]);
+            float mono = stmid(scope[(scope_start - i) & SCOPE_MASK]);
+            float mono_next = stmid(scope[(scope_start - i + 1) & SCOPE_MASK]);
             float delta = mono_next - mono;
             if (mono < 0.f && mono_next > 0.f && delta > bestscan) {
                 bestscan = delta;
@@ -1223,7 +1223,8 @@ int main(int argc, char **argv) {
     GLint loc_uFontPx = glGetUniformLocation(prog, "uFontPx");
     GLint loc_status_bar_size = glGetUniformLocation(prog, "status_bar_size");
     int fw = 0, fh = 0, fc = 0;
-    stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
+    //stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
+    stbi_uc *fontPixels = stbi_load("assets/font_brutalita.png", &fw, &fh, &fc, 4);
     if (!fontPixels)
         die("Failed to load font");
     assert(fw == 32 * 16 && fh == 64 * 6);

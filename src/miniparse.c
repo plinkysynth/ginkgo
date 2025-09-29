@@ -365,7 +365,7 @@ static int parse_op(Parser *p, int left_node, char op, int node_type, int option
     if (optional_right && (isdelimiter(ch) || isop(ch))) {
         right_node = -1;
     } else {
-        right_node = parse_expr(p);
+        right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in the while loop inside parse_expr.
         p->nodes[left_node].next_sib = right_node;
     }
     int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i);
@@ -627,7 +627,7 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
 }
 void test_minipat(void) {
     // const char *s = "sd,<oh hh>,[[bd bd:1 -] rim]";
-    const char *s = "[[rim?]*8]";
+    const char *s = "rim*8?";
     // const char *s = "{c eb g, c2 g2}%4";
     // const char *s = "[bd <hh oh>,rim*<4 8>]";
     // const char *s = "[bd,sd*1.1]";

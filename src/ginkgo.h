@@ -231,7 +231,7 @@ static inline stereo stereo_medium(stereo s) { return (stereo){.l = tanhf(s.l), 
 static inline stereo stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
 
-bq_t bqlpf(float fc, float q) {
+static inline bq_t bqlpf(float fc, float q) {
     float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
     float alpha = s / (2.0f * q);
     float k = 1.0f / (1.0f + alpha);
@@ -242,7 +242,7 @@ bq_t bqlpf(float fc, float q) {
                   .a2 = (1.0f - alpha) * k};
 }
 
-bq_t bqhpf(float fc, float q) {
+static inline bq_t bqhpf(float fc, float q) {
     float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
     float alpha = s / (2.0f * q);
     float k = 1.0f / (1.0f + alpha);
@@ -253,7 +253,7 @@ bq_t bqhpf(float fc, float q) {
                   .a2 = (1.0f - alpha) * k};
 }
 
-bq_t bqpeaking(float fc, float q, float gain_db) {
+static inline bq_t bqpeaking(float fc, float q, float gain_db) {
     float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
     float alpha = s / (2.0f * q);
     float A = powf(10.0f, gain_db / 40.0f); // linear gain for peaking EQ
@@ -368,7 +368,7 @@ static inline float sample_catmull_rom(float pos, const float *smpl) {
     return catmull_rom(smpl[i + 0], smpl[i + 1], smpl[i + 2], smpl[i + 3], pos - (float)i);
 }
 
-uint32_t rnd_seed = 1;
+extern uint32_t rnd_seed;
 
 static inline float rnd01(void) {
     rnd_seed = pcg_next(rnd_seed);
@@ -712,4 +712,5 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 #ifdef LIVECODE
 #undef G
 #define G ((state *)_BG)
+uint32_t rnd_seed = 1;
 #endif

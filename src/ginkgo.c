@@ -1161,6 +1161,9 @@ void on_midi_input(uint8_t data[3], void *user) {
 }
 
 int main(int argc, char **argv) {
+    void test_minipat(void);
+    test_minipat();
+    return 0;
     printf("ginkgo - " __DATE__ " " __TIME__ "\n");
 
     int num_inputs = midi_get_num_inputs();

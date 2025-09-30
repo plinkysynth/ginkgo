@@ -2,7 +2,19 @@
 //  / _` | | | |/ _  | |/ _ \
 // | (_| | |_| | (_| | | (_) |
 //  \__,_|\__,_|\__,_|_|\___/
-//
+
+
+
+
+
+// this is a graph - any string inside single quotes becomes a value you can edit as both text and visually.
+// the graph appears when you hover it. TODO: I will also code color the characters by value.
+
+// "'                              '"
+
+
+// mini notation will include it. 
+
 // "[[sd rim] bd(3,8)]"
 
 STATE_VERSION(1, bq_t lpf, hpf; )

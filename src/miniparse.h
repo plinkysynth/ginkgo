@@ -52,3 +52,7 @@ const char *print_midinote(int note);
 int parse_midinote(const char *s, const char *e, int allow_p_prefix);
 int parse_pattern(Parser *p);
 char* print_pattern_chart(Parser *p);
+
+// base64 with # being 64 :) so we can do full range 0-64
+extern const char btoa_tab[65];
+extern const uint8_t atob_tab[256];

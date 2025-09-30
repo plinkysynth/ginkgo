@@ -19,6 +19,9 @@ typedef struct EditorState {
     edit_op_t *edit_ops; // stretchy buffer
     int undo_idx;
     bool is_shader; // is this a shader file?
+    bool mouse_hovering_chart;
+    bool find_mode;
+    bool mouse_dragging_chart;
     float scroll_y;
     float scroll_y_target;
     int intscroll; // how many lines we scrolled.
@@ -37,8 +40,7 @@ typedef struct EditorState {
     error_msg_t *error_msgs;
     float click_fx;
     float click_fy;
-    float click_slider_value;
-    int find_mode;
+    float click_slider_value;    
 } EditorState;
 
 char *make_cstring_from_span(const char *str, int start, int end, int alloc_extra) {
@@ -207,47 +209,53 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
     if (!is_drag) {
         E->click_fx = fx;
         E->click_fy = fy;
+        E->mouse_dragging_chart = E->mouse_hovering_chart;
+    }        
+    if (E->mouse_dragging_chart) {
+        if (is_drag < 0) E->mouse_dragging_chart = false;
     }
-    if (G && E->click_fx >= tmw-24 && E->click_fx < tmw) {
-        for (int slideridx=0;slideridx<16;++slideridx) {
-            for (int i=0;i<G->sliders[slideridx].n;i+=2) {
-                int line = G->sliders[slideridx].data[i+1] - E->intscroll;
-                if (line==(int)E->click_fy) {
-                    if (!is_drag) {
-                        E->click_slider_value = G->sliders[slideridx].data[i];
-                    } else {
-                        float newvalue = clampf(E->click_slider_value + (fx-E->click_fx)/20.f, 0.f, 1.f);
-                        G->sliders[slideridx].data[i] = newvalue;
+    else {
+        if (G && E->click_fx >= tmw-24 && E->click_fx < tmw) {
+            for (int slideridx=0;slideridx<16;++slideridx) {
+                for (int i=0;i<G->sliders[slideridx].n;i+=2) {
+                    int line = G->sliders[slideridx].data[i+1] - E->intscroll;
+                    if (line==(int)E->click_fy) {
+                        if (!is_drag) {
+                            E->click_slider_value = G->sliders[slideridx].data[i];
+                        } else {
+                            float newvalue = clampf(E->click_slider_value + (fx-E->click_fx)/20.f, 0.f, 1.f);
+                            G->sliders[slideridx].data[i] = newvalue;
+                        }
+                        return;
                     }
-                    return;
                 }
             }
         }
-    }
-    // adjust for the left margin of the code view
-    int left = 64 / E->font_width;
-    cx -= left;
+        // adjust for the left margin of the code view
+        int left = 64 / E->font_width;
+        cx -= left;
 
-    E->cursor_idx = xy_to_idx(E, cx, cy);
-    if (!is_drag)
-        E->select_idx = E->cursor_idx;
-    idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
-    E->cursor_x_target = E->cursor_x;
-    if (is_drag<0 && click_count==2) {
-        // double click - select word
-        int idx,idx2;
-        for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isseparator(E->str[idx])) break;
-        for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isseparator(E->str[idx2])) break;
-        E->select_idx = idx2+1;
-        E->cursor_idx = idx;
-    }
-    if (is_drag<0 && click_count==3) {
-        // triple click - select line
-        int idx,idx2;
-        for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isnewline(E->str[idx])) break;
-        for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isnewline(E->str[idx2])) break;
-        E->select_idx = idx2+1;
-        E->cursor_idx = idx;
+        E->cursor_idx = xy_to_idx(E, cx, cy);
+        if (!is_drag)
+            E->select_idx = E->cursor_idx;
+        idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
+        E->cursor_x_target = E->cursor_x;
+        if (is_drag<0 && click_count==2) {
+            // double click - select word
+            int idx,idx2;
+            for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isseparator(E->str[idx])) break;
+            for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isseparator(E->str[idx2])) break;
+            E->select_idx = idx2+1;
+            E->cursor_idx = idx;
+        }
+        if (is_drag<0 && click_count==3) {
+            // triple click - select line
+            int idx,idx2;
+            for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isnewline(E->str[idx])) break;
+            for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isnewline(E->str[idx2])) break;
+            E->select_idx = idx2+1;
+            E->cursor_idx = idx;
+        }
     }
 }
 

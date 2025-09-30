@@ -22,15 +22,28 @@ static const char *node_type_names[N_LAST] = {
 #include "node_types.h"     
 };
 
-
-
 struct { // global map of all sounds. key is interned name, value likewise allocated once ever. thus we can just store Sound* and/or
          // compare name ptrs.
     char *key;
     Sound *value;
 } *g_sounds;
 
+const char btoa_tab[65] =
+    " BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/#";
 
+//clang-format off
+const uint8_t atob_tab[256] = {
+    [' '] = 0,
+    ['.'] = 1,
+    ['A'] = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    ['a'] = 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+    ['0'] = 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+    ['+'] = 62, ['-'] = 62, 
+    ['/'] = 63, ['_'] = 63,
+    ['#'] = 64
+};
+
+//clang-format on
 static inline int is_rest(const Sound *sound) {
     if (sound == NULL || sound->name == NULL) // an unspecified name is not a rest.
         return 0;
@@ -714,6 +727,8 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
 char* print_pattern_chart(Parser *p) { // returns stb_ds string
     Hap *haps = NULL;
     make_haps(p, p->root, 0.0f, 4.0f, 1.0f, 0.f, &haps, FLAG_NONE, 0, 1.f);
+    if (stbds_arrlen(haps) == 0)
+        return NULL;
     const char *header =
         "      time   0   |   |   |   v   |   |   |   1   |   |   |   v   |   |   |   2   |   |   |   v   |   |   |   3   |   |   "
         "|   v   |   |   |   4\n";

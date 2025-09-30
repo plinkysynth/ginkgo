@@ -9,52 +9,20 @@
 #include <assert.h>
 #define STBDS_IMPLEMENTATION
 #include "3rdparty/stb_ds.h"
+#include "hash_literal.h"
+#include "miniparse.h"
 
 enum NodeType {
-    N_LEAF,
-    N_CAT,
-    N_FASTCAT,
-    N_PARALLEL,
-    N_IDX,
-    N_TIMES,
-    N_DIVIDE,
-    N_DEGRADE,
-    N_REPLICATE,
-    N_ELONGATE,
-    N_EUCLID,
-    N_RANDOM,
-    N_POLY,
-    N_LAST
+#include "node_types.h"
+N_LAST
 };
 
-/* more functions we might want
-almostNever, and similar
-ply
-rib
-seg
-clip
-add,sub,mul (and note versions? nadd, nsub, nmul?)
-late / early
-fast slow and all the others that are equivalent to the mininotation ones
-*/
+static const char *node_type_names[N_LAST] = {
+#define NODE(x, ...) #x,
+#include "node_types.h"     
+};
 
 
-static const char *node_type_names[N_LAST] = {"LEAF",    "CAT",       "FASTCAT",  "PARALLEL", "IDX",    "TIMES", "DIVIDE",
-                                              "DEGRADE", "REPLICATE", "ELONGATE", "EUCLID",   "RANDOM", "POLY"};
-
-/* TODO - synth stuff etc :)
-typedef struct Wave {
-    const char *filename;
-    short *wavedata;
-    int length;
-    int sample_rate;
-    int note;
-} Wave;
-*/
-typedef struct Sound {
-    const char *name; // interned name.
-    // Wave *waves;      // stb_ds array, indexed by idx or searched by nearest note
-} Sound;
 
 struct { // global map of all sounds. key is interned name, value likewise allocated once ever. thus we can just store Sound* and/or
          // compare name ptrs.
@@ -62,13 +30,14 @@ struct { // global map of all sounds. key is interned name, value likewise alloc
     Sound *value;
 } *g_sounds;
 
-static inline int is_rest(const char *name) {
-    if (name == NULL) // an unspecified name is not a rest.
+
+static inline int is_rest(const Sound *sound) {
+    if (sound == NULL || sound->name == NULL) // an unspecified name is not a rest.
         return 0;
-    return name[1] == 0 && (name[0] == '-' || name[0] == '_' || name[0] == '~');
+    return sound->name[1] == 0 && (sound->name[0] == '-' || sound->name[0] == '_' || sound->name[0] == '~');
 }
 
-static inline Sound *get_sound(const char *name) { // ...by name.
+Sound *get_sound(const char *name) { // ...by name.
     Sound *sound = shget(g_sounds, name);
     if (!sound) {
         name = strdup(name); // intern the name!
@@ -79,37 +48,6 @@ static inline Sound *get_sound(const char *name) { // ...by name.
     return sound;
 }
 
-typedef struct Value { // the value associated with a node in the parse tree. nb sound idx like bd:3 is assigned later at hap-time.
-    Sound *sound;
-    float number;
-    float note;
-} Value;
-
-typedef struct Node {
-    int32_t type;
-    int32_t start, end;  // half-open [start,end) character range (for syntax hilighting)
-    int32_t first_child; // index or -1
-    int32_t next_sib;    // index or -1 - linked list of siblings
-    float total_length;  // total length of all children (nb elongated nodes are longer than 1)
-    Value value;         // for a leaf, the value; for others, maximum number value over all children.
-} Node;
-
-typedef struct Hap {
-    float t0, t1;
-    int node;
-    int sound_idx; // as in, bd:3
-} Hap;
-
-typedef struct Parser {
-    const char *s;
-    int32_t n;   // length of string
-    int32_t i;   // current position in string
-    Node *nodes; // stb_ds
-    int root;    // index of root node
-    int err;     // 0 ok, else position of first error
-    const char *errmsg;
-    uint32_t rand_seed;
-} Parser;
 
 // ansi printing colors
 #define COLOR_RED "\033[31m"
@@ -133,8 +71,8 @@ const char *print_midinote(int note) {
     static char buf[4];
     if (note < 0 || note >= 128)
         return "";
-    char notenames[12] = {'C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B'};
-    char notesharps[12] = {' ', '#', ' ', '#', ' ', ' ', '#', ' ', '#', ' ', '#', ' '};
+    const static char notenames[12] = {'C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B'};
+    const static char notesharps[12] = {' ', '#', ' ', '#', ' ', ' ', '#', ' ', '#', ' ', '#', ' '};
     buf[0] = notenames[note % 12];
     buf[1] = notesharps[note % 12];
     buf[2] = 0;
@@ -167,7 +105,7 @@ static void error(Parser *p, const char *msg) {
         return;
     p->err = p->i;
     p->errmsg = msg;
-    fprintf(stderr, "ERROR: %s - %.*s" COLOR_BRIGHT_RED "%s" COLOR_RESET "\n", msg, p->err, p->s, p->s + p->err);
+    //fprintf(stderr, "ERROR: %s - %.*s" COLOR_BRIGHT_RED "%s" COLOR_RESET "\n", msg, p->err, p->s, p->s + p->err);
 }
 
 static void skipws(Parser *p) {
@@ -187,9 +125,9 @@ static int consume(Parser *p, int c) {
 }
 
 static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' || c == '>'; }
+static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
-static int isop(int c) { return c == '*' || c == ':' || c == '/' || c == '?' || c == '!' || c == '@' || c == '%' || c == '('; }
 static int make_node(Parser *p, int node_type, int first_child, int next_sib, int start, int end) {
     int i = stbds_arrlen(p->nodes);
     Node n = (Node){node_type, start, end, first_child, next_sib, 0};
@@ -282,7 +220,7 @@ static int parse_group(Parser *p, char open, char close, int node_type) {
     return group_node;
 }
 
-static inline int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
+int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
     if (allow_p_prefix && e > s + 2 && s[0] == 'P' && s[1] == '_') {
         s += 2;
     }
@@ -370,25 +308,7 @@ static int parse_expr_inner(Parser *p) {
     return -1;
 }
 
-static int parse_op(Parser *p, int left_node, char op, int node_type, int optional_right) {
-    if (left_node < 0)
-        return -1;
-    consume(p, op);
-    int right_node;
-    int ch = peek(p);
-    if (optional_right && (isdelimiter(ch) || isop(ch))) {
-        right_node = -1;
-    } else {
-        right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in
-                                          // the while loop inside parse_expr.
-        p->nodes[left_node].next_sib = right_node;
-    }
-    int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i);
-    return parent_node;
-}
-
 static int parse_euclid(Parser *p, int node) {
-    consume(p, '(');
     int euclid_node0 = parse_expr(p);
     if (euclid_node0 < 0)
         return -1;
@@ -409,11 +329,33 @@ static int parse_euclid(Parser *p, int node) {
         error(p, "expected closing bracket in euclid");
         return -1;
     }
-    int euclid_node = make_node(p, N_EUCLID, euclid_node0, -1, p->nodes[node].start, p->i);
+    int euclid_node = make_node(p, N_OP_EUCLID, node, -1, p->nodes[node].start, p->i);
+    p->nodes[node].next_sib = euclid_node0;
     p->nodes[euclid_node0].next_sib = euclid_node1;
     p->nodes[euclid_node1].next_sib = euclid_node2;
     return euclid_node;
 }
+
+static int parse_op(Parser *p, int left_node, int node_type, int num_params, int optional_right) {
+    if (left_node < 0)
+        return -1;
+    skipws(p);
+    if (node_type == N_OP_EUCLID) {
+        return parse_euclid(p, left_node); // euclid node is different - it has a closing ) and comma separated args. because, idk. history.
+    }
+    int right_node;
+    int ch = peek(p);
+    if (optional_right && !isleaf(ch) && !isopening(ch)) {
+        right_node = -1;
+    } else {
+        right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in
+                                          // the while loop inside parse_expr.
+        p->nodes[left_node].next_sib = right_node;
+    }
+    int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i);
+    return parent_node;
+}
+
 
 static int parse_expr(Parser *p) {
     int node = parse_expr_inner(p);
@@ -422,8 +364,7 @@ static int parse_expr(Parser *p) {
         return -1;
     while (!isdelimiter(peek(p))) {
         int old_pos = p->i;
-        switch (peek(p)) {
-        case '_': // shorthand for elongate. we only allow it to be a single character
+        if (peek(p) == '_') { // shorthand for elongate. we only allow it to be a single character
             if (isdelimiter(peek_i(p, p->i + 1))) {
                 // ok count the _ tokens!
                 int count = 1;
@@ -433,34 +374,13 @@ static int parse_expr(Parser *p) {
                     count++;
                 }
                 assert(count >= 2);
-                int elongate_node = make_node(p, N_ELONGATE, node, -1, p->nodes[node].start, p->i);
+                int elongate_node = make_node(p, N_OP_ELONGATE, node, -1, p->nodes[node].start, p->i);
                 p->nodes[elongate_node].value.number = count;
                 node = elongate_node;
                 break;
             }
-            break;
-        case '*':
-            node = parse_op(p, node, '*', N_TIMES, 0);
-            break;
-        case ':':
-            node = parse_op(p, node, ':', N_IDX, 0);
-            break;
-        case '/':
-            node = parse_op(p, node, '/', N_DIVIDE, 0);
-            break;
-        case '?':
-            node = parse_op(p, node, '?', N_DEGRADE, 1);
-            break;
-        case '!':
-            node = parse_op(p, node, '!', N_REPLICATE, 0);
-            break;
-        case '@':
-            node = parse_op(p, node, '@', N_ELONGATE, 0);
-            break;
-        case '(':
-            node = parse_euclid(p, node);
-            break;
-        case '%':
+        }
+        else if (peek(p) == '%') {
             if (p->nodes[node].type == N_POLY) {
                 consume(p, '%');
                 int modulo_node = parse_leaf(p);
@@ -471,7 +391,20 @@ static int parse_expr(Parser *p) {
                 // we store the modulo constant in our value.number. a bit of a hack...
                 p->nodes[node].value.number = p->nodes[modulo_node].value.number;
             }
-            break;
+        } else if (peek(p) == '(') {
+            consume(p,'(');
+            node = parse_euclid(p, node);
+        } else {
+            int i = p->i;
+            while (!isdelimiter(p->s[i]) && !isopening(p->s[i]) && !isdigit(p->s[i])) ++i;
+            if (i > p->i) {
+                uint32_t name_hash = literal_hash_span(p->s + p->i, p->s + i);
+                switch (name_hash) {
+                    #define NODE(x, ...) 
+                    #define OP(op_type, srcname, numparams, optional_right) case HASH(srcname): p->i = i; node = parse_op(p, node, op_type, numparams, optional_right); break;
+                    #include "node_types.h"
+                }
+            }
         }
         if (p->i == old_pos)
             break; // no progress. stop here.
@@ -489,7 +422,7 @@ static float get_length(Parser *p, int node) {
     if (node < 0)
         return 1.f;
     Node *n = &p->nodes[node];
-    if (n->type == N_REPLICATE || n->type == N_ELONGATE) {
+    if (n->type == N_OP_REPLICATE || n->type == N_OP_ELONGATE) {
         return n->value.number;
     }
     return 1.f;
@@ -512,13 +445,37 @@ static void update_lengths(Parser *p, int node) {
     }
 }
 
-static Parser parse(const char *s, size_t n) {
-    Parser p = {s, n};
-    p.root = parse_args(&p, N_FASTCAT, 0, 0);
-    if (p.root >= 0 && p.nodes[p.root].first_child >= 0 && p.nodes[p.nodes[p.root].first_child].next_sib < 0)
-        p.root = p.nodes[p.root].first_child; // if the outermost group is just a single node, rip off the group node.
-    update_lengths(&p, p.root);
-    return p;
+static inline void squeeze(Parser *p, int *parent) {
+    // remove all 
+    //  CAT nodes with 1 child;
+    //  FASTCAT nodes with 1 child and a total child length of 1;
+    //  PARALLEL nodes with 1 child;
+    int *prevlink = parent;
+    while (*prevlink >= 0) { // loop over siblings
+        Node *n = p->nodes + *prevlink;
+        squeeze(p, &n->first_child);
+        bool has_one_child = n->first_child >= 0 && p->nodes[n->first_child].next_sib < 0;
+        if (has_one_child && (n->type == N_CAT || (n->type == N_FASTCAT && n->total_length == 1.f) || n->type == N_PARALLEL)) {
+            // we want to replace this node with its only child
+            int old_sibling = n->next_sib;
+            *prevlink = n->first_child;
+            n = p->nodes + *prevlink;
+            n->next_sib = old_sibling;
+        }
+        prevlink = &n->next_sib;
+    }
+}
+
+int parse_pattern(Parser *p) {
+    p->i = 0;
+    if (p->nodes) stbds_arrsetlen(p->nodes, 0);
+    p->root = -1;
+    p->err = 0;
+    p->errmsg = NULL;
+    p->root = parse_args(p, N_FASTCAT, 0, 0);
+    update_lengths(p, p->root);
+    squeeze(p, &p->root);
+    return p->err;
 }
 
 static inline void print_haps(Parser *p, Hap *haps, int n) {
@@ -534,7 +491,6 @@ static inline void print_haps(Parser *p, Hap *haps, int n) {
 #define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
 #define FLAG_INCLUSIVE 2 // if set, we include haps that overlap on the left side.
 
-#include <stdint.h>
 
 static inline uint32_t hash2_pcg(uint32_t a, uint32_t b) {
     const uint64_t MUL = 6364136223846793005ull;
@@ -556,6 +512,13 @@ static inline float hasht_float(uint32_t seed, float time) {
     return (hasht_int(seed, time)&0xffffff) * (1.f/16777216.f);
 }
 
+static inline int cmp_haps_by_t0(const Hap *a, const Hap *b) {
+    return a->t0 < b->t0 ? -1 : a->t0 > b->t0 ? 1 : 0;
+}
+
+static inline void sort_haps_by_t0(Hap *haps, int count) {
+    qsort(haps, count, sizeof(Hap), (int(*)(const void*,const void*))cmp_haps_by_t0);
+}
 
 static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx,
                       float note_prob) {
@@ -569,12 +532,61 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
         return *haps;
     }
     switch (n->type) {
-    case N_REPLICATE:
-    case N_ELONGATE:
-    case N_DEGRADE:
-    case N_IDX:
-    case N_DIVIDE:
-    case N_TIMES: {
+    case N_OP_EUCLID: {
+        int child = n->first_child;
+        if (child <0) return *haps;
+        int setsteps_nodeidx = p->nodes[child].next_sib;
+        if (setsteps_nodeidx <0) return *haps;
+        int numsteps_nodeidx = p->nodes[setsteps_nodeidx].next_sib;
+        if (numsteps_nodeidx <0) return *haps;
+        int rot_nodeidx = p->nodes[numsteps_nodeidx].next_sib;
+        Hap *setsteps_haps = NULL, *numsteps_haps = NULL, *rot_haps = NULL;
+        make_haps(p, setsteps_nodeidx, t0, t1, 1.f, 0.f, &setsteps_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE, 0, 1.f);
+        make_haps(p, numsteps_nodeidx, t0, t1, 1.f, 0.f, &numsteps_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE, 0, 1.f);
+        make_haps(p, rot_nodeidx, t0, t1, 1.f, 0.f, &rot_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE, 0, 1.f);
+        int setsteps_hap_count = stbds_arrlen(setsteps_haps);
+        int numsteps_hap_count = stbds_arrlen(numsteps_haps);
+        int rot_hap_count = stbds_arrlen(rot_haps);
+        sort_haps_by_t0(setsteps_haps, setsteps_hap_count);
+        sort_haps_by_t0(numsteps_haps, numsteps_hap_count);
+        sort_haps_by_t0(rot_haps, rot_hap_count);
+        int setsteps_hapidx = 0, numsteps_hapidx = 0, rot_hapidx = 0;
+        float from = t0;
+        while (from < t1) {
+            float to = t1;
+            to = minf(to, setsteps_hapidx+1 < setsteps_hap_count ? setsteps_haps[setsteps_hapidx+1].t0 : t1);
+            to = minf(to, numsteps_hapidx+1 < numsteps_hap_count ? numsteps_haps[numsteps_hapidx+1].t0 : t1);
+            to = minf(to, rot_hapidx+1 < rot_hap_count ? rot_haps[rot_hapidx+1].t0 : t1);
+            if (to <= from) break;
+            int setsteps = setsteps_hapidx < setsteps_hap_count ? p->nodes[setsteps_haps[setsteps_hapidx].node].value.number : 0;
+            int numsteps = numsteps_hapidx < numsteps_hap_count ? p->nodes[numsteps_haps[numsteps_hapidx].node].value.number : 0;
+            int rot = rot_hapidx < rot_hap_count ? p->nodes[rot_haps[rot_hapidx].node].value.number : 0;
+            float speed_scale = numsteps;
+            float child_t0 = from * speed_scale;
+            float child_t1 = to * speed_scale;
+            for (int stepidx = (int)child_t0; stepidx < (int)child_t1; stepidx++) {
+                if (stepidx>=child_t0 && stepidx<child_t1 && euclid_rhythm(stepidx, setsteps, numsteps, rot)) {                    
+                    make_haps(p, child, stepidx, stepidx+1, tscale / speed_scale, tofs, haps, flags, sound_idx, note_prob);
+                }
+            }
+            from = to;
+            while (setsteps_hapidx+1 < setsteps_hap_count && setsteps_haps[setsteps_hapidx+1].t0 <= from) 
+                setsteps_hapidx++;
+            while (numsteps_hapidx+1 < numsteps_hap_count && numsteps_haps[numsteps_hapidx+1].t0 <= from)
+                numsteps_hapidx++;
+            while (rot_hapidx+1 < rot_hap_count && rot_haps[rot_hapidx+1].t0 <= from)
+                rot_hapidx++;
+        }
+        stbds_arrfree(setsteps_haps);
+        stbds_arrfree(numsteps_haps);
+        stbds_arrfree(rot_haps);
+        break; }
+    case N_OP_REPLICATE:
+    case N_OP_ELONGATE:
+    case N_OP_DEGRADE:
+    case N_OP_IDX:
+    case N_OP_DIVIDE:
+    case N_OP_TIMES: {
         if (n->first_child < 0)
             return *haps;
         Node *nleft = p->nodes + n->first_child;
@@ -591,28 +603,26 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
                 float speed_scale = 1.f;
                 float degrade_amount = 0.f;
                 float right_value = p->nodes[right_hap->node].value.number;
-                if (n->type == N_TIMES)
+                if (n->type == N_OP_TIMES)
                     speed_scale = right_value;
-                else if (n->type == N_DIVIDE || n->type == N_ELONGATE)
+                else if (n->type == N_OP_DIVIDE || n->type == N_OP_ELONGATE)
                     speed_scale = 1.f / (right_value ? right_value : 1.f);
-                else if (n->type == N_IDX)
+                else if (n->type == N_OP_IDX)
                     sound_idx = (int)right_value;
-                else if (n->type == N_DEGRADE)
+                else if (n->type == N_OP_DEGRADE)
                     degrade_amount = right_value;
                 if (speed_scale <= 0.f)
                     speed_scale = 1.f;
-                // PLAN for euclid: we grab right haps for 2 or 3 parameters; then we need to iterate every single 'onset' time
-                // between t0 and t1. we do this by sorting them, keeping an index into each of them and advancing to the lowest of
-                // them.
-
-                make_haps(p, n->first_child, maxf(t0, right_hap->t0) * speed_scale, minf(t1, right_hap->t1) * speed_scale,
+                float child_t0 = right_hap->t0 * speed_scale; //  maxf(t0, right_hap->t0) * speed_scale;
+                float child_t1 = right_hap->t1 * speed_scale; // minf(t1, right_hap->t1) * speed_scale;
+                make_haps(p, n->first_child, child_t0, child_t1,
                           tscale / speed_scale, tofs, haps, flags, sound_idx, note_prob * (1.f - degrade_amount));
             }
             stbds_arrfree(right_haps);
         } else {
             // no value? proxy to the left. for degrade, if there is no right value, we assume 50% default.
             make_haps(p, n->first_child, t0, t1, tscale, tofs, haps, flags, sound_idx,
-                      n->type == N_DEGRADE ? note_prob * 0.5f : note_prob);
+                      n->type == N_OP_DEGRADE ? note_prob * 0.5f : note_prob);
         }
         return *haps;
         break;
@@ -671,7 +681,7 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
                 if ((from >= t0 || inclusive_left) && from < t1) {
                     float output_t0 = from * tscale + tofs;
                     if (note_prob >= 1.f || hasht_float(seed, output_t0) <= note_prob) {
-                        if (nodeidx < 0 || !is_rest(p->nodes[nodeidx].value.sound->name)) {
+                        if (nodeidx < 0 || !is_rest(p->nodes[nodeidx].value.sound)) {
                             Hap h = (Hap){output_t0, to * tscale + tofs, nodeidx, sound_idx};
                             stbds_arrput(*haps, h);
                         }
@@ -700,37 +710,33 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
     }
     return *haps;
 }
-void test_minipat(void) {
-    // const char *s = "sd,<oh hh>,[[bd bd:1 -] rim]";
-    //const char *s = "{bd sd, rim hh oh}%4";
-    const char *s = "[bd | sd | rim]*8";
-    // const char *s = "{c eb g, c2 g2}%4";
-    // const char *s = "[bd <hh oh>,rim*<4 8>]";
-    // const char *s = "[bd,sd*1.1]";
-    printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
-    Parser p = parse(s, strlen(s));
-    pretty_print(s, p.nodes, p.root, 0);
+
+char* print_pattern_chart(Parser *p) { // returns stb_ds string
     Hap *haps = NULL;
-    make_haps(&p, p.root, 0.0f, 4.0f, 1.0f, 0.f, &haps, FLAG_NONE, 0, 1.f);
-    printf(
-        "        time 0   |   |   |   v   |   |   |   1   |   |   |   v   |   |   |   2   |   |   |   v   |   |   |   3   |   |   "
-        "|   v   |   |   |   4\n");
+    make_haps(p, p->root, 0.0f, 4.0f, 1.0f, 0.f, &haps, FLAG_NONE, 0, 1.f);
+    const char *header =
+        "      time   0   |   |   |   v   |   |   |   1   |   |   |   v   |   |   |   2   |   |   |   v   |   |   |   3   |   |   "
+        "|   v   |   |   |   4\n";
+    char *result = NULL;
+    memmove(stbds_arraddnptr(result, strlen(header)), header, strlen(header));
     for (int i = 0; i < stbds_arrlen(haps); i++) {
-        Node *n = &p.nodes[haps[i].node];
+        Node *n = &p->nodes[haps[i].node];
         int j;
         for (j = 0; j < i; ++j) {
-            Node *nj = &p.nodes[haps[j].node];
+            Node *nj = &p->nodes[haps[j].node];
             if (n->value.sound == nj->value.sound && haps[j].sound_idx == haps[i].sound_idx)
                 break;
         }
         if (j < i)
             continue;
-        printf("%10s:%d ", n->value.sound ? n->value.sound->name : "", haps[i].sound_idx);
-        char line[129] = {};
+        char line[130];
+        int left = snprintf(line, 128, "%10s:%d ", n->value.sound ? n->value.sound->name : "", haps[i].sound_idx);
+        memcpy(stbds_arraddnptr(result, left), line, left);
         for (int j = 0; j < 128; ++j)
             line[j] = '.';
+        line[128]='\n';
         for (int j = i; j < stbds_arrlen(haps); ++j) {
-            Node *nj = &p.nodes[haps[j].node];
+            Node *nj = &p->nodes[haps[j].node];
             if (nj->value.sound != n->value.sound || haps[j].sound_idx != haps[i].sound_idx)
                 continue;
             int x1 = (int)(haps[j].t0 * 32.f);
@@ -750,6 +756,29 @@ void test_minipat(void) {
                     line[x] = (x == x2 - 1) ? '>' : '=';
             }
         }
-        printf("%s\n", line);
+        memcpy(stbds_arraddnptr(result, 129), line, 129);
     }
+    stbds_arrput(result, 0);
+    stbds_arrfree(haps);
+    return result;
+}
+
+void test_minipat(void) {
+    // const char *s = "sd,<oh hh>,[[bd bd:1 -] rim]";
+    //const char *s = "{bd sd, rim hh oh}%4";
+    //const char *s = "[bd | sd | rim]*8";
+    //const char *s = "[[sd] [bd]]"; // test squeeze
+    //const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
+    const char *s = "[hi lo/2]"; // test divide
+    //const char *s = "<bd sd>";
+    // const char *s = "{c eb g, c2 g2}%4";
+    // const char *s = "[bd <hh oh>,rim*<4 8>]";
+    // const char *s = "[bd,sd*1.1]";
+    printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
+    Parser p={s,strlen(s)};
+    parse_pattern(&p);
+    pretty_print(s, p.nodes, p.root, 0);
+    char *chart = print_pattern_chart(&p);
+    printf("%s\n", chart);
+    stbds_arrfree(chart);
 }

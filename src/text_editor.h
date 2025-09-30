@@ -38,6 +38,7 @@ typedef struct EditorState {
     float click_fx;
     float click_fy;
     float click_slider_value;
+    int find_mode;
 } EditorState;
 
 char *make_cstring_from_span(const char *str, int start, int end, int alloc_extra) {
@@ -252,6 +253,26 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
 
 static inline bool isspaceortab(char c) { return c==' ' || c=='\t'; }
 
+int jump_to_found_text(EditorState *E, int backwards, int extra_char) {
+    int delta = backwards ? -1 : 1;
+    int ss = get_select_start(E);
+    int se = get_select_end(E);
+    const char *needle = E->str + ss;
+    int needle_len = se - ss;
+    if (!extra_char) { ss+=delta; se+=delta; }
+    int n = stbds_arrlen(E->str);
+    if (extra_char) n--;
+    while (ss>=0 && se<=n) {
+        if (strncmp(needle, E->str + ss, needle_len) == 0 && (extra_char==0 || E->str[ss+needle_len]==extra_char)) {
+            E->select_idx = ss;
+            E->cursor_idx = ss + needle_len + (extra_char ? 1 : 0);
+            return 1;
+        }
+        ss+=delta; se+=delta;
+    }
+    return 0; 
+}
+
 void editor_key(GLFWwindow *win, EditorState *E, int key) {
     int n = stbds_arrlen(E->str);
     int mods = key >> 16;
@@ -262,6 +283,14 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     int set_target_x = 1;
     int reset_selection = 0;
     idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
+    if (key == GLFW_KEY_ESCAPE && mods == 0) {
+        if (E->find_mode) {
+            E->find_mode = false;
+        } else {
+            E->select_idx = E->cursor_idx;
+        }
+    }
+
     if (super)
         switch (key & 0xFFFF) {
         case GLFW_KEY_MINUS:
@@ -283,6 +312,11 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             E->cursor_idx = n;
             E->select_idx = 0;
             break;
+        case GLFW_KEY_F: {
+            E->find_mode = true;
+            break;
+        }
+        break;
         case GLFW_KEY_C:
         case GLFW_KEY_X: {
             int se = get_select_start(E);
@@ -293,6 +327,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 free(str);
                 if ((key & 0xffff) == GLFW_KEY_X) {
                     push_edit_op(E, se, ee, NULL, 1);
+                    E->find_mode = false;
                 }
             }
             break;
@@ -301,6 +336,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             const char *str = glfwGetClipboardString(win);
             if (str) {
                 push_edit_op(E, get_select_start(E), get_select_end(E), str, 1);
+                E->find_mode = false;
             }
             break;
         }
@@ -357,6 +393,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                     
                 }
                 push_edit_op(E, ss, se, str, 0);
+                E->find_mode = false;
                 if (sy!=ey) {
                     E->select_idx = ss;
                     E->cursor_idx = ss+strlen(str);
@@ -369,55 +406,72 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     switch (key & 0xFFFF) {
     case '\b':
     case GLFW_KEY_BACKSPACE:
-        if (has_selection) {
+        if (E->find_mode) {
+            int ss = get_select_start(E);
+            int se = get_select_end(E);
+            E->select_idx = ss;
+            E->cursor_idx = maxi(ss,se-1);
+            break;
+        }
+        else if (has_selection) {
             push_edit_op(E, get_select_start(E), get_select_end(E), NULL, 1);
         } else if (E->cursor_idx > 0) {
             push_edit_op(E, E->cursor_idx - 1, E->cursor_idx, NULL, 1);
         }
         break;
     case GLFW_KEY_DELETE:
-        push_edit_op(E, E->cursor_idx, E->cursor_idx + 1, NULL, 1);
+        if (!E->find_mode) {
+            push_edit_op(E, E->cursor_idx, E->cursor_idx + 1, NULL, 1);
+        }
         break;
     // TODO: tab/shift-tab should indent or unindent the whole selection; unless its tab after leading space, in which case its just
     // an insert.
     case '\t': {
-        int ss = get_select_start(E);
-        int se = get_select_end(E);
-        int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
-        if (sy==ey && !shift) goto insert_character;
-        ss = xy_to_idx(E, 0, sy);
-        se = xy_to_idx(E, 0x7fffffff, ey);
-        char *str = make_cstring_from_span(E->str, ss, se, ((ey-sy)+1)*4);
-        for (char *c=str;*c;) {
-            if (shift) {
-                // skip up to 4 spaces or a tab.
-                char *nextchar=c;
-                for (int i=0;i<4;++i,++nextchar) if (*nextchar=='\t') { nextchar++; break;} else if (*nextchar!=' ') break;
-                memmove(c, nextchar, strlen(nextchar)+1);
-            } else {
-                memmove(c+4, c, strlen(c)+1);
-                memset(c,' ', 4);
+        if (E->find_mode) {
+            jump_to_found_text(E, shift, 0);
+        } else {
+            int ss = get_select_start(E);
+            int se = get_select_end(E);
+            int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
+            if (sy==ey && !shift) goto insert_character;
+            ss = xy_to_idx(E, 0, sy);
+            se = xy_to_idx(E, 0x7fffffff, ey);
+            char *str = make_cstring_from_span(E->str, ss, se, ((ey-sy)+1)*4);
+            for (char *c=str;*c;) {
+                if (shift) {
+                    // skip up to 4 spaces or a tab.
+                    char *nextchar=c;
+                    for (int i=0;i<4;++i,++nextchar) if (*nextchar=='\t') { nextchar++; break;} else if (*nextchar!=' ') break;
+                    memmove(c, nextchar, strlen(nextchar)+1);
+                } else {
+                    memmove(c+4, c, strlen(c)+1);
+                    memset(c,' ', 4);
+                }
+                while (*c && *c!='\n') ++c;
+                if (*c=='\n') ++c;
             }
-            while (*c && *c!='\n') ++c;
-            if (*c=='\n') ++c;
+            push_edit_op(E, ss, se, str, 1);
+            E->select_idx = ss;
+            E->cursor_idx = ss+strlen(str);
+            free(str);
         }
-        push_edit_op(E, ss, se, str, 1);
-        E->select_idx = ss;
-        E->cursor_idx = ss+strlen(str);
-        free(str);
         break;
     }        
     case '\n':
     case ' ' ... '~':
 insert_character:
         if (!super && !ctrl) {
-            // delete the selection; insert the character
-            int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
-            char *buf = alloca(ls + 2);
-            buf[0] = key;
-            memset(buf + 1, ' ', ls);
-            buf[ls + 1] = 0;
-            push_edit_op(E, get_select_start(E), get_select_end(E), buf, 1);
+            if (E->find_mode) {
+                jump_to_found_text(E, shift, key);
+            } else {
+                // delete the selection; insert the character
+                int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
+                char *buf = alloca(ls + 2);
+                buf[0] = key;
+                memset(buf + 1, ' ', ls);
+                buf[ls + 1] = 0;
+                push_edit_op(E, get_select_start(E), get_select_end(E), buf, 1);
+            }
         }
         break;
     case GLFW_KEY_LEFT:
@@ -443,14 +497,22 @@ insert_character:
         break;
 
     case GLFW_KEY_UP:
-        E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 1);
-        set_target_x = 0;
-        reset_selection = !shift;
+        if (E->find_mode) {
+            jump_to_found_text(E, 1, 0);
+        } else {
+            E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 1);
+            set_target_x = 0;
+            reset_selection = !shift;
+        }
         break;
     case GLFW_KEY_DOWN:
-        E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 1);
-        set_target_x = 0;
-        reset_selection = !shift;
+        if (E->find_mode) {
+            jump_to_found_text(E, 0, 0);
+        } else {
+            E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 1);
+            set_target_x = 0;
+            reset_selection = !shift;
+        }
         break;
     case GLFW_KEY_HOME: {
         int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
@@ -463,18 +525,28 @@ insert_character:
         reset_selection = !shift;
         break;
     case GLFW_KEY_PAGE_UP:
-        E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 20);
-        set_target_x = 0;
-        reset_selection = !shift;
+        if (E->find_mode) {
+            jump_to_found_text(E, 1, 0);
+        } else {
+            E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 20);
+            set_target_x = 0;
+            reset_selection = !shift;
+        }
         break;
     case GLFW_KEY_PAGE_DOWN:
-        E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 20);
-        set_target_x = 0;
-        reset_selection = !shift;
+        if (E->find_mode) {
+            jump_to_found_text(E, 0, 0);
+        } else {
+            E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 20);
+            set_target_x = 0;
+            reset_selection = !shift;
+        }
         break;
     }
-    if (reset_selection)
+    if (reset_selection) {
         E->select_idx = E->cursor_idx;
+        E->find_mode = 0;
+    }
     idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
     if (set_target_x)
         E->cursor_x_target = E->cursor_x;

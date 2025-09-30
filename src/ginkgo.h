@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#define STRINGIFY(x) #x
+
 #define OVERSAMPLE 2
 #define SAMPLE_RATE_OUTPUT 48000
 #define SAMPLE_RATE (SAMPLE_RATE_OUTPUT * OVERSAMPLE)
@@ -134,6 +136,15 @@ static inline float update_lfo(float state[2], float sin_dphase) { // quadrature
     state[0] -= (state[1] * sin_dphase);
     return state[1] += (state[0] * sin_dphase);
 }
+
+// TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.
+// but this is simple so we'll go with simple.
+static inline int euclid_rhythm(int stepidx, int numset, int numsteps, int rot) {
+    if (numsteps<1 || numset<1) return 0;
+    stepidx = ((stepidx+rot)%numsteps) + numsteps;
+    return ((stepidx*numset) % numsteps) < numset;
+}
+
 
 typedef struct stereo {
     float l, r;

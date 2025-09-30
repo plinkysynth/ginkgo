@@ -31,6 +31,8 @@ int fbw, fbh; // current framebuffer size in pixels
 #include "text_editor.h"
 #include "audio_host.h"
 #include "midi_mac.h"
+#include "hash_literal.h"
+#include "miniparse.h"
 
 
 char status_bar[512];
@@ -44,6 +46,7 @@ uint32_t status_bar_color = 0;
 // --- colors 3 digits bg, 3 digits fg, 2 digits character.
 #define C_BOLD 0x80
 #define C_SELECTION 0xc48fff00u
+#define C_SELECTION_FIND_MODE 0x4c400000u
 #define C_NUM 0x000cc700u
 #define C_DEF 0x000fff00u
 #define C_KW 0x0009ac00u
@@ -55,7 +58,7 @@ uint32_t status_bar_color = 0;
 #define C_ERR 0xf00fff00u
 #define C_OK 0x080fff00u
 #define C_WARNING 0xfa400000u
-
+#define C_CHART 0x111eee00u // mini notation chart
 #define C_NOTE 0x0000f400u
 
 #define C_SLIDER 0x48f00000u
@@ -379,10 +382,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     if (action != GLFW_PRESS && action != GLFW_REPEAT)
         return;
     if (mods == 0) {
-        if (key == GLFW_KEY_ESCAPE) {
-            E->select_idx = E->cursor_idx;
-        }
-
+        
         if (key == GLFW_KEY_F1) {
             E = curE = &shader_tab;
         }
@@ -524,45 +524,10 @@ GLFWwindow *gl_init(int want_fullscreen) {
     return win;
 }
 
-#define UC(lit, i, p) ((unsigned)p * (unsigned)(unsigned char)((lit)[i]))
-
-
-#define HASH_(x)                                                                                                                   \
-    UC(x, 0, 257) + UC(x, 1, 263) + UC(x, 2, 269) + UC(x, 3, 271) + UC(x, 4, 277) + UC(x, 5, 281) + UC(x, 6, 283) + UC(x, 7, 293) +            \
-        UC(x, 8, 307) + UC(x, 9, 311) + UC(x, 10, 313) + UC(x, 11, 317) + UC(x, 12, 331) + UC(x, 13, 337) + UC(x, 14, 347) +              \
-        UC(x, 15, 349)
-
-#define HASH(lit) HASH_(lit "                ") /* 16 spaces */
-
-static inline unsigned hash_span(const char *s, const char *e) {
-    static const unsigned primes[16] = {257, 263, 269, 271, 277, 281, 283, 293, 307, 311, 313, 317, 331, 337, 347, 349};
-    unsigned h = 0;
-    for (int i = 0; i < 16; ++i, ++s) {
-        unsigned c = (s < e) ? *s : ' ';
-        h += c * primes[i];
-    }
-    return h;
-}
-
 static inline int is_ident_start(unsigned c) { return (c == '_') || ((c | 32) - 'a' < 26); }
 static inline int is_ident_cont(unsigned c) { return is_ident_start(c) || (c - '0' < 10); }
 static inline int is_space(unsigned c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 
-static inline int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
-    if (allow_p_prefix && e>s+2 && s[0]=='P' && s[1]=='_') {
-        s+=2;
-    }
-    if (s>=e) return -1;
-    if (s[0]<'A' || s[0]>'G') return -1;
-    const static int note_indices[7] = {9, 11, 0,2,4,5,7};
-    int note = note_indices[*s++-'A'];    
-    if (s>=e) return -1;
-    if (s[0]=='s') { note++; if (++s>=e) return -1; } else if (s[0]=='b') { note--; if (++s>=e) return -1; }
-    if (s[0]<'0' || s[0]>'9') return -1;
-    int octave = *s++-'0';
-    if (s!=e) return -1;
-    return note + octave*12;
-}
 
 static inline int unary_sign_context(unsigned prev) {
     return !(is_ident_cont(prev) || prev == ')' || prev == ']' || prev == '}' || prev == '.');
@@ -757,6 +722,34 @@ int close_bracket(tokenizer_t *t, int *count, char opc) {
     return C_ERR;
 }
 
+void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_line, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int length = vsnprintf(NULL, 0, fmt, args);
+    if (length > TMW * 16) length = TMW * 16;
+    va_end(args);
+    va_start(args, fmt);
+    char buf[length+1];
+    vsnprintf(buf, length+1, fmt, args);
+    buf[length]=0;
+    va_end(args);
+    int leftx=x;
+    if (y>=TMH) return;
+    for (const char *c = buf; *c; c++) {
+        if (*c=='\n') {
+            if (!multi_line) break;
+            x = leftx;
+            y++;
+            if (y>=TMH) return;
+            continue;
+        }
+        if (y>=0 && x<TMW && x>=0)
+            ptr[y * TMW + x] = (color) | (unsigned char)(*c);
+        x++;
+    }
+}
+
+
 int code_color(EditorState *E, uint32_t *ptr) {
     int left = 64 / E->font_width;
     tokenizer_t t = {.ptr = ptr,
@@ -857,7 +850,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             if (is_ident_start((unsigned)c)) {
                 col = C_DEF;
                 j = scan_ident(t.str, i, t.n);
-                h = hash_span(t.str + i, t.str + j);
+                h = literal_hash_span(t.str + i, t.str + j);
                 int midinote = parse_midinote(t.str + i, t.str + j, 1);
                 if (midinote>=0) {
                     col = C_NOTE;
@@ -917,7 +910,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             char ch = tok_get(&t, i);
             uint32_t ccol = col;
             if (i >= se && i < ee)
-                ccol = C_SELECTION;
+                ccol = E->find_mode ? C_SELECTION_FIND_MODE : C_SELECTION;
 
             if (i == E->cursor_idx) {
                 E->cursor_x = t.x;
@@ -967,6 +960,51 @@ int code_color(EditorState *E, uint32_t *ptr) {
         }
     }
     E->num_lines = t.y + 1 + E->intscroll;
+    // draw a popup below the cursor if its inside a quoted string.
+    if (E->cursor_idx >= 0 && E->cursor_idx < t.n) {
+        int line_start = xy_to_idx(E, 0, E->cursor_y);
+        int line_end = xy_to_idx(E, 0x7fffffff, E->cursor_y);
+        // count quotes since beginning of line
+        int num_quotes = 0;
+        int last_quote_idx = line_start;
+        for (int i = line_start; i < E->cursor_idx; i++) {
+            if (t.str[i] == '"') { num_quotes++; last_quote_idx = i; }
+            else if (t.str[i] == '\\') i++; // skip escaped quotes
+        }
+        if (num_quotes % 2 == 1) {
+            int i;
+            for (i = E->cursor_idx; i < line_end; i++) {
+                if (t.str[i] == '"' || t.str[i]=='\n') break;
+                else if (t.str[i] == '\\') i++; // skip escaped quotes
+            }
+            // draw a popup below the cursor
+            int x = last_quote_idx - line_start + left;
+            static uint32_t cached_compiled_string_hash = 0;
+            static Parser cached_parser;
+            static char *cached_chart;
+            const char *codes = t.str + last_quote_idx + 1;
+            const char *codee = t.str + i;
+            uint32_t hash = fnv1_hash(codes, codee);
+            if (hash!=cached_compiled_string_hash) {
+                cached_compiled_string_hash = hash;
+                cached_parser.s = codes;
+                cached_parser.n = codee - codes;
+                parse_pattern(&cached_parser);
+                if (cached_parser.err<=0) {
+                    stbds_arrfree(cached_chart);
+                    cached_chart = print_pattern_chart(&cached_parser);
+                }
+            }
+            if (cached_chart) {
+                print_to_screen(t.ptr, x, E->cursor_y + 1, C_CHART, true, cached_chart);
+            }
+            if (cached_parser.err) {
+                print_to_screen(t.ptr, x + cached_parser.err, E->cursor_y + 1, C_ERR, false, cached_parser.errmsg);
+            } 
+            
+        }
+    }
+        
     return E->num_lines;
 }
 
@@ -991,6 +1029,7 @@ void load_file(EditorState *E, bool init) {
 
 #define RESW 1920
 #define RESH 1080
+
 
 void editor_update(EditorState *E, GLFWwindow *win) {
     double mx, my;
@@ -1032,10 +1071,7 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         E->intscroll = (int)(E->scroll_y / E->font_height);
         code_color(E, ptr);
         if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
-            int x = 0;
-            for (const char *c = status_bar; *c && *c != '\n' && x < TMW; c++, x++) {
-                ptr[tmh * TMW + x] = (status_bar_color) | (unsigned char)(*c);
-            }
+            print_to_screen(ptr, 0, tmh, status_bar_color, false, status_bar);
         } else {
             status_bar_color = 0;
         }
@@ -1163,7 +1199,7 @@ void on_midi_input(uint8_t data[3], void *user) {
 int main(int argc, char **argv) {
     void test_minipat(void);
     test_minipat();
-    return 0;
+    //return 0;
     printf("ginkgo - " __DATE__ " " __TIME__ "\n");
 
     int num_inputs = midi_get_num_inputs();

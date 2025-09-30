@@ -26,6 +26,19 @@ enum NodeType {
     N_POLY,
     N_LAST
 };
+
+/* more functions we might want
+almostNever, and similar
+ply
+rib
+seg
+clip
+add,sub,mul (and note versions? nadd, nsub, nmul?)
+late / early
+fast slow and all the others that are equivalent to the mininotation ones
+*/
+
+
 static const char *node_type_names[N_LAST] = {"LEAF",    "CAT",       "FASTCAT",  "PARALLEL", "IDX",    "TIMES", "DIVIDE",
                                               "DEGRADE", "REPLICATE", "ELONGATE", "EUCLID",   "RANDOM", "POLY"};
 
@@ -95,6 +108,7 @@ typedef struct Parser {
     int root;    // index of root node
     int err;     // 0 ok, else position of first error
     const char *errmsg;
+    uint32_t rand_seed;
 } Parser;
 
 // ansi printing colors
@@ -365,7 +379,8 @@ static int parse_op(Parser *p, int left_node, char op, int node_type, int option
     if (optional_right && (isdelimiter(ch) || isop(ch))) {
         right_node = -1;
     } else {
-        right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in the while loop inside parse_expr.
+        right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in
+                                          // the while loop inside parse_expr.
         p->nodes[left_node].next_sib = right_node;
     }
     int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i);
@@ -515,17 +530,47 @@ static inline void print_haps(Parser *p, Hap *haps, int n) {
     }
 }
 
-static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps,
-                      int dont_bother_with_retrigs_for_leaves, int sound_idx, float note_prob) {
-    if (nodeidx < 0)
+#define FLAG_NONE 0
+#define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
+#define FLAG_INCLUSIVE 2 // if set, we include haps that overlap on the left side.
+
+#include <stdint.h>
+
+static inline uint32_t hash2_pcg(uint32_t a, uint32_t b) {
+    const uint64_t MUL = 6364136223846793005ull;
+    uint64_t state = ((uint64_t)a << 32) | b;    // pack inputs
+    uint64_t inc   = ((uint64_t)b << 1) | 1ull;  // odd stream
+    
+    state = state * MUL + inc;                   // LCG step
+    
+    uint32_t xorshifted = (uint32_t)(((state >> 18) ^ state) >> 27);
+    uint32_t rot = (uint32_t)(state >> 59);
+    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+}
+
+static inline uint32_t hasht_int(uint32_t seed, float time) {
+    return hash2_pcg(seed, *(uint32_t*)&time);
+}
+
+static inline float hasht_float(uint32_t seed, float time) {
+    return (hasht_int(seed, time)&0xffffff) * (1.f/16777216.f);
+}
+
+
+static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx,
+                      float note_prob) {
+    if (nodeidx < 0 || t0 >= t1)
         return *haps;
+    uint32_t seed = hash2_pcg(p->rand_seed, nodeidx);
     Node *n = p->nodes + nodeidx;
-    if (n->type == N_LEAF && dont_bother_with_retrigs_for_leaves) {
+    if (n->type == N_LEAF && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
         Hap h = (Hap){t0 * tscale + tofs, t1 * tscale + tofs, nodeidx, sound_idx};
         stbds_arrput(*haps, h);
         return *haps;
     }
     switch (n->type) {
+    case N_REPLICATE:
+    case N_ELONGATE:
     case N_DEGRADE:
     case N_IDX:
     case N_DIVIDE:
@@ -537,7 +582,8 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
             // create new haps on the right side. then iterate over them, one at a time, and query haps for the left scaled
             // appropriately.
             Hap *right_haps = NULL;
-            make_haps(p, nleft->next_sib, t0, t1, 1.f, 0.f, &right_haps, 1, 0, 1.f);
+            make_haps(p, nleft->next_sib, t0, t1, 1.f, 0.f, &right_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE,
+                      0, 1.f);
             // printf("queried right haps from %g to %g, got %d haps back\n", t0, t1, (int)stbds_arrlen(right_haps));
             // print_haps(p, right_haps, stbds_arrlen(right_haps));
             for (int i = 0; i < stbds_arrlen(right_haps); i++) {
@@ -545,26 +591,48 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
                 float speed_scale = 1.f;
                 float degrade_amount = 0.f;
                 float right_value = p->nodes[right_hap->node].value.number;
-                if (n->type == N_DIVIDE || n->type == N_TIMES)
+                if (n->type == N_TIMES)
                     speed_scale = right_value;
-                if (speed_scale <= 0.f)
-                    speed_scale = 1.f;
-                if (n->type == N_DIVIDE)
-                    speed_scale = 1.f / speed_scale;
+                else if (n->type == N_DIVIDE || n->type == N_ELONGATE)
+                    speed_scale = 1.f / (right_value ? right_value : 1.f);
                 else if (n->type == N_IDX)
                     sound_idx = (int)right_value;
                 else if (n->type == N_DEGRADE)
                     degrade_amount = right_value;
-                make_haps(p, n->first_child, right_hap->t0 * speed_scale, right_hap->t1 * speed_scale, tscale / speed_scale, tofs,
-                          haps, 0, sound_idx, note_prob * (1.f - degrade_amount));
+                if (speed_scale <= 0.f)
+                    speed_scale = 1.f;
+                // PLAN for euclid: we grab right haps for 2 or 3 parameters; then we need to iterate every single 'onset' time
+                // between t0 and t1. we do this by sorting them, keeping an index into each of them and advancing to the lowest of
+                // them.
+
+                make_haps(p, n->first_child, maxf(t0, right_hap->t0) * speed_scale, minf(t1, right_hap->t1) * speed_scale,
+                          tscale / speed_scale, tofs, haps, flags, sound_idx, note_prob * (1.f - degrade_amount));
             }
             stbds_arrfree(right_haps);
         } else {
             // no value? proxy to the left. for degrade, if there is no right value, we assume 50% default.
-            make_haps(p, n->first_child, t0, t1, tscale, tofs, haps, 0, sound_idx,
+            make_haps(p, n->first_child, t0, t1, tscale, tofs, haps, flags, sound_idx,
                       n->type == N_DEGRADE ? note_prob * 0.5f : note_prob);
         }
         return *haps;
+        break;
+    }
+    case N_RANDOM: {
+        int num_children=0;
+        for (int i=n->first_child; i>=0; i=p->nodes[i].next_sib) ++num_children;
+        if (!num_children)
+            return *haps;
+        int *kids=(int*)alloca(num_children*4);
+        num_children=0;
+        for (int i=n->first_child; i>=0; i=p->nodes[i].next_sib) kids[num_children++]=i;
+        for (int t=(int)t0; t<t1; ++t) {
+            float from = t, to=t+1.f;
+            int kid = kids[hasht_int(seed,from)%num_children];
+            int inclusive_left = (flags & FLAG_INCLUSIVE) && to > t0;
+            if ((from >= t0 || inclusive_left) && from < t1) {
+                make_haps(p, kid, from, to, tscale, tofs, haps, flags, sound_idx, note_prob);
+            }
+        }
         break;
     }
     case N_FASTCAT:
@@ -583,13 +651,13 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
                 if (child_length <= 0.f)
                     child_length = 1.f;
                 float to = from + child_length;
-                // if (from < t1 && to > t0) {
-                if (from >= t0 && from < t1) {
+                int inclusive_left = (flags & FLAG_INCLUSIVE) && to > t0;
+                if ((from >= t0 || inclusive_left) && from < t1) {
                     // this child overlaps the query range
                     float child_from = loop_index * child_length;
                     float child_to = child_from + child_length;
-                    make_haps(p, child, child_from, child_to, tscale, tofs + (from - child_from) * tscale, haps, 0, sound_idx,
-                              note_prob);
+                    make_haps(p, child, child_from, child_to, tscale, tofs + (from - child_from) * tscale, haps, flags,
+                              sound_idx, note_prob);
                 }
                 from = to;
                 child = child_n->next_sib;
@@ -599,11 +667,12 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
                 }
             } else { // leaf
                 float to = from + 1.f;
-                // if (from < t1 && to > t0) {
-                if (from >= t0 && from < t1) {
-                    if (note_prob >= 1.f || rnd01() <= note_prob) {
+                int inclusive_left = (flags & FLAG_INCLUSIVE) && to > t0;
+                if ((from >= t0 || inclusive_left) && from < t1) {
+                    float output_t0 = from * tscale + tofs;
+                    if (note_prob >= 1.f || hasht_float(seed, output_t0) <= note_prob) {
                         if (nodeidx < 0 || !is_rest(p->nodes[nodeidx].value.sound->name)) {
-                            Hap h = (Hap){from * tscale + tofs, to * tscale + tofs, nodeidx, sound_idx};
+                            Hap h = (Hap){output_t0, to * tscale + tofs, nodeidx, sound_idx};
                             stbds_arrput(*haps, h);
                         }
                     }
@@ -614,10 +683,16 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
         }
         break;
     }
+    case N_POLY:
     case N_PARALLEL: {
         int child = n->first_child;
+        float speed_scale = 1.f;
+        if (n->type == N_POLY) {
+            speed_scale = (n->value.number > 0) ? n->value.number : (child >= 0) ? p->nodes[child].total_length : 1.f;
+        }
         while (child >= 0) {
-            make_haps(p, child, t0, t1, tscale, tofs, haps, 0, sound_idx, note_prob);
+            make_haps(p, child, t0 * speed_scale, t1 * speed_scale, tscale / speed_scale, tofs, haps, flags, sound_idx,
+                      note_prob);
             child = p->nodes[child].next_sib;
         }
         break;
@@ -627,7 +702,8 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
 }
 void test_minipat(void) {
     // const char *s = "sd,<oh hh>,[[bd bd:1 -] rim]";
-    const char *s = "rim*8?";
+    //const char *s = "{bd sd, rim hh oh}%4";
+    const char *s = "[bd | sd | rim]*8";
     // const char *s = "{c eb g, c2 g2}%4";
     // const char *s = "[bd <hh oh>,rim*<4 8>]";
     // const char *s = "[bd,sd*1.1]";
@@ -635,7 +711,7 @@ void test_minipat(void) {
     Parser p = parse(s, strlen(s));
     pretty_print(s, p.nodes, p.root, 0);
     Hap *haps = NULL;
-    make_haps(&p, p.root, 0.0f, 4.0f, 1.0f, 0.f, &haps, 0, 0, 1.f);
+    make_haps(&p, p.root, 0.0f, 4.0f, 1.0f, 0.f, &haps, FLAG_NONE, 0, 1.f);
     printf(
         "        time 0   |   |   |   v   |   |   |   1   |   |   |   v   |   |   |   2   |   |   |   v   |   |   |   3   |   |   "
         "|   v   |   |   |   4\n");

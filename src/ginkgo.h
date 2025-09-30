@@ -374,6 +374,10 @@ static inline float rnd01(void) {
     rnd_seed = pcg_next(rnd_seed);
     return (float)(rnd_seed & 0xffffff) * (1.f / 16777216.f);
 }
+static inline uint32_t rndint(uint32_t m) {
+    rnd_seed = pcg_next(rnd_seed);
+    return rnd_seed % m;
+}
 static inline float rndt(void) { return rnd01() + rnd01() - 1.f; }
 static inline float rdnn(void) {
     float x = rnd01() + rnd01() + rnd01() + rnd01() + rnd01() + rnd01() - 3.f;

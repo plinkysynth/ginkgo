@@ -34,7 +34,6 @@ int fbw, fbh; // current framebuffer size in pixels
 #include "hash_literal.h"
 #include "miniparse.h"
 
-
 char status_bar[512];
 double status_bar_time = 0;
 uint32_t status_bar_color = 0;
@@ -60,22 +59,23 @@ uint32_t status_bar_color = 0;
 #define C_CHART 0x1312a400u // mini notation chart
 #define C_CHART_HOVER 0x2422a400u
 #define C_CHART_DRAG C_CHART_HOVER
-#define C_CHART_HILITE 0x4642a400u
+#define C_CHART_HILITE 0x4643b500u
 #define C_NOTE 0x0000f400u
 
-#define C_SLIDER 0x48f00000u
-#define C_SLIDER_RED 0xe43fff00u
-#define C_SLIDER_ORANGE 0xfa400000u
-#define C_SLIDER_YELLOW 0xee200000u
-#define C_SLIDER_WHITE 0xeff00000u
+#define C_SLIDER 0x11148f00u
+#define C_SLIDER_RED 0x111e4300u
+#define C_SLIDER_RED2 0x111e7400u
+#define C_SLIDER_ORANGE 0x111fa400u
+#define C_SLIDER_ORANGE2 0x111fc300u
+#define C_SLIDER_YELLOW 0x111ee200u
+#define C_SLIDER_YELLOW2 0x111efa00u
+#define C_SLIDER_WHITE 0x111eff00u
+#define C_SLIDER_WHITE2 0x1118cf00u
 
-static const uint32_t slidercols[17]={
-    C_SLIDER_RED, C_SLIDER_RED, 
-    C_SLIDER_ORANGE, C_SLIDER_ORANGE, C_SLIDER_YELLOW, C_SLIDER_YELLOW, C_SLIDER_WHITE, C_SLIDER_WHITE,
-    C_SLIDER_RED, C_SLIDER_RED, 
-    C_SLIDER_ORANGE, C_SLIDER_ORANGE, C_SLIDER_YELLOW, C_SLIDER_YELLOW, C_SLIDER_WHITE, C_SLIDER_WHITE,
-    C_SLIDER
-};
+static const uint32_t slidercols[17] = {C_SLIDER_RED,     C_SLIDER_RED2,    C_SLIDER_ORANGE, C_SLIDER_ORANGE2, C_SLIDER_YELLOW,
+                                        C_SLIDER_YELLOW2, C_SLIDER_WHITE,   C_SLIDER_WHITE2, C_SLIDER_RED,     C_SLIDER_RED2,
+                                        C_SLIDER_ORANGE,  C_SLIDER_ORANGE2, C_SLIDER_YELLOW, C_SLIDER_YELLOW2, C_SLIDER_WHITE,
+                                        C_SLIDER_WHITE2,  C_SLIDER};
 
 uint32_t invert_color(uint32_t col) { // swap fg and bg
     return ((col >> 12) & 0xfff00) + ((col & 0xfff00) << 12) + (col & 0xff);
@@ -264,17 +264,19 @@ const char *kFS = SHADER(
             }    
         }
         
-        vec2 fontpix = vec2(pixel - cell * uFontPx + 0.5f) / vec2(uFontPx);
+        vec2 cellpix = vec2(pixel - cell * uFontPx + 0.5f) / vec2(uFontPx);
+        vec2 fontpix=vec2(cellpix.x + (ascii & 15), cellpix.y + (ascii >> 4)-2) * vec2(1./16.,1./6.);
         float sdf_level = 0.f;
-        float bary = fontpix.y;
-        fontpix.x += (ascii & 15);
-        fontpix.y += (ascii >> 4)-2;
-        fontpix *= vec2(1./16.,1./6.); // 16 x 6 atlas
         float aa = uFontPx.x / 2.f;
         if (ascii<128) {
             sdf_level = texture(uFont, fontpix).r - 0.5f;
+        } else if (ascii<128+16) {
+            // vertical bar:
+            sdf_level = 4.f * (cellpix.y -1.f + float(ascii-128+1)*(1.f/16.f)); // bar graph
         } else {
-            sdf_level = 8.f * (bary -1.f + float(ascii-128)*(1.f/16.f)); // bar graph
+            // horizontal slider tick:
+            sdf_level = 0.2f - 4.f * abs(cellpix.y-0.5f);
+            sdf_level=max(sdf_level, 0.5f - 2.f * abs(cellpix.x+0.25f-float(ascii-(128+16))*1.f/8.f));
         }
         float fontlvl = (ascii >= 32) ? sqrt(saturate(sdf_level * aa + 0.5)) : 0.0;
         vec4 fontcol = mix(bg, fg, fontlvl);
@@ -306,7 +308,7 @@ GLuint pbos[3];
 int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
 
-float* closest_slider[16]={}; // 16 closest sliders to the cursor, for midi cc
+float *closest_slider[16] = {}; // 16 closest sliders to the cursor, for midi cc
 
 static void parse_error_log(EditorState *E) {
     hmfree(E->error_msgs);
@@ -317,14 +319,17 @@ static void parse_error_log(EditorState *E) {
         if (sscanf(c, "ERROR: %d:%d:", &col, &line) == 2) {
             hmput(E->error_msgs, line - 1, c);
         }
-        if (c[0] == '.' && c[1] == '/') c+=2;
+        if (c[0] == '.' && c[1] == '/')
+            c += 2;
         if (strncmp(c, E->fname, fnamelen) == 0 && c[fnamelen] == ':') {
-            const char *colend = c+fnamelen+1;
+            const char *colend = c + fnamelen + 1;
             int line = strtol(colend, (char **)&colend, 10);
             if (line) {
-                while (*colend && !isspace(*colend)) ++colend;
-                while (isspace(*colend)) ++colend;
-                //printf("compile error on line %d, column %d, [%s]\n", line, col, colend);
+                while (*colend && !isspace(*colend))
+                    ++colend;
+                while (isspace(*colend))
+                    ++colend;
+                // printf("compile error on line %d, column %d, [%s]\n", line, col, colend);
                 hmput(E->error_msgs, line - 1, colend);
             }
         }
@@ -391,7 +396,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     if (action != GLFW_PRESS && action != GLFW_REPEAT)
         return;
     if (mods == 0) {
-        
+
         if (key == GLFW_KEY_F1) {
             E = curE = &shader_tab;
         }
@@ -536,7 +541,6 @@ GLFWwindow *gl_init(int want_fullscreen) {
 static inline int is_ident_start(unsigned c) { return (c == '_') || ((c | 32) - 'a' < 26); }
 static inline int is_ident_cont(unsigned c) { return is_ident_start(c) || (c - '0' < 10); }
 static inline int is_space(unsigned c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-
 
 static inline int unary_sign_context(unsigned prev) {
     return !(is_ident_cont(prev) || prev == ')' || prev == ']' || prev == '}' || prev == '.');
@@ -735,27 +739,43 @@ void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_lin
     va_list args;
     va_start(args, fmt);
     int length = vsnprintf(NULL, 0, fmt, args);
-    if (length > TMW * 16) length = TMW * 16;
+    if (length > TMW * 16)
+        length = TMW * 16;
     va_end(args);
     va_start(args, fmt);
-    char buf[length+1];
-    vsnprintf(buf, length+1, fmt, args);
-    buf[length]=0;
+    char buf[length + 1];
+    vsnprintf(buf, length + 1, fmt, args);
+    buf[length] = 0;
     va_end(args);
-    int leftx=x;
-    if (y>=TMH) return;
+    int leftx = x;
+    if (y >= TMH)
+        return;
     for (const char *c = buf; *c; c++) {
-        if (*c=='\n') {
-            if (!multi_line) break;
+        if (*c == '\n') {
+            if (!multi_line)
+                break;
             x = leftx;
             y++;
-            if (y>=TMH) return;
+            if (y >= TMH)
+                return;
             continue;
         }
-        if (y>=0 && x<TMW && x>=0)
+        if (y >= 0 && x < TMW && x >= 0)
             ptr[y * TMW + x] = (color) | (unsigned char)(*c);
         x++;
     }
+}
+
+int vertical_bar(int y) { // y=0 (empty) to y=16 (full)
+    if (y <= 0)
+        return ' ';
+    return 128 + clampi(y - 1, 0, 15);
+}
+
+int horizontal_tick(int x) { // x=0 (4 pixel tick starting from left edge) to x=8 (off the right edge)
+    if (x >= 8 || x < -4)
+        return 128 + 16;
+    return 128 + 16 + clampi(x + 4, 0, 15);
 }
 
 
@@ -772,22 +792,23 @@ int code_color(EditorState *E, uint32_t *ptr) {
     bool wasinclude = false;
     int se = get_select_start(E);
     int ee = get_select_end(E);
-    float *sliders[TMH]= {};
+    float *sliders[TMH] = {};
     int sliderindices[TMH];
-    float *new_closest_slider[16]={};
+    float *new_closest_slider[16] = {};
     if (G) {
-        for (int slideridx=0;slideridx<16;++slideridx) {
-            for (int i=0;i<G->sliders[slideridx].n;i+=2) {
-                float*value_line = G->sliders[slideridx].data+i;
+        for (int slideridx = 0; slideridx < 16; ++slideridx) {
+            for (int i = 0; i < G->sliders[slideridx].n; i += 2) {
+                float *value_line = G->sliders[slideridx].data + i;
                 float value = value_line[0];
                 int line = (int)value_line[1];
-                int dist_to_old = new_closest_slider[slideridx]==NULL ? 1000000 : abs((int)new_closest_slider[slideridx][1]-E->cursor_y);
-                int dist_to_new = abs(line-E->cursor_y);
-                if (dist_to_old>dist_to_new) {
+                int dist_to_old =
+                    new_closest_slider[slideridx] == NULL ? 1000000 : abs((int)new_closest_slider[slideridx][1] - E->cursor_y);
+                int dist_to_new = abs(line - E->cursor_y);
+                if (dist_to_old > dist_to_new) {
                     new_closest_slider[slideridx] = value_line;
                 }
                 line -= E->intscroll;
-                if (line>=0 && line<TMH) {
+                if (line >= 0 && line < TMH) {
                     sliderindices[line] = slideridx;
                     sliders[line] = value_line;
                 }
@@ -797,14 +818,20 @@ int code_color(EditorState *E, uint32_t *ptr) {
     } else {
         memset(closest_slider, 0, sizeof(closest_slider));
     }
-    int tmw = (fbw-64.f) / E->font_width;
+    int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
+    int cursor_in_curve_start_idx = 0;
+    int cursor_in_curve_end_idx = 0;
+    int pattern_entry_idx = -1;
     int pattern_mode = 0; // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
+    slider_spec_t slider_spec;
     for (int i = 0; i <= t.n + 10;) {
         unsigned h = 0;
         char c = tok_get(&t, i);
         uint32_t col = C_DEF;
         int j = i + 1;
+        bool token_is_curve = false;
+        bool token_is_slider = false;
         switch (c) {
         case '(':
             col = push_bracket(&t, &t.paren, '(');
@@ -832,32 +859,46 @@ int code_color(EditorState *E, uint32_t *ptr) {
             } else if (c2 == '*') {
                 col = C_COM;
                 j = scan_block_comment(t.str, i, t.n);
+                if (looks_like_slider_comment(t.str, t.n, i, &slider_spec)) {
+                    if (!(E->cursor_idx >= i && E->cursor_idx < j) || (G && G->mb!=0))
+                        token_is_slider = true;
+                    col = C_SLIDER;
+                }
             }
         } break;
-        case '"': {
-            col = C_STR;
-            j = scan_string(t.str, i, t.n, '"');
-        } break;
         case '<':
-
             if (wasinclude) {
                 col = C_STR;
                 j = scan_string(t.str, i, t.n, '>');
             } else
                 col = C_PUN;
             break;
+        case '"': {
+            col = C_STR;
+            j = scan_string(t.str, i, t.n, '"');
+        } break;
         case '\'': {
             col = C_STR;
             j = scan_string(t.str, i, t.n, '\'');
+            if (pattern_mode && E->cursor_idx >= i && E->cursor_idx < j) {
+                cursor_in_curve_start_idx = i;
+                cursor_in_curve_end_idx = j;
+            } else {
+                token_is_curve = pattern_mode;
+            }
         } break;
         case '#':
             col = C_PREPROC;
-            if (!pattern_mode && i+15<=t.n && strncmp(t.str+i, "#ifdef PATTERNS", 15)==0) {
+            if (!pattern_mode && i + 15 <= t.n && strncmp(t.str + i, "#ifdef PATTERNS", 15) == 0) {
                 pattern_mode = 1;
-                j=i+15;
-            } else if (pattern_mode && i+6<=t.n && strncmp(t.str+i, "#endif", 6)==0) {
+                pattern_entry_idx = i;
+                j = i + 15;
+            } else if (pattern_mode && i + 6 <= t.n && strncmp(t.str + i, "#endif", 6) == 0) {
+                if (E->cursor_idx >= pattern_entry_idx && E->cursor_idx < i) {
+                    E->cursor_in_pattern_area = true;
+                }
                 pattern_mode = 0;
-                j=i+6;
+                j = i + 6;
             }
             break;
 
@@ -867,46 +908,51 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 j = scan_ident(t.str, i, t.n);
                 h = literal_hash_span(t.str + i, t.str + j);
                 int midinote = parse_midinote(t.str + i, t.str + j, 1);
-                if (midinote>=0) {
+                if (midinote >= 0) {
                     col = C_NOTE;
                 } else
-                switch (h) {
-                    CASE8("void", "float", "double", "int", "uint", "char", "short", "long")
-                        : CASE8("signed", "unsigned", "bool", "size_t", "ptrdiff_t", "ssize_t", "off_t", "time_t")
-                        : CASE8("int8_t", "uint8_t", "int16_t", "uint16_t", "uint32_t", "uint64_t", "float32_t", "float64_t")
-                        : CASE8("vec2", "vec3", "vec4", "mat2", "mat3", "mat4", "sampler2D", "sampler3D") : col = C_TYPE;
-                    break;
-                    CASE8("if", "else", "for", "while", "do", "switch", "case", "break")
-                        : CASE8("continue", "return", "uniform", "in", "out", "layout", "struct", "class")
-                        : CASE8("enum", "union", "typedef", "static", "extern", "inline", "volatile", "const")
-                        : CASE2("register", "restrict") : col = C_KW;
-                    break;
-                    CASE2("define", "pragma") : col = C_PREPROC;
-                    break;
-                CASE8("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7"):
-                CASE2("S8", "S9"): {
-                    int slideridx = (t.str[i+1]-'0');
-                    if (closest_slider[slideridx]==NULL || closest_slider[slideridx][1]!=t.y+E->intscroll) slideridx=16;
-                    col=slidercols[slideridx];
-                    break; }
-                CASE6("S10", "S11", "S12", "S13", "S14", "S15"): {
-                    int slideridx = ((t.str[i+2]-'0')+10);
-                    if (closest_slider[slideridx]==NULL || closest_slider[slideridx][1]!=t.y+E->intscroll) slideridx=16;
-                    col=slidercols[slideridx];
-                    break; }
-                CASE6("SA", "SB", "SC", "SD", "SE", "SF"): {
-                    int slideridx = (t.str[i+1]-'A'+10);
-                    if (closest_slider[slideridx]==NULL || closest_slider[slideridx][1]!=t.y+E->intscroll) slideridx=16;
-                    col=slidercols[slideridx];
-                    break; }
-                case HASH("S_"):
-                col=C_SLIDER;
-                break;
-                case HASH("include"):
-                    wasinclude = true;
-                    col = C_PREPROC;
-                    break;
-                }
+                    switch (h) {
+                        CASE8("void", "float", "double", "int", "uint", "char", "short", "long")
+                            : CASE8("signed", "unsigned", "bool", "size_t", "ptrdiff_t", "ssize_t", "off_t", "time_t")
+                            : CASE8("int8_t", "uint8_t", "int16_t", "uint16_t", "uint32_t", "uint64_t", "float32_t", "float64_t")
+                            : CASE8("vec2", "vec3", "vec4", "mat2", "mat3", "mat4", "sampler2D", "sampler3D") : col = C_TYPE;
+                        break;
+                        CASE8("if", "else", "for", "while", "do", "switch", "case", "break")
+                            : CASE8("continue", "return", "uniform", "in", "out", "layout", "struct", "class")
+                            : CASE8("enum", "union", "typedef", "static", "extern", "inline", "volatile", "const")
+                            : CASE2("register", "restrict") : col = C_KW;
+                        break;
+                        CASE2("define", "pragma") : col = C_PREPROC;
+                        break;
+                        CASE8("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7") : CASE2("S8", "S9") : {
+                            int slideridx = (t.str[i + 1] - '0');
+                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll)
+                                slideridx = 16;
+                            col = slidercols[slideridx];
+                            break;
+                        }
+                        CASE6("S10", "S11", "S12", "S13", "S14", "S15") : {
+                            int slideridx = ((t.str[i + 2] - '0') + 10);
+                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll)
+                                slideridx = 16;
+                            col = slidercols[slideridx];
+                            break;
+                        }
+                        CASE6("SA", "SB", "SC", "SD", "SE", "SF") : {
+                            int slideridx = (t.str[i + 1] - 'A' + 10);
+                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll)
+                                slideridx = 16;
+                            col = slidercols[slideridx];
+                            break;
+                        }
+                    case HASH("S_"):
+                        col = C_SLIDER;
+                        break;
+                    case HASH("include"):
+                        wasinclude = true;
+                        col = C_PREPROC;
+                        break;
+                    }
             } else {
                 j = scan_number(t.str, i, t.n, t.prev_nonspace);
                 if (j > i)
@@ -921,9 +967,29 @@ int code_color(EditorState *E, uint32_t *ptr) {
             j = i + 1;
         if (h != HASH("include") && !is_space((unsigned)c))
             wasinclude = false;
+        float *curve_data = NULL;
+        if (token_is_curve) {
+            int numdata = j - i - 2;
+            curve_data = alloca(4 * numdata);
+            fill_curve_data_from_string(curve_data, t.str + i + 1, numdata);
+        } 
+        int starti = i;
+        int slider_val = 0;
+        if (token_is_slider && slider_spec.maxval != slider_spec.minval && j>i+2) {
+            float v = (slider_spec.curval - slider_spec.minval) / (slider_spec.maxval - slider_spec.minval);
+            slider_val = (int)(v * ((j-i-2) * 8.f - 4.f));
+        }
         for (; i < j; ++i) {
             char ch = tok_get(&t, i);
             uint32_t ccol = col;
+            if (curve_data) {
+                ccol = C_CHART;
+                if (i > starti && i < j - 1) {
+                    ch = vertical_bar((int)(curve_data[i - starti - 1] * 16.f + 0.5f));
+                }
+            } else if (token_is_slider && i>starti && i<j-1) {
+                ch = horizontal_tick(slider_val - (i - starti - 1) * 8);
+            }
             if (i >= se && i < ee)
                 ccol = E->find_mode ? C_SELECTION_FIND_MODE : C_SELECTION;
 
@@ -932,7 +998,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 E->cursor_y = t.y + E->intscroll;
             }
             uint32_t bgcol = ccol & 0xfff00000u;
-            if (pattern_mode && bgcol==0) {
+            if (pattern_mode && bgcol == 0) {
                 // pattern area gets a special bg color
                 ccol |= 0x11100000u;
             }
@@ -945,36 +1011,30 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 const char *errline = hmget(E->error_msgs, t.y);
                 if (errline) {
                     uint32_t errcol = C_ERR;
-                    if (strncasecmp(errline, "warning:", 8) == 0) errcol = C_WARNING;
+                    if (strncasecmp(errline, "warning:", 8) == 0)
+                        errcol = C_WARNING;
                     for (; *errline && *errline != '\n'; errline++) {
                         if (t.x < TMW && t.y >= 0 && t.y < TMH)
                             t.ptr[t.y * TMW + t.x] = errcol | (unsigned char)(*errline);
                         t.x++;
                     }
-                } 
+                }
                 // fill to the end of the line
                 if (pattern_mode) {
-                    for (;t.x<tmw;t.x++) {
+                    for (; t.x < tmw; t.x++) {
                         t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     }
                 }
-                if (t.y>=0 && t.y<TMH && sliders[t.y]) {
+                if (t.y >= 0 && t.y < TMH && sliders[t.y]) {
                     int slider_idx = sliderindices[t.y];
                     float value = *sliders[t.y];
-                    int x1 = maxi(0,tmw-24);
+                    int x1 = maxi(0, tmw - 16);
                     int x2 = tmw;
-                    int xpuck = clampi((int)(value * 20), 0, 20);
-                    char valbuf[8];
-                    int valn = snprintf(valbuf, sizeof(valbuf), "%0.2f", value);
-                    char buf[32] = "[----------------------]";
                     uint32_t col = slidercols[slider_idx];
-                    if (closest_slider[slider_idx]==NULL || closest_slider[slider_idx][1]!=t.y+E->intscroll) col=C_SLIDER; else {
-                        int midipuck = (G->midi_cc[slider_idx+16] * 20)/127;
-                        buf[midipuck] = '#';
-                    }
-                    memcpy(buf+xpuck, valbuf, valn); 
-                    for (int x=x1;x<x2;x++) {
-                        ch = buf[x-x1];
+                    if (closest_slider[slider_idx] == NULL || closest_slider[slider_idx][1] != t.y + E->intscroll)
+                        col = C_SLIDER;
+                    for (int x = x1; x < x2; x++) {
+                        int ch = horizontal_tick((int)(value * 127.f) - (x - x1) * 8 - 2);
                         t.ptr[t.y * TMW + x] = col | ch;
                     }
                 }
@@ -989,119 +1049,102 @@ int code_color(EditorState *E, uint32_t *ptr) {
     E->num_lines = t.y + 1 + E->intscroll;
     E->mouse_hovering_chart = false;
 
-    // draw a popup below the cursor if its inside a quoted string.
-    if (E->cursor_idx >= 0 && E->cursor_idx < t.n) {
-        int line_start_idx = xy_to_idx(E, 0, E->cursor_y);
-        int line_end_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
-        // count quotes since beginning of line
-        int num_quotes = 0;
-        int num_singlequotes = 0;
-        int last_quote_idx = line_start_idx;
-        int last_single_quote_idx = line_start_idx;
-        for (int i = line_start_idx; i < E->cursor_idx; i++) {
-            if (t.str[i] == '"') { num_quotes++; last_quote_idx = i; }
-            else if (t.str[i] == '\'') { num_singlequotes++; last_single_quote_idx = i; }
-            else if (t.str[i] == '\\') i++; // skip escaped quotes
+    /*
+    // draw a popup below the cursor
+    int x = idx_to_x(E, last_quote_idx, line_start_idx) + left;
+    static uint32_t cached_compiled_string_hash = 0;
+    static Pattern cached_parser;
+    static char *cached_chart;
+    const char *codes = t.str + last_quote_idx + 1;
+    const char *codee = t.str + end_quote_idx;
+    uint32_t hash = fnv1_hash(codes, codee);
+    if (hash!=cached_compiled_string_hash) {
+        cached_compiled_string_hash = hash;
+        cached_parser.s = codes;
+        cached_parser.n = codee - codes;
+        parse_pattern(&cached_parser);
+        if (cached_parser.err<=0) {
+            stbds_arrfree(cached_chart);
+            cached_chart = print_pattern_chart(&cached_parser);
         }
-        if (num_quotes % 2 == 1) {
-            int end_quote_idx= line_end_idx;
-            int end_single_quote_idx= line_end_idx;
-            for (int i = line_end_idx; i > E->cursor_idx; ) {
-                --i;
-                if (t.str[i] == '"' || t.str[i]=='\n') end_quote_idx = i;
-                else if (t.str[i] == '\'') end_single_quote_idx = i;
-                else if (t.str[i] == '\\') i++; // skip escaped quotes
+    }
+    if (cached_chart) {
+        print_to_screen(t.ptr, x, E->cursor_y + 1 - E->intscroll, C_CHART, true, cached_chart);
+    }
+    if (cached_parser.err) {
+        print_to_screen(t.ptr, x + cached_parser.err, E->cursor_y + 1 - E->intscroll, C_ERR, false, cached_parser.errmsg);
+    } */
+
+    // draw a popup Above the cursor if its inside a curve
+    if (cursor_in_curve_end_idx > cursor_in_curve_start_idx) {
+        // trim the '
+        cursor_in_curve_end_idx--;
+        cursor_in_curve_start_idx++;
+        int x, y;
+        idx_to_xy(E, cursor_in_curve_start_idx, &x, &y);
+        x += left;
+        int datalen = cursor_in_curve_end_idx - cursor_in_curve_start_idx;
+        // work out bounding box also
+        float x1 = x * E->font_width;
+        float x2 = x1 + datalen * E->font_width;
+        float y1 = (E->cursor_y - 4) * E->font_height - E->scroll_y;
+        float y2 = y1 + 4 * E->font_height;
+        uint32_t col = C_CHART;
+        const float margin = E->font_width;
+        if (G->mx >= x1 - margin && G->mx <= x2 + margin && G->my >= y1 - margin && G->my <= y2) {
+            col = C_CHART_HOVER;
+            E->mouse_hovering_chart = true;
+        }
+        bool click_interaction = (E->mouse_dragging_chart && (G && (G->mb & 1))) || (E->mouse_clicked_chart);
+        if (click_interaction && G) {
+            col = C_CHART_DRAG;
+            int mx = (G->mx - x1) / E->font_width;
+            bool mouse_click_down = !(G->old_mb & 1);
+            if (mouse_click_down) {
+                E->mouse_click_original_char = ' ';
+                E->mouse_click_original_char_x = mx;
             }
-            // draw a popup below the cursor
-            int x = idx_to_x(E, last_quote_idx, line_start_idx) + left;
-            static uint32_t cached_compiled_string_hash = 0;
-            static Pattern cached_parser;
-            static char *cached_chart;
-            const char *codes = t.str + last_quote_idx + 1;
-            const char *codee = t.str + end_quote_idx;
-            uint32_t hash = fnv1_hash(codes, codee);
-            if (hash!=cached_compiled_string_hash) {
-                cached_compiled_string_hash = hash;
-                cached_parser.s = codes;
-                cached_parser.n = codee - codes;
-                parse_pattern(&cached_parser);
-                if (cached_parser.err<=0) {
-                    stbds_arrfree(cached_chart);
-                    cached_chart = print_pattern_chart(&cached_parser);
-                }
+            float value = ((y2 - G->my) / E->font_height) * 16.f;
+            value = clampf(value, 0.f, 64.f);
+            if (mx >= 0 && mx < datalen) {
+                // TODO: edit op
+                char *ch = &E->str[cursor_in_curve_start_idx + mx];
+                if (mouse_click_down)
+                    E->mouse_click_original_char = *ch;
+                if (E->mouse_clicked_chart && E->mouse_click_original_char != ' ' && E->mouse_click_original_char_x == mx)
+                    *ch = ' ';
+                else
+                    *ch = btoa_tab[(int)value];
+                E->cursor_idx = cursor_in_curve_start_idx + mx;
+                E->select_idx = E->cursor_idx;
             }
-            if (cached_chart) {
-                print_to_screen(t.ptr, x, E->cursor_y + 1 - E->intscroll, C_CHART, true, cached_chart);
-            }
-            if (cached_parser.err) {
-                print_to_screen(t.ptr, x + cached_parser.err, E->cursor_y + 1 - E->intscroll, C_ERR, false, cached_parser.errmsg);
-            } 
-            if (num_singlequotes % 2 == 1) {
-                
-                int xx = idx_to_x(E, last_single_quote_idx, line_start_idx) + 1 + left;
-                int datalen = end_single_quote_idx - last_single_quote_idx - 1;
-                // work out bounding box also
-                float x1 = xx * E->font_width;
-                float x2 = x1 + datalen * E->font_width;
-                float y1 = (E->cursor_y - 4) * E->font_height - E->scroll_y;
-                float y2 = y1 + 4 * E->font_height;
-                uint32_t col = C_CHART;
-                const float margin = E->font_width;
-                if (G->mx >= x1-margin && G->mx <= x2+margin && G->my >= y1-margin && G->my <= y2) {
-                    col = C_CHART_HOVER;
-                    E->mouse_hovering_chart = true;
+        }
+        int ss = get_select_start(E);
+        int se = get_select_end(E);
+        float data[datalen];
+        fill_curve_data_from_string(data, t.str + cursor_in_curve_start_idx, datalen);
+        for (int i = 0; i < datalen; i++) {
+            int xx = x + i;
+            int idx = cursor_in_curve_start_idx + i;
+            int datay = (int)(data[i] * 64.f + 0.5f);
+            uint32_t ccol = col;
+            if (xx == E->cursor_x)
+                ccol = C_CHART_HILITE;
+            if (idx >= ss && idx < se)
+                ccol = C_SELECTION;
+            if (xx >= 0 && xx < TMW)
+                for (int j = 0; j < 4; ++j) {
+                    int y = E->cursor_y - 1 - j - E->intscroll;
+                    if (y >= 0 && y < TMH) {
+                        int ch = vertical_bar(datay);
+                        t.ptr[y * TMW + xx] = ccol | (unsigned char)(ch); // draw a bar graph cellchar
+                    }
+                    datay -= 16;
                 }
-                
-                bool click_interaction = (E->mouse_dragging_chart && (G && (G->mb&1))) || (E->mouse_clicked_chart);
-                if (click_interaction && G) {
-                    col = C_CHART_DRAG;
-                    int x = (G->mx - x1) / E->font_width;
-                    bool mouse_click_down = !(G->old_mb&1);
-                    if (mouse_click_down) {
-                        E->mouse_click_original_char =  ' ';
-                        E->mouse_click_original_char_x = x;
-                    }
-                    float value = ((y2 - G->my) / E->font_height) * 16.f;
-                    value=clampf(value, 0.f, 64.f);
-                    if (x>=0 && x<datalen) {
-                        
-                        // TODO: edit op
-                        char *ch = &E->str[last_single_quote_idx + 1 + x];
-                        if (mouse_click_down)
-                            E->mouse_click_original_char = *ch;
-                        if (E->mouse_clicked_chart && E->mouse_click_original_char!= ' ' && E->mouse_click_original_char_x==x)
-                            *ch = ' ';
-                        else
-                            *ch = btoa_tab[(int)value];
-                        E->cursor_idx = last_single_quote_idx + 1 + x;
-                        E->select_idx = E->cursor_idx;
-                    }
-                }
-                int ss = get_select_start(E);
-                int se = get_select_end(E);
-                float data[datalen];
-                fill_curve_data_from_string(data, t.str + last_single_quote_idx + 1, datalen);
-                for (int i = 0; i < datalen; i++) {
-                    int x=xx+i;
-                    int idx = last_single_quote_idx + 1 + i;
-                    int datay = (int)(data[i]*64.f);
-                    uint32_t ccol = col;
-                    if (x==E->cursor_x) ccol = C_CHART_HILITE;
-                    if (idx>=ss && idx<se) ccol = C_SELECTION;
-                    if (x>=0 && x<TMW) for (int j=0;j<4;++j) {
-                        int y=E->cursor_y - 1 -j - E->intscroll;
-                        if (y>=0 && y<TMH) {
-                            int ch = 128 + clampi(datay, 0, 16);
-                            t.ptr[y * TMW + x] = ccol | (unsigned char)(ch); // draw a bar graph cellchar
-                        }
-                        datay -= 16;
-                    }
-                } // graph drawing loop
-            } // we are inside a '' string
-        } // we are inside a "" string
-    } // cursor is valid
+        } // graph drawing loop
+    } // curve popup
     E->mouse_clicked_chart = false;
-        
+
     return E->num_lines;
 }
 
@@ -1126,7 +1169,6 @@ void load_file(EditorState *E, bool init) {
 
 #define RESW 1920
 #define RESH 1080
-
 
 void editor_update(EditorState *E, GLFWwindow *win) {
     double mx, my;
@@ -1267,27 +1309,29 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     check_gl("update text tex");
 }
 
-
-
 void on_midi_input(uint8_t data[3], void *user) {
     if (!G)
         return;
-    int cc=data[1];
+    int cc = data[1];
     if (data[0] == 0xb0 && cc < 128) {
         int oldccdata = G->midi_cc[cc];
         int newccdata = data[2];
         G->midi_cc[cc] = newccdata;
         uint32_t gen = G->midi_cc_gen[cc]++;
-        if (gen==0) oldccdata = newccdata;
-        if (newccdata!=oldccdata && cc>=16 && cc<32 && closest_slider[cc-16]!=NULL) {
+        if (gen == 0)
+            oldccdata = newccdata;
+        if (newccdata != oldccdata && cc >= 16 && cc < 32 && closest_slider[cc - 16] != NULL) {
             // 'pickup': if we are increasing and bigger, or decreasing and smaller, then pick up the value, or closer than 2
-            int sliderval = (int)clampf(closest_slider[cc-16][0]*127.f, 0.f, 127.f);
+            int sliderval = (int)clampf(closest_slider[cc - 16][0] * 127.f, 0.f, 127.f);
             int mindata = mini(oldccdata, newccdata);
             int maxdata = maxi(oldccdata, newccdata);
-            int vel = newccdata-oldccdata;
-            if (vel<0) maxdata+=(-vel)+16; else mindata-=(vel)+16; // add slop for velocity
-            if (sliderval>=mindata-4 && sliderval<=maxdata+4) {
-                closest_slider[cc-16][0] = newccdata / 127.f;
+            int vel = newccdata - oldccdata;
+            if (vel < 0)
+                maxdata += (-vel) + 16;
+            else
+                mindata -= (vel) + 16; // add slop for velocity
+            if (sliderval >= mindata - 4 && sliderval <= maxdata + 4) {
+                closest_slider[cc - 16][0] = newccdata / 127.f;
             }
         }
     }
@@ -1297,7 +1341,7 @@ void on_midi_input(uint8_t data[3], void *user) {
 int main(int argc, char **argv) {
     void test_minipat(void);
     test_minipat();
-    //return 0;
+    // return 0;
     printf("ginkgo - " __DATE__ " " __TIME__ "\n");
 
     int num_inputs = midi_get_num_inputs();
@@ -1360,7 +1404,7 @@ int main(int argc, char **argv) {
     GLint loc_uFontPx = glGetUniformLocation(prog, "uFontPx");
     GLint loc_status_bar_size = glGetUniformLocation(prog, "status_bar_size");
     int fw = 0, fh = 0, fc = 0;
-    //stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
+    // stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
     stbi_uc *fontPixels = stbi_load("assets/font_brutalita.png", &fw, &fh, &fc, 4);
     if (!fontPixels)
         die("Failed to load font");

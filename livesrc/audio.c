@@ -1,3 +1,5 @@
+//hello 
+/*=====*/
 //   __ _ _   _  __| (_) ___
 //  / _` | | | |/ _  | |/ _ \
 // | (_| | |_| | (_| | | (_) |
@@ -14,7 +16,7 @@
 // this is a graph - any string inside single quotes becomes a value you can edit as both text and visually.
 // the graph appears when you hover it.
 
-' .      ^      =               _      '     
+'.aWVVXdq67qdcef'     
 
 
 [[sd rim] bd(3,8)]
@@ -26,8 +28,8 @@
 STATE_VERSION(1, bq_t lpf, hpf; )
 
 void init_state(void) {
-    G->lpf = bqlpf(0.0625, QBUTTER);
-    G->hpf = bqhpf(0.025, QBUTTER);
+    G->lpf = bqlpf(/*=====*/0.25, QBUTTER);
+    G->hpf = bqhpf(/*=======*/0.5, QBUTTER);
 }
 
 stereo do_sample(stereo inp) {
@@ -36,7 +38,7 @@ stereo do_sample(stereo inp) {
     F chord3 = sawo(P_G3) + sawo(P_D3) + sawo(P_B3);
     chord1 = chord1 * vol(S0) + 
         chord2 * vol(S1) +
-        chord3 * vol(S2);
+        chord3 * vol(S0);
    F out = lpf4(chord1, 0.3);
     //out = squareo(P_E4) * 0.5;
     

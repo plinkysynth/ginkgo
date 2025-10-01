@@ -44,8 +44,78 @@ typedef struct EditorState {
     error_msg_t *error_msgs;
     float click_fx;
     float click_fy;
-    float click_slider_value;    
+    float click_slider_value; 
+    int click_down_idx; // where in the text we clicked down.   
 } EditorState;
+
+typedef struct slider_spec_t {
+    int start_idx;
+    int end_idx;
+    int value_start_idx;
+    int value_end_idx;
+    float minval, maxval, curval;
+} slider_spec_t;
+
+bool ispartofnumber(char c) { return isdigit(c) || c == '-' || c == '.' || c == '+' || c == 'e' || c == 'E'; }
+
+int try_parse_number(const char *str, int n, int idx, float *out, int *out_idx, float default_val) {
+    int i = idx;
+    while (i < n && ispartofnumber(str[i]))
+        ++i;
+    if (i == idx) {
+        *out = default_val;
+        *out_idx = idx;
+        return 0;
+    }
+    char tmp[i - idx + 1];
+    memcpy(tmp, str + idx, i - idx);
+    tmp[i - idx] = '\0';
+    char *end = tmp;
+    float val = strtof(tmp, &end);
+    if (end <= tmp) {
+        *out = default_val;
+        *out_idx = i;
+        return 0;
+    }
+    *out = val;
+    *out_idx = end - tmp + idx;
+    return 1;
+}
+
+int looks_like_slider_comment(const char *str, int n, int idx,
+                              slider_spec_t *out) { // see if 'idx' is inside a /*0======5*/<whitespace>number type comment.
+    int i = idx;
+    while (i >= 0 && str[i] != '/' && str[i] != '\n')
+        i--;
+    // ok it must be of the form /*digits-----digits*/
+    if (str[i] != '/' || str[i + 1] != '*')
+        return 0;
+    out->start_idx = i + 1;
+    i += 2; // skip /*
+    try_parse_number(str, n, i, &out->minval, &i, 0.f);
+    if (i >= n || str[i] != '=')
+        return 0;
+    while (i < n && str[i] == '=')
+        i++;
+    try_parse_number(str, n, i, &out->maxval, &i, 1.f);
+    if (i >= n || str[i] != '*')
+        return 0;
+    else
+        ++i;
+    out->end_idx = i;
+    if (i >= n || str[i] != '/')
+        return 0;
+    else
+        ++i;
+    while (i < n && isspace(str[i]))
+        i++;
+    out->value_start_idx = i;
+    if (!try_parse_number(str, n, i, &out->curval, &i, 0.f))
+        return 0;
+    out->value_end_idx = i;
+    return 1;
+}
+
 
 char *make_cstring_from_span(const char *str, int start, int end, int alloc_extra) {
     int len = end - start;
@@ -233,7 +303,7 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
     }
     if (!E->mouse_dragging_chart) {
         // sliders on the right interaction
-        if (G && E->click_fx >= tmw-24 && E->click_fx < tmw) {
+        if (G && E->click_fx >= tmw-16 && E->click_fx < tmw) {
             for (int slideridx=0;slideridx<16;++slideridx) {
                 for (int i=0;i<G->sliders[slideridx].n;i+=2) {
                     int line = G->sliders[slideridx].data[i+1] - E->intscroll;
@@ -241,7 +311,7 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                         if (!is_drag) {
                             E->click_slider_value = G->sliders[slideridx].data[i];
                         } else {
-                            float newvalue = clampf(E->click_slider_value + (fx-E->click_fx)/20.f, 0.f, 1.f);
+                            float newvalue = clampf(E->click_slider_value + (fx-E->click_fx)/16.f, 0.f, 1.f);
                             G->sliders[slideridx].data[i] = newvalue;
                         }
                         return;
@@ -254,26 +324,61 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
         int left = 64 / E->font_width;
         cx -= left;
 
-        E->cursor_idx = xy_to_idx(E, cx, cy);
-        if (!is_drag)
-            E->select_idx = E->cursor_idx;
-        idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
-        E->cursor_x_target = E->cursor_x;
-        if (is_drag<0 && click_count==2) {
-            // double click - select word
-            int idx,idx2;
-            for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isseparator(E->str[idx])) break;
-            for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isseparator(E->str[idx2])) break;
-            E->select_idx = idx2+1;
-            E->cursor_idx = idx;
+        //int looks_like_slider_comment(const char *str, int n, int idx,slider_spec_t *out) { // see if 'idx' is inside a /*0======5*/<whitespace>number type comment.
+        int click_idx = xy_to_idx(E, cx, cy);
+        if (!is_drag) {
+            E->click_down_idx = click_idx;
         }
-        if (is_drag<0 && click_count==3) {
-            // triple click - select line
-            int idx,idx2;
-            for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isnewline(E->str[idx])) break;
-            for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isnewline(E->str[idx2])) break;
-            E->select_idx = idx2+1;
-            E->cursor_idx = idx;
+        slider_spec_t slider_spec;
+        if (looks_like_slider_comment(E->str, stbds_arrlen(E->str), E->click_down_idx, &slider_spec)) {
+            
+            int slider_x1, slider_x2, slider_y;
+            idx_to_xy(E, slider_spec.start_idx, &slider_x1, &slider_y);
+            idx_to_xy(E, slider_spec.end_idx, &slider_x2, &slider_y);
+            if (!is_drag) {
+                E->click_slider_value = slider_spec.curval;
+            }
+            float dv = fx - E->click_fx;
+            float v = E->click_slider_value + (slider_spec.maxval - slider_spec.minval) * (dv / (slider_x2-slider_x1));
+            v=clampf(v, slider_spec.minval, slider_spec.maxval);
+            //printf("slider value: %f\n", v);
+            if (v!=slider_spec.curval) {
+                char buf[32];
+                int numdecimals = clampi(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0, 5);
+                char fmtbuf[32];
+                snprintf(fmtbuf, sizeof(fmtbuf), "%%0.%df", numdecimals);
+                snprintf(buf, sizeof(buf), fmtbuf, v);
+                char *end = buf + strlen(buf);
+                if (strrchr(buf,'.')) while (end>buf && end[-1]=='0') --end;
+                *end = 0;
+                // TODO : undo merging. for now, just poke the text in directly.
+                stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
+                stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
+                memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
+            }
+        } else {
+
+            E->cursor_idx = click_idx;
+            if (!is_drag)
+                E->select_idx = E->cursor_idx;
+            idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
+            E->cursor_x_target = E->cursor_x;
+            if (is_drag<0 && click_count==2) {
+                // double click - select word
+                int idx,idx2;
+                for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isseparator(E->str[idx])) break;
+                for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isseparator(E->str[idx2])) break;
+                E->select_idx = idx2+1;
+                E->cursor_idx = idx;
+            }
+            if (is_drag<0 && click_count==3) {
+                // triple click - select line
+                int idx,idx2;
+                for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isnewline(E->str[idx])) break;
+                for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isnewline(E->str[idx2])) break;
+                E->select_idx = idx2+1;
+                E->cursor_idx = idx;
+            }
         }
     }
 }

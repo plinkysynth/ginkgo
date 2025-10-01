@@ -19,6 +19,11 @@ typedef struct {
     int depth;
 } sj_Value;
 
+//ae: added this
+static inline int valcmp(const sj_Value *a, const sj_Value *b) {
+    return spancmp(a->start, a->end, b->start, b->end);
+}
+
 enum { SJ_ERROR, SJ_END, SJ_ARRAY, SJ_OBJECT, SJ_NUMBER, SJ_STRING, SJ_BOOL, SJ_NULL };
 
 sj_Reader sj_reader(char *data, size_t len);

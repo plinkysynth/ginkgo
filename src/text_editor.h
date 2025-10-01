@@ -1,5 +1,7 @@
 #pragma once
 
+int fbw, fbh; // current framebuffer size in pixels
+
 typedef struct error_msg_t {
     int key;           // a line number
     const char *value; // a line of text (terminated by \n)
@@ -117,21 +119,13 @@ int looks_like_slider_comment(const char *str, int n, int idx,
 }
 
 
-char *make_cstring_from_span(const char *str, int start, int end, int alloc_extra) {
-    int len = end - start;
-    if (len <= 0)
-        return NULL;
-    char *cstr = calloc(1, len + 1 + alloc_extra);
-    memcpy(cstr, str + start, len);
-    return cstr;
-}
 
 edit_op_t apply_edit_op(EditorState *E, edit_op_t op, int update_cursor_idx) {
     int old_cursor_idx = E->cursor_idx;
     int old_select_idx = E->select_idx;
     char *removed_str = NULL;
     if (op.remove_end > op.remove_start) {
-        removed_str = make_cstring_from_span(E->str, op.remove_start, op.remove_end, 0);
+        removed_str = make_cstring_from_span(E->str + op.remove_start, E->str + op.remove_end, 0);
         stbds_arrdeln(E->str, op.remove_start, op.remove_end - op.remove_start);
     }
     int numins = op.insert_str ? strlen(op.insert_str) : 0;
@@ -162,7 +156,7 @@ void push_edit_op(EditorState *E, int remove_start, int remove_end, const char *
     // delete any undo state after the current point...
     int num_undos = stbds_arrlen(E->edit_ops);
     for (int i = E->undo_idx; i < num_undos; i++) {
-        free(E->edit_ops[i].insert_str);
+        stbds_arrfree(E->edit_ops[i].insert_str);
     }
     // ...and add this op as the last one in the stack. unless we can merge it
     // TODO undo merging
@@ -181,7 +175,7 @@ void undo_redo(EditorState *E, int is_redo) {
     edit_op_t redo_op = apply_edit_op(E, undo_op, 1);
     E->cursor_idx = undo_op.cursor_idx_after;
     E->select_idx = undo_op.select_idx_after;
-    free(undo_op.insert_str);
+    stbds_arrfree(undo_op.insert_str);
     E->edit_ops[E->undo_idx] = redo_op;
     if (is_redo)
         E->undo_idx++;
@@ -453,10 +447,10 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         case GLFW_KEY_X: {
             int se = get_select_start(E);
             int ee = get_select_end(E);
-            char *str = make_cstring_from_span(E->str, se, ee, 0);
+            char *str = make_cstring_from_span(E->str + se, E->str + ee, 0);
             if (str) {
                 glfwSetClipboardString(win, str);
-                free(str);
+                stbds_arrfree(str);
                 if ((key & 0xffff) == GLFW_KEY_X) {
                     push_edit_op(E, se, ee, NULL, 1);
                     E->find_mode = false;
@@ -479,7 +473,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
                 ss = xy_to_idx(E, 0, sy);
                 se = xy_to_idx(E, 0x7fffffff, ey);
-                char *str = make_cstring_from_span(E->str, ss, se, ((ey-sy)+1)*4);
+                char *str = make_cstring_from_span(E->str + ss, E->str + se, ((ey-sy)+1)*4);
                 int minx = 0x7fffffff;
                 int all_commented = true;
                 int n = se-ss;
@@ -530,7 +524,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                     E->select_idx = ss;
                     E->cursor_idx = ss+strlen(str);
                 }
-                free(str);
+                stbds_arrfree(str);
                 break;
             }        
         break; }
@@ -568,7 +562,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             if (sy==ey && !shift) goto insert_character;
             ss = xy_to_idx(E, 0, sy);
             se = xy_to_idx(E, 0x7fffffff, ey);
-            char *str = make_cstring_from_span(E->str, ss, se, ((ey-sy)+1)*4);
+            char *str = make_cstring_from_span(E->str + ss, E->str +se, ((ey-sy)+1)*4);
             for (char *c=str;*c;) {
                 if (shift) {
                     // skip up to 4 spaces or a tab.
@@ -585,7 +579,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             push_edit_op(E, ss, se, str, 1);
             E->select_idx = ss;
             E->cursor_idx = ss+strlen(str);
-            free(str);
+            stbds_arrfree(str);
         }
         break;
     }        

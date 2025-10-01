@@ -19,20 +19,21 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <assert.h>
+#include <curl/curl.h>
 #include "3rdparty/stb_image.h"
 #include "3rdparty/stb_ds.h"
 #include "3rdparty/miniaudio.h"
 #include "3rdparty/pffft.h"
+#include "utils.h"
+#include "ginkgo.h"
 #include <GLFW/glfw3.h>
 #include <OpenGL/gl3.h> // core profile headers
-
-#include "ginkgo.h"
-int fbw, fbh; // current framebuffer size in pixels
 #include "text_editor.h"
 #include "audio_host.h"
 #include "midi_mac.h"
 #include "hash_literal.h"
 #include "miniparse.h"
+#include "sampler.h"
 
 char status_bar[512];
 double status_bar_time = 0;
@@ -1216,23 +1217,14 @@ int code_color(EditorState *E, uint32_t *ptr) {
     return E->num_lines;
 }
 
-void load_file(EditorState *E, bool init) {
+
+void load_file_into_editor(EditorState *E, bool init) {
     if (init) {
         E->font_width = 12;
         E->font_height = 24;
     }
-    FILE *f = fopen(E->fname, "r");
-    if (!f) {
-        stbds_arrfreef(E->str);
-        E->str = NULL;
-        return;
-    }
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    stbds_arrsetlen(E->str, len);
-    fseek(f, 0, SEEK_SET);
-    fread(E->str, 1, len, f);
-    fclose(f);
+    stbds_arrfreef(E->str);
+    E->str = load_file(E->fname);
 }
 
 #define RESW 1920
@@ -1407,6 +1399,9 @@ void on_midi_input(uint8_t data[3], void *user) {
 }
 
 int main(int argc, char **argv) {
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    init_sampler();
+    return 0;
     void test_minipat(void);
     test_minipat();
     // return 0;
@@ -1456,8 +1451,8 @@ int main(int argc, char **argv) {
     prog = link_program(vs, fs);
     glDeleteShader(fs);
 
-    load_file(&shader_tab, true);
-    load_file(&audio_tab, true);
+    load_file_into_editor(&shader_tab, true);
+    load_file_into_editor(&audio_tab, true);
     try_to_compile_shader(&shader_tab);
 
     GLint loc_uText = glGetUniformLocation(prog, "uText");
@@ -1618,5 +1613,6 @@ int main(int argc, char **argv) {
 
     glfwDestroyWindow(win);
     glfwTerminate();
+    curl_global_cleanup();
     return 0;
 }

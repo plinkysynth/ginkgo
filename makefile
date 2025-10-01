@@ -1,8 +1,8 @@
 CFLAGS  = -g -std=c11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include -Isrc/ -I.
-LDFLAGS = -L/opt/homebrew/opt/glfw/lib -lglfw \
+LDFLAGS = -L/opt/homebrew/opt/glfw/lib -lglfw -lcurl \
           -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework CoreMIDI
 
-SRC = src/ginkgo.c src/miniparse.c
+SRC = src/ginkgo.c src/miniparse.c src/sampler.c src/utils.c src/http_fetch.c
 OBJ := $(patsubst src/%.c,build/%.o,$(SRC))
 DEP = $(OBJ:.o=.d)
 DLL = build/dsp.so

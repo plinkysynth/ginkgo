@@ -19,11 +19,11 @@
 '.aWVVXdq67qdcef'     
 
 
-/fancy_pattern [[sd rim] bd(3,8), hh*8]
+/fancy_pattern [[- rim], bd(3,8), hh*8]
 
 /kick44 [bd*4]
 
-/euclid sd(3,8)
+/euclid sd(3,8) '.  a      z . ' 
 
 
 

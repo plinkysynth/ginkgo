@@ -876,6 +876,11 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         token_is_slider = true;
                     col = C_SLIDER;
                 }
+            } else if (pattern_mode) {
+                col = C_STR;
+                const char *e = skip_path(t.str + i, t.str + t.n);
+                j = e - t.str;
+                break;
             }
         } break;
         case '<':

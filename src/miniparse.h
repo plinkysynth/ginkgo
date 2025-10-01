@@ -64,7 +64,10 @@ const char *print_midinote(int note);
 int parse_midinote(const char *s, const char *e, int allow_p_prefix);
 int parse_pattern(Pattern *p);
 char* print_pattern_chart(Pattern *p);
+Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx, float note_prob);
 void fill_curve_data_from_string(float *data, const char *s, int n); // responsible for the interpolation of lines
+
+#define FLAG_NONE 0 // for make_haps
 
 // base64 with # being 64 :) so we can do full range 0-64
 extern const char btoa_tab[65];

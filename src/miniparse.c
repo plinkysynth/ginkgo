@@ -314,7 +314,7 @@ static int parse_curve(Pattern *p) {
         error(p, "expected closing single quote in curve");
         return -1;
     }
-    int node = make_node(p, N_CURVE, -1, -1, p->nodes[node].start, p->i);
+    int node = make_node(p, N_CURVE, -1, -1, start, p->i);
     int first_data_idx = stbds_arrlen(p->curvedata);
     int num_data_idx = maxi(0, p->i - start - 2);
     float *data = stbds_arraddnptr(p->curvedata, num_data_idx);
@@ -550,8 +550,6 @@ static inline void print_haps(Pattern *p, Hap *haps, int n) {
                n->value.number);
     }
 }
-
-#define FLAG_NONE 0
 #define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
 #define FLAG_INCLUSIVE 2 // if set, we include haps that overlap on the left side.
 
@@ -584,7 +582,7 @@ static inline void sort_haps_by_t0(Hap *haps, int count) {
     qsort(haps, count, sizeof(Hap), (int(*)(const void*,const void*))cmp_haps_by_t0);
 }
 
-static Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx,
+Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx,
                       float note_prob) {
     if (nodeidx < 0 || t0 >= t1)
         return *haps;

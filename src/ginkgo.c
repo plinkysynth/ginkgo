@@ -778,6 +778,18 @@ int horizontal_tick(int x) { // x=0 (4 pixel tick starting from left edge) to x=
     return 128 + 16 + clampi(x + 4, 0, 15);
 }
 
+static inline int ispathchar(char c) { return isalnum(c) || c=='_' || c=='-' || c=='.'; }
+
+const char *skip_path(const char *s, const char *e) {
+    while (s < e && isspace(*s)) ++s;
+    while (s < e) {
+        if (*s != '/') return s;
+        ++s; // skip /
+        while (s < e && (ispathchar(*s))) ++s;
+    }
+    return s;
+}
+
 
 int code_color(EditorState *E, uint32_t *ptr) {
     int left = 64 / E->font_width;
@@ -1049,31 +1061,82 @@ int code_color(EditorState *E, uint32_t *ptr) {
     E->num_lines = t.y + 1 + E->intscroll;
     E->mouse_hovering_chart = false;
 
-    /*
-    // draw a popup below the cursor
-    int x = idx_to_x(E, last_quote_idx, line_start_idx) + left;
-    static uint32_t cached_compiled_string_hash = 0;
-    static Pattern cached_parser;
-    static char *cached_chart;
-    const char *codes = t.str + last_quote_idx + 1;
-    const char *codee = t.str + end_quote_idx;
-    uint32_t hash = fnv1_hash(codes, codee);
-    if (hash!=cached_compiled_string_hash) {
-        cached_compiled_string_hash = hash;
-        cached_parser.s = codes;
-        cached_parser.n = codee - codes;
-        parse_pattern(&cached_parser);
-        if (cached_parser.err<=0) {
-            stbds_arrfree(cached_chart);
-            cached_chart = print_pattern_chart(&cached_parser);
+    if (E->cursor_in_pattern_area) {
+        // draw a popup below the cursor
+        int basex = left;
+        int chartx = basex + 13;    
+        int code_start_idx = xy_to_idx(E, 0, E->cursor_y);
+        const char *s = skip_path(t.str + code_start_idx, t.str + t.n);
+        code_start_idx = s - t.str;
+        int code_end_idx = xy_to_idx(E, 0x7fffffff , E->cursor_y);
+        static uint32_t cached_compiled_string_hash = 0;
+        static Pattern cached_parser;
+        static Hap *cached_haps;
+        const char *codes = t.str + code_start_idx;
+        const char *codee = t.str + code_end_idx;
+        uint32_t hash = fnv1_hash(codes, codee);
+        if (hash!=cached_compiled_string_hash) {
+            cached_compiled_string_hash = hash;
+            cached_parser.s = codes;
+            cached_parser.n = codee - codes;
+            parse_pattern(&cached_parser);
+            if (cached_parser.err<=0) {
+                stbds_arrsetlen(cached_haps, 0);
+                make_haps(&cached_parser, cached_parser.root, 0.f, 4.f, 1.f, 0.f, &cached_haps, FLAG_NONE, 0, 1.f);
+            }
+        }
+        int nhaps = cached_haps ? stbds_arrlen(cached_haps) : 0;
+        if (nhaps) {
+            struct { Sound *key; int value; } *rows = NULL;
+            int numrows = 0;
+            const Node *nodes = cached_parser.nodes;
+            int ss = get_select_start(E);
+            int se = get_select_end(E);
+            for (int i=0; i<nhaps; i++) {
+                const Hap *h = &cached_haps[i];
+                Sound *sound = nodes[h->node].value.sound;
+                int row_plus_one = stbds_hmget(rows, sound);
+                if (!row_plus_one) {
+                    row_plus_one = ++numrows;
+                    if (numrows > 16) break;
+                    stbds_hmput(rows, sound, row_plus_one);
+                    int y = E->cursor_y - E->intscroll + row_plus_one;
+                    if (y>=0 && y<TMH) {
+                        int sound_idx = h->sound_idx;
+                        const char *sound_name = sound ? sound->name : "";
+                        print_to_screen(t.ptr, basex, y, 0x11188800, false, "%10s:%d ", sound_name, sound_idx);
+                        print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s:%d", sound_name, sound_idx);
+                        for (int x=0;x<128;++x) {
+                            uint32_t col = ((x&31)==0) ? C_CHART_HILITE : (x&8) ? C_CHART : C_CHART_HOVER;
+                            t.ptr[y * TMW + x + chartx] = col | (unsigned char)(' ');   
+                        }
+                    }
+                }    
+                // draw the hap h
+                int y = E->cursor_y - E->intscroll + row_plus_one;
+                int hapstart_idx = nodes[h->node].start + code_start_idx;
+                int hapend_idx = nodes[h->node].end + code_start_idx;
+                uint32_t hapcol = 0; // 0 = leave attribute as is.
+                if (ss <= hapstart_idx && se >= hapend_idx)
+                    hapcol = C_SELECTION;
+                else if (hapstart_idx <= E->cursor_idx && hapend_idx >= E->cursor_idx)
+                    hapcol = C_CHART_HILITE;
+                int hapx1 = (int)(h->t0 * 32.f);
+                int hapx2 = (int)(h->t1 * 32.f);
+                for (int x=hapx1;x<hapx2;++x) {
+                    if (x>=0 && x<128) {
+                        uint32_t charcol = hapcol ? hapcol : t.ptr[y * TMW + x + chartx] & 0xffffff00u;
+                        t.ptr[y * TMW + x + chartx] = charcol | (unsigned char)((x==hapx1) ? 128+16+2 : (x==hapx2-1) ? '>' : 128+16+15);
+                    }
+                }
+            }
+            stbds_hmfree(rows);
+            
+        }
+        if (cached_parser.err) {
+            print_to_screen(t.ptr, basex + cached_parser.err, E->cursor_y + 1 - E->intscroll, C_ERR, false, cached_parser.errmsg);
         }
     }
-    if (cached_chart) {
-        print_to_screen(t.ptr, x, E->cursor_y + 1 - E->intscroll, C_CHART, true, cached_chart);
-    }
-    if (cached_parser.err) {
-        print_to_screen(t.ptr, x + cached_parser.err, E->cursor_y + 1 - E->intscroll, C_ERR, false, cached_parser.errmsg);
-    } */
 
     // draw a popup Above the cursor if its inside a curve
     if (cursor_in_curve_end_idx > cursor_in_curve_start_idx) {

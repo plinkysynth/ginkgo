@@ -32,3 +32,12 @@ static inline unsigned fnv1_hash(const char *s, const char *e) {
     }
     return h;
 }
+
+#define CASE(x) case HASH(x)
+#define CASE2(x, y)                                                                                                                \
+    case HASH(x):                                                                                                                  \
+    case HASH(y)
+#define CASE4(x, y, z, w) CASE2(x, y) : CASE2(z, w)
+#define CASE6(x, y, z, w, a, b) CASE2(x, y) : CASE2(z, w) : CASE2(a, b)
+#define CASE8(a, b, c, d, e, f, g, h) CASE4(a, b, c, d) : CASE4(e, f, g, h)
+

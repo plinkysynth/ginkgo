@@ -72,7 +72,6 @@ typedef struct bq_t {
     float b0, b1, b2, a1, a2;
 } bq_t;
 
-
 #define STATE_BASIC_FIELDS                                                                                                         \
     int _ver;                                                                                                                      \
     int _size;                                                                                                                     \
@@ -82,6 +81,7 @@ typedef struct bq_t {
     int cursor_x, cursor_y;                                                                                                        \
     float mx, my;                                                                                                                  \
     int mb;                                                                                                                        \
+    int old_mb;                                                                                                                    \
     double iTime;                                                                                                                  \
     uint32_t sampleidx;                                                                                                            \
     bq_t reverb_lpf, reverb_hpf;                                                                                                   \
@@ -140,11 +140,11 @@ static inline float update_lfo(float state[2], float sin_dphase) { // quadrature
 // TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.
 // but this is simple so we'll go with simple.
 static inline int euclid_rhythm(int stepidx, int numset, int numsteps, int rot) {
-    if (numsteps<1 || numset<1) return 0;
-    stepidx = ((stepidx+rot)%numsteps) + numsteps;
-    return ((stepidx*numset) % numsteps) < numset;
+    if (numsteps < 1 || numset < 1)
+        return 0;
+    stepidx = ((stepidx + rot) % numsteps) + numsteps;
+    return ((stepidx * numset) % numsteps) < numset;
 }
-
 
 typedef struct stereo {
     float l, r;
@@ -241,7 +241,6 @@ static inline stereo stereo_medium(stereo s) { return (stereo){.l = tanhf(s.l), 
 
 static inline stereo stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
-
 static inline bq_t bqlpf(float fc, float q) {
     float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
     float alpha = s / (2.0f * q);
@@ -278,61 +277,46 @@ static inline bq_t bqpeaking(float fc, float q, float gain_db) {
 }
 
 static inline bq_t bq_bandpass(float fc, float q) {
-    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
-    float alpha=s/(2.0f*q), k=1.0f/(1.0f+alpha);
-    return (bq_t){
-        .b0= alpha*k,
-        .b1= 0.0f,
-        .b2=-alpha*k,
-        .a1=-2.0f*c*k,
-        .a2=(1.0f-alpha)*k
-    };
+    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
+    float alpha = s / (2.0f * q), k = 1.0f / (1.0f + alpha);
+    return (bq_t){.b0 = alpha * k, .b1 = 0.0f, .b2 = -alpha * k, .a1 = -2.0f * c * k, .a2 = (1.0f - alpha) * k};
 }
 
 static inline bq_t bq_notch(float fc, float q) {
-    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
-    float alpha=s/(2.0f*q), k=1.0f/(1.0f+alpha);
-    return (bq_t){
-        .b0= 1.0f*k,
-        .b1=-2.0f*c*k,
-        .b2= 1.0f*k,
-        .a1=-2.0f*c*k,
-        .a2=(1.0f-alpha)*k
-    };
+    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
+    float alpha = s / (2.0f * q), k = 1.0f / (1.0f + alpha);
+    return (bq_t){.b0 = 1.0f * k, .b1 = -2.0f * c * k, .b2 = 1.0f * k, .a1 = -2.0f * c * k, .a2 = (1.0f - alpha) * k};
 }
 
 static inline bq_t bq_lowshelf(float fc, float slope, float gain_db) {
-    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
-    float A=powf(10.0f, gain_db/40.0f);
-    float alpha=0.5f*s*sqrtf((A+1.0f/A)*(1.0f/slope-1.0f)+2.0f);
-    float t=2.0f*sqrtf(A)*alpha;
+    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
+    float A = powf(10.0f, gain_db / 40.0f);
+    float alpha = 0.5f * s * sqrtf((A + 1.0f / A) * (1.0f / slope - 1.0f) + 2.0f);
+    float t = 2.0f * sqrtf(A) * alpha;
 
-    float a0=(A+1.0f)+(A-1.0f)*c + t; float k=1.0f/a0;
-    return (bq_t){
-        .b0= A*((A+1.0f)-(A-1.0f)*c + t)*k,
-        .b1= 2.0f*A*((A-1.0f)-(A+1.0f)*c)*k,
-        .b2= A*((A+1.0f)-(A-1.0f)*c - t)*k,
-        .a1=-2.0f*((A-1.0f)+(A+1.0f)*c)*k,
-        .a2=((A+1.0f)+(A-1.0f)*c - t)*k
-    };
+    float a0 = (A + 1.0f) + (A - 1.0f) * c + t;
+    float k = 1.0f / a0;
+    return (bq_t){.b0 = A * ((A + 1.0f) - (A - 1.0f) * c + t) * k,
+                  .b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * c) * k,
+                  .b2 = A * ((A + 1.0f) - (A - 1.0f) * c - t) * k,
+                  .a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * c) * k,
+                  .a2 = ((A + 1.0f) + (A - 1.0f) * c - t) * k};
 }
 
 static inline bq_t bq_highshelf(float fc, float slope, float gain_db) {
-    float s=sinf(fc*HALF_PI), c=cosf(fc*HALF_PI);
-    float A=powf(10.0f, gain_db/40.0f);
-    float alpha=0.5f*s*sqrtf((A+1.0f/A)*(1.0f/slope-1.0f)+2.0f);
-    float t=2.0f*sqrtf(A)*alpha;
+    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
+    float A = powf(10.0f, gain_db / 40.0f);
+    float alpha = 0.5f * s * sqrtf((A + 1.0f / A) * (1.0f / slope - 1.0f) + 2.0f);
+    float t = 2.0f * sqrtf(A) * alpha;
 
-    float a0=(A+1.0f)-(A-1.0f)*c + t; float k=1.0f/a0;
-    return (bq_t){
-        .b0= A*((A+1.0f)+(A-1.0f)*c + t)*k,
-        .b1=-2.0f*A*((A-1.0f)+(A+1.0f)*c)*k,
-        .b2= A*((A+1.0f)+(A-1.0f)*c - t)*k,
-        .a1= 2.0f*((A-1.0f)-(A+1.0f)*c)*k,
-        .a2=((A+1.0f)-(A-1.0f)*c - t)*k
-    };
+    float a0 = (A + 1.0f) - (A - 1.0f) * c + t;
+    float k = 1.0f / a0;
+    return (bq_t){.b0 = A * ((A + 1.0f) + (A - 1.0f) * c + t) * k,
+                  .b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * c) * k,
+                  .b2 = A * ((A + 1.0f) + (A - 1.0f) * c - t) * k,
+                  .a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * c) * k,
+                  .a2 = ((A + 1.0f) - (A - 1.0f) * c - t) * k};
 }
-
 
 static inline float bqfilter(float state[2], float x, bq_t coeffs) {
     float y = coeffs.b0 * x + state[0];
@@ -529,21 +513,20 @@ static inline float lpf4(float x, float f) {
 static float reverbbuf[65536];
 static int reverb_pos = 0;
 #define AP(len)                                                                                                                    \
-  {                                                                                                                                \
-    int j = (i + len) & 65535;                                                                                                     \
-    float d = reverbbuf[j];                                                                                                        \
-    reverbbuf[i] = acc -= d * 0.5;                                                                                                 \
-    acc = (acc * 0.5) + d;                                                                                                         \
-    i = j;                                                                                                                         \
-  }
+    {                                                                                                                              \
+        int j = (i + len) & 65535;                                                                                                 \
+        float d = reverbbuf[j];                                                                                                    \
+        reverbbuf[i] = acc -= d * 0.5;                                                                                             \
+        acc = (acc * 0.5) + d;                                                                                                     \
+        i = j;                                                                                                                     \
+    }
 #define DELAY(len)                                                                                                                 \
-  {                                                                                                                                \
-    reverbbuf[i] = acc;                                                                                                            \
-    int j = (i + len) & 65535;                                                                                                     \
-    acc = reverbbuf[j];                                                                                                            \
-    i = j;                                                                                                                         \
-  }
-
+    {                                                                                                                              \
+        reverbbuf[i] = acc;                                                                                                        \
+        int j = (i + len) & 65535;                                                                                                 \
+        acc = reverbbuf[j];                                                                                                        \
+        i = j;                                                                                                                     \
+    }
 
 static inline stereo reverb_internal(stereo inp) { // runs at 4x downsampled rate
     float acc = inp.l + inp.r;
@@ -556,21 +539,21 @@ static inline stereo reverb_internal(stereo inp) { // runs at 4x downsampled rat
     AP(107);
     AP(379);
     AP(277);
-    top=acc;
+    top = acc;
     // left branch
-    acc=top + right_fb * decay;
+    acc = top + right_fb * decay;
     AP(672); // wobble
-    lout=acc;
+    lout = acc;
     DELAY(4453);
-    acc*=decay;
+    acc *= decay;
     AP(1800);
     DELAY(3720);
     // right branch
-    acc=top + acc * decay;
+    acc = top + acc * decay;
     AP(908); // wobble
     rout = acc;
     DELAY(4217);
-    acc *=decay;
+    acc *= decay;
     AP(2656);
     DELAY(3162); // +1
     right_fb = acc;
@@ -585,13 +568,13 @@ static inline stereo reverb(stereo inp) {
     ////////////////////////// 4x DOWNSAMPLE
     inp = (stereo){
         bqfilter(state, inp.l, G->reverb_lpf),
-        bqfilter(state+2, inp.r, G->reverb_lpf),
+        bqfilter(state + 2, inp.r, G->reverb_lpf),
     };
     int outslot = (G->sampleidx >> 2) & 3;
     if ((G->sampleidx & 3) == 0) {
         inp = (stereo){
-            bqfilter(state+4, inp.l, G->reverb_hpf),
-            bqfilter(state+6, inp.r, G->reverb_hpf),
+            bqfilter(state + 4, inp.l, G->reverb_hpf),
+            bqfilter(state + 6, inp.r, G->reverb_hpf),
         };
         state2[outslot] = reverb_internal(inp);
     }

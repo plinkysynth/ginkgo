@@ -28,19 +28,27 @@ struct { // global map of all sounds. key is interned name, value likewise alloc
     Sound *value;
 } *g_sounds;
 
+// kinda base64, but we depart to make some punctiation more 'useful'.
+// . and _ look low, so they are 1 and 0
+// ^ looks high, so we go 64. @ looks full, and # is hard to type on UK keyboards, but both are also 64
+// = looks middle-y so we make that 32.
+// thus you can interpolate key values with _ = ^
 const char btoa_tab[65] =
-    " BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/#";
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+$@";
 
 //clang-format off
 const uint8_t atob_tab[256] = {
     [' '] = 0,
-    ['.'] = 1,
+    ['_'] = 0,
+    ['.'] = 0,
+    ['='] = 32,
     ['A'] = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     ['a'] = 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
     ['0'] = 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-    ['+'] = 62, ['-'] = 62, 
-    ['/'] = 63, ['_'] = 63,
-    ['#'] = 64
+    ['!'] = 32,
+    ['+'] = 62, ['-'] = 62, ['*'] = 62,
+    ['/'] = 63, ['$'] = 63,
+    ['#'] = 64, ['@'] = 64, ['^'] = 64,
 };
 
 //clang-format on
@@ -113,7 +121,7 @@ void pretty_print(const char *src, Node *nodes, int i, int depth) {
     }
 }
 
-static void error(Parser *p, const char *msg) {
+static void error(Pattern *p, const char *msg) {
     if (p->errmsg != NULL)
         return;
     p->err = p->i;
@@ -121,15 +129,15 @@ static void error(Parser *p, const char *msg) {
     //fprintf(stderr, "ERROR: %s - %.*s" COLOR_BRIGHT_RED "%s" COLOR_RESET "\n", msg, p->err, p->s, p->s + p->err);
 }
 
-static void skipws(Parser *p) {
+static void skipws(Pattern *p) {
     while (p->i < p->n && isspace(p->s[p->i]))
         p->i++;
 }
 
-static int peek(Parser *p) { return (p->i >= p->n) ? -1 : (unsigned char)p->s[p->i]; }
-static int peek_i(Parser *p, int i) { return (i >= p->n) ? -1 : (unsigned char)p->s[i]; }
+static int peek(Pattern *p) { return (p->i >= p->n) ? -1 : (unsigned char)p->s[p->i]; }
+static int peek_i(Pattern *p, int i) { return (i >= p->n) ? -1 : (unsigned char)p->s[i]; }
 
-static int consume(Parser *p, int c) {
+static int consume(Pattern *p, int c) {
     if (peek(p) == c) {
         p->i++;
         return 1;
@@ -141,16 +149,16 @@ static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' 
 static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
-static int make_node(Parser *p, int node_type, int first_child, int next_sib, int start, int end) {
+static int make_node(Pattern *p, int node_type, int first_child, int next_sib, int start, int end) {
     int i = stbds_arrlen(p->nodes);
     Node n = (Node){node_type, start, end, first_child, next_sib, 0};
     stbds_arrput(p->nodes, n);
     return i;
 }
 
-static int parse_expr(Parser *p);
+static int parse_expr(Pattern *p);
 
-static int parse_args(Parser *p, int group_type, int start, int is_poly) {
+static int parse_args(Pattern *p, int group_type, int start, int is_poly) {
     int group_node = make_node(p, group_type, -1, -1, start, start);
     int group_link_idx = -1;
     int comma_node = -1;
@@ -217,7 +225,7 @@ static int parse_args(Parser *p, int group_type, int start, int is_poly) {
     return group_node;
 }
 
-static int parse_group(Parser *p, char open, char close, int node_type) {
+static int parse_group(Pattern *p, char open, char close, int node_type) {
     int start = p->i;
     if (!consume(p, open)) {
         error(p, "expected opening bracket");
@@ -265,7 +273,7 @@ int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
 static int parse_number(const char *s, const char *e, float *number) {
     if (e <= s)
         return 0;
-    char *buf = alloca(e - s + 1);
+    char buf[e-s+1];
     memcpy(buf, s, e - s);
     buf[e - s] = '\0';
     char *endptr = (char *)e;
@@ -276,7 +284,47 @@ static int parse_number(const char *s, const char *e, float *number) {
     return 1;
 }
 
-static int parse_leaf(Parser *p) {
+void fill_curve_data_from_string(float *data, const char *s, int n) {
+    float last_val = 0.f;
+    float dlast_val = 0.f;
+    for (int i = 0; i<n; i++) {
+        last_val += dlast_val;
+        data[i] = last_val;
+        if (s[i] != ' ') {
+            data[i] = atob_tab[s[i]] / 64.f;
+            last_val = dlast_val = 0.f;
+            // look for a next datapoint to interpolate towards
+            for (int j = i+1; j<n; j++) {
+                if (s[j] != ' ') {
+                    last_val = data[i];
+                    float next_val = atob_tab[s[j]] / 64.f;
+                    dlast_val = (next_val-last_val) / (j - i);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static int parse_curve(Pattern *p) {
+    int start = p->i;
+    consume(p, '\'');
+    while (p->i < p->n && p->s[p->i] != '\'') ++p->i;
+    if (!consume(p, '\'')) {
+        error(p, "expected closing single quote in curve");
+        return -1;
+    }
+    int node = make_node(p, N_CURVE, -1, -1, p->nodes[node].start, p->i);
+    int first_data_idx = stbds_arrlen(p->curvedata);
+    int num_data_idx = maxi(0, p->i - start - 2);
+    float *data = stbds_arraddnptr(p->curvedata, num_data_idx);
+    fill_curve_data_from_string(data, p->s + start + 1, num_data_idx);
+    p->nodes[node].value.first_curve_data_idx = first_data_idx;
+    p->nodes[node].value.num_curve_data = num_data_idx;
+    return node;
+}
+
+static int parse_leaf(Pattern *p) {
     int start = p->i;
     while (isleaf(peek(p)))
         p->i++;
@@ -294,7 +342,7 @@ static int parse_leaf(Parser *p) {
         } else if (parse_number(p->s + partstart, p->s + partend, &number)) {
             v->number = number;
         } else {
-            char *name = alloca(partend - partstart + 1);
+            char name[partend - partstart + 1];
             memcpy(name, p->s + partstart, partend - partstart);
             name[partend - partstart] = '\0';
             v->sound = get_sound(name);
@@ -304,7 +352,7 @@ static int parse_leaf(Parser *p) {
     return node;
 }
 
-static int parse_expr_inner(Parser *p) {
+static int parse_expr_inner(Pattern *p) {
     skipws(p);
     switch (peek(p)) {
     case '[':
@@ -313,6 +361,8 @@ static int parse_expr_inner(Parser *p) {
         return parse_group(p, '<', '>', N_CAT);
     case '{':
         return parse_group(p, '{', '}', N_POLY);
+    case '\'':
+        return parse_curve(p);
     default:
         if (isleaf(peek(p)))
             return parse_leaf(p);
@@ -321,7 +371,7 @@ static int parse_expr_inner(Parser *p) {
     return -1;
 }
 
-static int parse_euclid(Parser *p, int node) {
+static int parse_euclid(Pattern *p, int node) {
     int euclid_node0 = parse_expr(p);
     if (euclid_node0 < 0)
         return -1;
@@ -349,7 +399,7 @@ static int parse_euclid(Parser *p, int node) {
     return euclid_node;
 }
 
-static int parse_op(Parser *p, int left_node, int node_type, int num_params, int optional_right) {
+static int parse_op(Pattern *p, int left_node, int node_type, int num_params, int optional_right) {
     if (left_node < 0)
         return -1;
     skipws(p);
@@ -370,7 +420,7 @@ static int parse_op(Parser *p, int left_node, int node_type, int num_params, int
 }
 
 
-static int parse_expr(Parser *p) {
+static int parse_expr(Pattern *p) {
     int node = parse_expr_inner(p);
     skipws(p);
     if (node < 0)
@@ -431,7 +481,7 @@ everything report length 1 except replicate and elongate that report their right
 fastcat needs to know sum of children's lengths to compute its fast ratio.
 poly uses its first child's children's sum as its speedup, else its value
 */
-static float get_length(Parser *p, int node) {
+static float get_length(Pattern *p, int node) {
     if (node < 0)
         return 1.f;
     Node *n = &p->nodes[node];
@@ -441,7 +491,7 @@ static float get_length(Parser *p, int node) {
     return 1.f;
 }
 
-static void update_lengths(Parser *p, int node) {
+static void update_lengths(Pattern *p, int node) {
     if (node < 0)
         return;
     Node *n = &p->nodes[node];
@@ -458,7 +508,7 @@ static void update_lengths(Parser *p, int node) {
     }
 }
 
-static inline void squeeze(Parser *p, int *parent) {
+static inline void squeeze(Pattern *p, int *parent) {
     // remove all 
     //  CAT nodes with 1 child;
     //  FASTCAT nodes with 1 child and a total child length of 1;
@@ -479,9 +529,10 @@ static inline void squeeze(Parser *p, int *parent) {
     }
 }
 
-int parse_pattern(Parser *p) {
+int parse_pattern(Pattern *p) {
     p->i = 0;
     if (p->nodes) stbds_arrsetlen(p->nodes, 0);
+    if (p->curvedata) stbds_arrsetlen(p->curvedata, 0);
     p->root = -1;
     p->err = 0;
     p->errmsg = NULL;
@@ -491,7 +542,7 @@ int parse_pattern(Parser *p) {
     return p->err;
 }
 
-static inline void print_haps(Parser *p, Hap *haps, int n) {
+static inline void print_haps(Pattern *p, Hap *haps, int n) {
     for (int i = 0; i < n; i++) {
         Hap h = haps[i];
         Node *n = p->nodes + h.node;
@@ -533,14 +584,14 @@ static inline void sort_haps_by_t0(Hap *haps, int count) {
     qsort(haps, count, sizeof(Hap), (int(*)(const void*,const void*))cmp_haps_by_t0);
 }
 
-static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx,
+static Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx,
                       float note_prob) {
     if (nodeidx < 0 || t0 >= t1)
         return *haps;
     uint32_t seed = hash2_pcg(p->rand_seed, nodeidx);
     Node *n = p->nodes + nodeidx;
     if (n->type == N_LEAF && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
-        Hap h = (Hap){t0 * tscale + tofs, t1 * tscale + tofs, nodeidx, sound_idx};
+        Hap h = (Hap){t0 * tscale + tofs, t1 * tscale + tofs, nodeidx, sound_idx, t0, t1};
         stbds_arrput(*haps, h);
         return *haps;
     }
@@ -645,7 +696,7 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
         for (int i=n->first_child; i>=0; i=p->nodes[i].next_sib) ++num_children;
         if (!num_children)
             return *haps;
-        int *kids=(int*)alloca(num_children*4);
+        int kids[num_children];
         num_children=0;
         for (int i=n->first_child; i>=0; i=p->nodes[i].next_sib) kids[num_children++]=i;
         for (int t=(int)t0; t<t1; ++t) {
@@ -695,7 +746,7 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
                     float output_t0 = from * tscale + tofs;
                     if (note_prob >= 1.f || hasht_float(seed, output_t0) <= note_prob) {
                         if (nodeidx < 0 || !is_rest(p->nodes[nodeidx].value.sound)) {
-                            Hap h = (Hap){output_t0, to * tscale + tofs, nodeidx, sound_idx};
+                            Hap h = (Hap){output_t0, to * tscale + tofs, nodeidx, sound_idx, from, to};
                             stbds_arrput(*haps, h);
                         }
                     }
@@ -724,7 +775,7 @@ static Hap *make_haps(Parser *p, int nodeidx, float t0, float t1, float tscale, 
     return *haps;
 }
 
-char* print_pattern_chart(Parser *p) { // returns stb_ds string
+char* print_pattern_chart(Pattern *p) { // returns stb_ds string
     Hap *haps = NULL;
     make_haps(p, p->root, 0.0f, 4.0f, 1.0f, 0.f, &haps, FLAG_NONE, 0, 1.f);
     if (stbds_arrlen(haps) == 0)
@@ -790,7 +841,7 @@ void test_minipat(void) {
     // const char *s = "[bd <hh oh>,rim*<4 8>]";
     // const char *s = "[bd,sd*1.1]";
     printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
-    Parser p={s,strlen(s)};
+    Pattern p={s,strlen(s)};
     parse_pattern(&p);
     pretty_print(s, p.nodes, p.root, 0);
     char *chart = print_pattern_chart(&p);

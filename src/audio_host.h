@@ -22,7 +22,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     if (!dsp)
         return;
     dsp_fn_t old_dsp = atomic_load_explicit(&g_dsp_used, memory_order_acquire);
-    stereo *audio = (stereo *)alloca(OVERSAMPLE * frames * sizeof(stereo));
+    stereo audio[OVERSAMPLE*frames];
     static stereo prev_input;
     static_assert(OVERSAMPLE == 2 || OVERSAMPLE == 1, "OVERSAMPLE must be 2 or 1");
     if (OVERSAMPLE == 2) {
@@ -119,7 +119,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    #define CLANG_OPTIONS "-x c -g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -D LIVECODE -I. -Isrc/"
+    #define CLANG_OPTIONS "-x c -g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -D LIVECODE -I. -Isrc/"
     snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");

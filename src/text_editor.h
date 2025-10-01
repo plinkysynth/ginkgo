@@ -21,7 +21,11 @@ typedef struct EditorState {
     bool is_shader; // is this a shader file?
     bool mouse_hovering_chart;
     bool find_mode;
+    bool cursor_in_pattern_area;
     bool mouse_dragging_chart;
+    bool mouse_clicked_chart;
+    char mouse_click_original_char;
+    int mouse_click_original_char_x;
     float scroll_y;
     float scroll_y_target;
     int intscroll; // how many lines we scrolled.
@@ -146,6 +150,19 @@ int xy_to_idx(EditorState *E, int tx, int ty) {
     return n;
 }
 
+int idx_to_x(EditorState *E, int idx, int line_start_idx) {
+    int x = 0;
+    for (int i = line_start_idx; i < idx; i++) {
+        if (E->str[i] == '\n' || E->str[i] == 0)
+            break;
+        if (E->str[i] == '\t')
+            x = next_tab(x);
+        else
+            x++;
+    }
+    return x;
+}
+
 void idx_to_xy(EditorState *E, int idx, int *tx, int *ty) {
     int x = 0, y = 0;
     for (int i = 0; i < idx; i++) {
@@ -211,10 +228,11 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
         E->click_fy = fy;
         E->mouse_dragging_chart = E->mouse_hovering_chart;
     }        
-    if (E->mouse_dragging_chart) {
-        if (is_drag < 0) E->mouse_dragging_chart = false;
+    if (E->mouse_hovering_chart && is_drag<0) {
+        E->mouse_clicked_chart = click_count > 0;
     }
-    else {
+    if (!E->mouse_dragging_chart) {
+        // sliders on the right interaction
         if (G && E->click_fx >= tmw-24 && E->click_fx < tmw) {
             for (int slideridx=0;slideridx<16;++slideridx) {
                 for (int i=0;i<G->sliders[slideridx].n;i+=2) {
@@ -231,6 +249,7 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                 }
             }
         }
+        // text editor mouse interaction
         // adjust for the left margin of the code view
         int left = 64 / E->font_width;
         cx -= left;
@@ -474,7 +493,7 @@ insert_character:
             } else {
                 // delete the selection; insert the character
                 int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
-                char *buf = alloca(ls + 2);
+                char buf[ls+2];
                 buf[0] = key;
                 memset(buf + 1, ' ', ls);
                 buf[ls + 1] = 0;

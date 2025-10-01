@@ -5,17 +5,23 @@
 
 
 
+#ifdef PATTERNS
 
+// any block comment beginning "#ifdef PATTERNS" will be considered pattern area.
+// this is the pattern area. it is parsed and 'compiled' by gingko, not the c compiler.
+// we create named mini-notation patterns and curves.
 
 // this is a graph - any string inside single quotes becomes a value you can edit as both text and visually.
-// the graph appears when you hover it. TODO: I will also code color the characters by value.
+// the graph appears when you hover it.
 
-// "'                              '"
+' .      ^      =               _      '     
 
 
-// mini notation will include it. 
+[[sd rim] bd(3,8)]
 
-// "[[sd rim] bd(3,8)]"
+
+#endif
+
 
 STATE_VERSION(1, bq_t lpf, hpf; )
 

@@ -23,8 +23,6 @@ static const char *node_type_names[N_LAST] = {
 #include "node_types.h"     
 };
 
-sound_pair_t*g_sounds; // global map of all sounds. key is interned name, value likewise allocated once ever. thus we can just store Sound* and/or
-// compare name ptrs.
 
 // kinda base64, but we depart to make some punctiation more 'useful'.
 // . and _ look low, so they are 1 and 0
@@ -50,36 +48,25 @@ const uint8_t atob_tab[256] = {
 };
 
 //clang-format on
-static inline int is_rest(const Sound *sound) {
-    if (sound == NULL || sound->name == NULL) // an unspecified name is not a rest.
-        return 0;
-    return sound->name[1] == 0 && (sound->name[0] == '-' || sound->name[0] == '_' || sound->name[0] == '~');
-}
 
-int get_num_sounds_for_main_thread(void) {
-    // for (int i = 0; i < stbds_shlen(g_sounds); ++i) {
-    //     printf("%s\n", g_sounds[i].value->name);
-    // }
-    return stbds_shlen(g_sounds);
-}
 
-Sound *get_sound_for_main_thread(const char *name) { // ...by name.
-    Sound *sound = shget(g_sounds, name);
+Sound *get_sound_init_only(const char *name) { // ...by name.
+    Sound *sound = shget(G->sounds, name);
     if (!sound) {
         name = strdup(name); // intern the name!
         sound = (Sound *)calloc(1, sizeof(Sound));
         sound->name = name;
-        shput(g_sounds, name, sound);
+        shput(G->sounds, name, sound);
     }
     return sound;
 }
 
-Sound *add_alias_for_main_thread(const char *alias, const char *name) {
-    Sound *point_at_sound = get_sound_for_main_thread(name);
-    Sound *alias_sound = shget(g_sounds, alias);
+Sound *add_alias_init_only(const char *alias, const char *name) {
+    Sound *point_at_sound = get_sound_init_only(name);
+    Sound *alias_sound = shget(G->sounds, alias);
     if (!alias_sound) {
         alias = strdup(alias); // intern the name!
-        shput(g_sounds, alias, point_at_sound);
+        shput(G->sounds, alias, point_at_sound);
         alias_sound = point_at_sound;
     }
     return alias_sound;
@@ -246,13 +233,15 @@ int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
     }
     if (s >= e)
         return -1;
-    if (s[0] < 'A' || s[0] > 'G')
+    char notename = s[0];
+    if (notename >='A' && notename <='Z') notename += 'a' - 'A';
+    if (s[0] < 'a' || s[0] > 'g')
         return -1;
     const static int note_indices[7] = {9, 11, 0, 2, 4, 5, 7};
-    int note = note_indices[*s++ - 'A'];
+    int note = note_indices[notename - 'a'];
     if (s >= e)
         return -1;
-    if (s[0] == 's') {
+    if (s[0] == 's' || s[0]=='#') {
         note++;
         if (++s >= e)
             return -1;
@@ -272,6 +261,9 @@ int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
 static int parse_number(const char *s, const char *e, float *number) {
     if (e <= s)
         return 0;
+    const char *check=s;
+    if (*check == '-') check++;
+    if (check >= e || !isdigit(*check)) return 0;
     char buf[e-s+1];
     memcpy(buf, s, e - s);
     buf[e - s] = '\0';
@@ -282,6 +274,28 @@ static int parse_number(const char *s, const char *e, float *number) {
     *number = (float)d;
     return 1;
 }
+
+void parse_value(const char *s, const char *e, Value *v) {
+    for (const char *partstart = s; partstart < e; partstart++) {
+        const char *partend = partstart;
+        for (; partend < e && *e != '_'; partend++)
+            ;
+        int note = parse_midinote(partstart, partend, 0);
+        float number = 0.f;
+        if (note >= 0) {
+            v->note = note;
+        } else if (parse_number(partstart, partend, &number)) {
+            v->number = number;
+        } else {
+            char name[partend - partstart + 1];
+            memcpy(name, partstart, partend - partstart);
+            name[partend - partstart] = '\0';
+            v->sound = get_sound(name);
+        }
+        partstart = partend + 1;
+    }
+}
+
 
 void fill_curve_data_from_string(float *data, const char *s, int n) {
     float last_val = 0.f;
@@ -323,6 +337,7 @@ static int parse_curve(Pattern *p) {
     return node;
 }
 
+
 static int parse_leaf(Pattern *p) {
     int start = p->i;
     while (isleaf(peek(p)))
@@ -330,24 +345,7 @@ static int parse_leaf(Pattern *p) {
     // split the string into parts separated by _; valid parts can be a number, a note, or a sound.
     int node = make_node(p, N_LEAF, -1, -1, start, p->i);
     Value *v = &p->nodes[node].value;
-    for (int partstart = start; partstart < p->i; partstart++) {
-        int partend = partstart;
-        for (; partend < p->i && p->s[partend] != '_'; partend++)
-            ;
-        int note = parse_midinote(p->s + partstart, p->s + partend, 0);
-        float number = 0.f;
-        if (note >= 0) {
-            v->note = note;
-        } else if (parse_number(p->s + partstart, p->s + partend, &number)) {
-            v->number = number;
-        } else {
-            char name[partend - partstart + 1];
-            memcpy(name, p->s + partstart, partend - partstart);
-            name[partend - partstart] = '\0';
-            v->sound = get_sound_for_main_thread(name);
-        }
-        partstart = partend + 1;
-    }
+    parse_value(p->s + start, p->s + p->i, v);
     return node;
 }
 
@@ -742,7 +740,7 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
                 if ((from >= t0 || inclusive_left) && from < t1) {
                     float output_t0 = from * tscale + tofs;
                     if (note_prob >= 1.f || hasht_float(seed, output_t0) <= note_prob) {
-                        if (nodeidx < 0 || !is_rest(p->nodes[nodeidx].value.sound)) {
+                        if (nodeidx >= 0 && p->nodes[nodeidx].value.sound) {
                             Hap h = (Hap){output_t0, to * tscale + tofs, nodeidx, sound_idx, from, to};
                             stbds_arrput(*haps, h);
                         }

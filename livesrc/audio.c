@@ -49,7 +49,12 @@ stereo do_sample(stereo inp) {
     
     float t= exp2f(-0.0002f * (G->sampleidx&65535));
     out += sino(P_A5) * t;
+    
+    wave_t *wave=get_wave_by_name("rim:0");
+    out=0.f;
+    if (wave && wave->frames && wave->num_frames) out=wave->frames[(G->sampleidx/2) % wave->num_frames];
+    
    	stereo dry=STEREO(out,out);
-    //return dry;
+    return dry;
     return stadd(dry,reverb(dry));
 }

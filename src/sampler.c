@@ -14,14 +14,15 @@
 const char *fetch_to_cache(const char *url, int prefer_offline); // from http_fetch.c
 
 bool decode_file_to_f32(const char *path, wave_t *out) {
-    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0); // keep source ch/sr
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 48000); // keep source ch/sr
     float *pcm=NULL;
     uint64_t num_frames=0;
     ma_result rc = ma_decode_file(path, &cfg, &num_frames, (void**) &pcm);
-    if (rc!=MA_SUCCESS) {
+    if (rc!=MA_SUCCESS || num_frames==0) {
         free(pcm);
         return false;
     }
+    out->num_frames = num_frames;
     out->sample_rate = cfg.sampleRate;
     out->channels = cfg.channels;
     out->frames = pcm;
@@ -68,12 +69,12 @@ int parse_strudel_alias_json(const char *json_url) {
             char *long_name = temp_cstring_from_span(soundkey.start, soundkey.end);
             char *short_name = temp_cstring_from_span(soundval.start, soundval.end);
             //printf("alias %s -> %s\n", long_name, short_name);
-            add_alias_for_main_thread(short_name, long_name);
+            add_alias_init_only(short_name, long_name);
         } else {
             fprintf(stderr, "alias json warning: unexpected object type: %.*s %d\n", (int)(soundkey.end - soundkey.start), soundkey.start, soundval.type);
         }
     }
-    printf("after " COLOR_YELLOW "%s" COLOR_RESET ", %d sounds\n", json_url, get_num_sounds_for_main_thread());
+    printf("after " COLOR_YELLOW "%s" COLOR_RESET ", %d sounds\n", json_url, num_sounds());
     stbds_arrfree(json);
     return 1;
 }
@@ -95,7 +96,7 @@ int parse_strudel_json(const char *json_url) {
             }        
         } else {
             char *sound_name = temp_cstring_from_span(soundkey.start, soundkey.end);
-            Sound *sound =get_sound_for_main_thread(sound_name);
+            Sound *sound =get_sound_init_only(sound_name);
                 sj_Value samplekey, sample;
             for (int i = 0; sj_iter_array_or_object(&r, soundval, &samplekey, &sample); i++) {
                 char *url = NULL;
@@ -125,7 +126,7 @@ int parse_strudel_json(const char *json_url) {
             // printf("%s -> %d waves\n", sound_name, (int)stbds_arrlen(sound->waves));
         }
     }
-    printf("after " COLOR_YELLOW "%s" COLOR_RESET ", %d sounds\n", json_url, get_num_sounds_for_main_thread());
+    printf("after " COLOR_YELLOW "%s" COLOR_RESET ", %d sounds\n", json_url, num_sounds());
     stbds_arrfree(json);
     return 1;
 }
@@ -134,10 +135,13 @@ int init_sampler(void) {
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"
 #define TS "https://raw.githubusercontent.com/todepond/samples/main/"
 // bd seems to be in here...
+    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/uzu-drumkit/refs/heads/main/strudel.json");
     parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json"); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
+    //parse_strudel_json(DS "Dirt-Samples/strudel.json");
     parse_strudel_json(DS "tidal-drum-machines.json");
     parse_strudel_json(DS "piano.json");
     parse_strudel_json(DS "Dirt-Samples.json");
+    parse_strudel_json(DS "EmuSP12.json");
     // parse_strudel_json(DS "uzu-drumkit.json"); 404 not found?
     parse_strudel_json(DS "vcsl.json");
     parse_strudel_json(DS "mridangam.json");

@@ -297,7 +297,7 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
     }
     if (!E->mouse_dragging_chart) {
         // sliders on the right interaction
-        if (G && E->click_fx >= tmw-16 && E->click_fx < tmw) {
+        if (E->click_fx >= tmw-16 && E->click_fx < tmw) {
             for (int slideridx=0;slideridx<16;++slideridx) {
                 for (int i=0;i<G->sliders[slideridx].n;i+=2) {
                     int line = G->sliders[slideridx].data[i+1] - E->intscroll;

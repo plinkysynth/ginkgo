@@ -790,6 +790,21 @@ const char *skip_path(const char *s, const char *e) {
     return s;
 }
 
+const char *find_line_end_or_comment(const char *s, const char *e) {
+    while (s < e) {
+        if (*s == '\n') return s;
+        if (*s == '/' && s+1 < e && s[1] == '/') return s;
+        if (*s == '/' && s+1 < e && s[1] == '*') {
+            const char *c=s;
+            while (1) {
+                if (s+2 > e || *s=='\n') return c; // unterminated block comment
+                if (s[0]=='*' && s[1]=='/') { s+=2; break; } // terminated block comment - keep going
+            }
+        }
+        ++s;
+    }
+    return e;
+}
 
 int code_color(EditorState *E, uint32_t *ptr) {
     int left = 64 / E->font_width;
@@ -807,29 +822,25 @@ int code_color(EditorState *E, uint32_t *ptr) {
     float *sliders[TMH] = {};
     int sliderindices[TMH];
     float *new_closest_slider[16] = {};
-    if (G) {
-        for (int slideridx = 0; slideridx < 16; ++slideridx) {
-            for (int i = 0; i < G->sliders_hwm[slideridx]; i += 2) {
-                float *value_line = G->sliders[slideridx].data + i;
-                float value = value_line[0];
-                int line = (int)value_line[1];
-                int dist_to_old =
-                    new_closest_slider[slideridx] == NULL ? 1000000 : abs((int)new_closest_slider[slideridx][1] - E->cursor_y);
-                int dist_to_new = abs(line - E->cursor_y);
-                if (dist_to_old > dist_to_new) {
-                    new_closest_slider[slideridx] = value_line;
-                }
-                line -= E->intscroll;
-                if (line >= 0 && line < TMH) {
-                    sliderindices[line] = slideridx;
-                    sliders[line] = value_line;
-                }
+    for (int slideridx = 0; slideridx < 16; ++slideridx) {
+        for (int i = 0; i < G->sliders_hwm[slideridx]; i += 2) {
+            float *value_line = G->sliders[slideridx].data + i;
+            float value = value_line[0];
+            int line = (int)value_line[1];
+            int dist_to_old =
+                new_closest_slider[slideridx] == NULL ? 1000000 : abs((int)new_closest_slider[slideridx][1] - E->cursor_y);
+            int dist_to_new = abs(line - E->cursor_y);
+            if (dist_to_old > dist_to_new) {
+                new_closest_slider[slideridx] = value_line;
+            }
+            line -= E->intscroll;
+            if (line >= 0 && line < TMH) {
+                sliderindices[line] = slideridx;
+                sliders[line] = value_line;
             }
         }
-        memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
-    } else {
-        memset(closest_slider, 0, sizeof(closest_slider));
     }
+    memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
     int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
     int cursor_in_curve_start_idx = 0;
@@ -1071,9 +1082,11 @@ int code_color(EditorState *E, uint32_t *ptr) {
         int basex = left;
         int chartx = basex + 13;    
         int code_start_idx = xy_to_idx(E, 0, E->cursor_y);
-        const char *s = skip_path(t.str + code_start_idx, t.str + t.n);
-        code_start_idx = s - t.str;
-        int code_end_idx = xy_to_idx(E, 0x7fffffff , E->cursor_y);
+        const char *line_start = t.str + code_start_idx;
+        const char *line_end = find_line_end_or_comment(line_start, t.str + t.n);
+        line_start = skip_path(line_start, line_end);
+        code_start_idx = line_start - t.str;
+        int code_end_idx = line_end - t.str;
         static uint32_t cached_compiled_string_hash = 0;
         static Pattern cached_parser;
         static Hap *cached_haps;
@@ -1236,15 +1249,13 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     my *= retina;
     int m0 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     int m1 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-    if (G) {
-        G->mx = mx;
-        G->my = my;
-        G->old_mb = G->mb;
-        G->mb = m0 + m1 * 2;
-        G->iTime = glfwGetTime();
-        G->cursor_x = E->cursor_x;
-        G->cursor_y = E->cursor_y;
-    }
+    G->mx = mx;
+    G->my = my;
+    G->old_mb = G->mb;
+    G->mb = m0 + m1 * 2;
+    G->iTime = glfwGetTime();
+    G->cursor_x = E->cursor_x;
+    G->cursor_y = E->cursor_y;
     if (m0) {
         editor_click(E, G, mx, my, 1, 0);
         E->need_scroll_update = true;
@@ -1599,8 +1610,6 @@ int main(int argc, char **argv) {
         }
 
         // pump wave load requests
-        Sound *bd = get_sound_for_main_thread("bd");
-        get_wave(bd, 0);
         pump_wave_load_requests_main_thread();
     }
     ma_device_stop(&dev);

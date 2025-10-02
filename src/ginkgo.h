@@ -6,18 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
+#include "3rdparty/stb_ds.h"
 
-// a tiny bit of stb_ds so we can call arrlen at least inline :)
-typedef struct
-{
-  size_t      length;
-  size_t      capacity;
-  void      * hash_table;
-  ptrdiff_t   temp;
-} _stbds_array_header;
-
-#define _stbds_header(t)  ((_stbds_array_header *) (t) - 1)
-#define _stbds_arrlen(a)        ((a) ? (ptrdiff_t) _stbds_header(a)->length : 0)
 
 
 #define STRINGIFY(x) #x
@@ -147,6 +137,7 @@ typedef struct sound_request_t {
     double iTime;                                                                                                                  \
     uint32_t sampleidx;                                                                                                            \
     atomic_flag load_request_cs;                                                                                                   \
+    sound_pair_t*sounds;  \
     sound_request_t *load_requests;                                                                                                   \
     bq_t reverb_lpf, reverb_hpf;                                                                                                   \
     bump_array_t sliders[16];                                                                                                      \
@@ -403,16 +394,38 @@ static inline stereo stbq(stereo s, bq_t coeffs) {
 int test_lib_func(void);
 void init_basic_state(void);
 stereo reverb(stereo inp);
-const wave_t *request_wave_load(Sound *sound, int index);
+wave_t *request_wave_load(Sound *sound, int index);
 
-static inline const wave_t *get_wave(Sound *sound, int index) {
+// for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
+// however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
+static inline Sound *get_sound(const char *name) {
+    return shget(G->sounds, name);
+}
+
+static inline int num_sounds(void) {
+    return stbds_hmlen(G->sounds);
+}
+
+static inline wave_t *get_wave(Sound *sound, int index) {
     if (!sound) return NULL;
-    int n = _stbds_arrlen(sound->waves);
+    int n = stbds_arrlen(sound->waves);
     if (!n) return NULL;
     index %= n;
     wave_t *w = &sound->waves[index];
     return w->frames ? w :request_wave_load(sound, index);
 }
+
+static inline wave_t *get_wave_by_name(char *name) {
+    int index=0;
+    const char *colon=strchr(name, ':');
+    if (!colon)
+        return get_wave(get_sound(name), index);
+    index = atoi(colon+1);
+    char name2[colon-name+1];
+    memcpy(name2, name, colon-name);
+    name2[colon-name] = '\0';
+    return get_wave(get_sound(name2), index);
+} 
 
 static inline float sample_linear(float pos, const float *smpl) {
     int i = (int)floorf(pos);

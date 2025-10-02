@@ -2,11 +2,11 @@
 // it's essentially 'precompiled stuff' :)
 
 #include "ginkgo.h"
+#include "utils.h"
 #define STB_DS_IMPLEMENTATION
 #include "3rdparty/stb_ds.h"
-#include "utils.h"
-
-basic_state_t *_BG;
+basic_state_t dummy_state;
+basic_state_t *_BG = &dummy_state;
 
 void init_basic_state(void) {
     // init the darkening / downsampling filter for the reverb.
@@ -93,12 +93,15 @@ stereo reverb(stereo inp) {
 void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_size, int version, void (*init_state)(void)) {
     if (!_G || _G->_ver != version || _G->_size != state_size) {
         /* free(G); - safer to just let it leak :)  virtual memory ftw  */
+        basic_state_t *oldg = _G;
         _G = calloc(1, state_size);
+        if (oldg) memcpy(_G, oldg, sizeof(basic_state_t)); // preserve the basic state...
+        // ...but update the version number and size.
         _G->_ver = version;
         _G->_size = state_size;
     }
     _G->reloaded = reloaded;
-    G = _G; // set global variable for user code. nb the dll and the main program have their own copies of G.
+    G = _G; // set global variable for user code. nb the dll and the main program have their own copies of G. dsp() ends up setting the dll copy from the main process copy.
     if (reloaded) {
         init_basic_state();
         (*init_state)();
@@ -110,7 +113,7 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
 }
 
 
-const wave_t *request_wave_load(Sound *sound, int index) {
+wave_t *request_wave_load(Sound *sound, int index) {
     if (!G) return NULL;
     spin_lock(&G->load_request_cs);
     sound_request_key_t key = {sound, index};

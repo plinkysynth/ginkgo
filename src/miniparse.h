@@ -1,8 +1,8 @@
 #pragma once
 
-Sound *get_sound_for_main_thread(const char *name); // ...by name.
-int get_num_sounds_for_main_thread(void);
-Sound *add_alias_for_main_thread(const char *short_alias, const char *long_name);
+// init only ones are allowed to mutate the sound map.
+Sound *get_sound_init_only(const char *name); // ...by name.
+Sound *add_alias_init_only(const char *short_alias, const char *long_name);
 int parse_midinote(const char *s, const char *e, int allow_p_prefix); 
 
 typedef struct Value { // the value associated with a node in the parse tree. nb sound idx like bd:3 is assigned later at hap-time.

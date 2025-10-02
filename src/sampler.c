@@ -13,6 +13,14 @@
 
 const char *fetch_to_cache(const char *url, int prefer_offline); // from http_fetch.c
 
+const char *trimurl(const char *url) {
+    // shorten url for printing
+    if (strncmp(url, "https://", 8)==0) url += 8;
+    if (strncmp(url, "http://", 7)==0) url += 7;
+    if (strncmp(url, "raw.githubusercontent.com/", 26)==0) url += 26;
+    return url;
+}
+
 bool decode_file_to_f32(const char *path, wave_t *out) {
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 48000); // keep source ch/sr
     float *pcm=NULL;
@@ -26,7 +34,8 @@ bool decode_file_to_f32(const char *path, wave_t *out) {
     out->sample_rate = cfg.sampleRate;
     out->channels = cfg.channels;
     out->frames = pcm;
-    printf("read %lld frames %dhz from %s\n", out->num_frames,(int)out->sample_rate, path);
+    const char *trimmed_path = strrchr(path, '/');
+    printf("read %lld samples @ %dkhz from " COLOR_YELLOW "%s" COLOR_RESET "\n", out->num_frames,(int)out->sample_rate/1000, trimmed_path ? trimmed_path+1 : path);
     return true;
 }
 
@@ -64,6 +73,7 @@ int parse_strudel_alias_json(const char *json_url) {
     sj_Reader r = sj_reader(json, stbds_arrlen(json));
     sj_Value outer_obj = sj_read(&r);
     sj_Value soundval, soundkey;
+    int old_num_sounds = num_sounds();
     while (sj_iter_object(&r, outer_obj, &soundkey, &soundval)) {
         if (soundval.type == SJ_STRING) {
             char *long_name = temp_cstring_from_span(soundkey.start, soundkey.end);
@@ -74,7 +84,7 @@ int parse_strudel_alias_json(const char *json_url) {
             fprintf(stderr, "alias json warning: unexpected object type: %.*s %d\n", (int)(soundkey.end - soundkey.start), soundkey.start, soundval.type);
         }
     }
-    printf("after " COLOR_YELLOW "%s" COLOR_RESET ", %d sounds\n", json_url, num_sounds());
+    printf(COLOR_YELLOW "%s" COLOR_RESET " added " COLOR_GREEN "%d" COLOR_RESET " new aliases\n", trimurl(json_url), num_sounds()-old_num_sounds);
     stbds_arrfree(json);
     return 1;
 }
@@ -85,6 +95,8 @@ int parse_strudel_json(const char *json_url) {
     sj_Value outer_obj = sj_read(&r);
     sj_Value soundval, soundkey;
     sj_Value base = {};
+    int old_num_sounds = num_sounds();
+    int wav_count = 0, skip_count = 0;
     while (sj_iter_object(&r, outer_obj, &soundkey, &soundval)) {
         if (soundval.type == SJ_STRING) {
             if (spancmp(soundkey.start, soundkey.end, "_base", NULL) == 0) {
@@ -110,6 +122,7 @@ int parse_strudel_json(const char *json_url) {
                 int j;
                 for (j = 0; j< stbds_arrlen(sound->waves); ++j) if (strcmp(sound->waves[j].url, url)==0) break;
                 if (j==stbds_arrlen(sound->waves)) {
+                    wav_count++;
                     wave_t wave={.url = url};
                     bool eager=false;
                     if (eager) 
@@ -120,13 +133,14 @@ int parse_strudel_json(const char *json_url) {
                         int insert_at = lower_bound_int_pair(sound->midi_notes, stbds_arrlen(sound->midi_notes), pair);
                         stbds_arrins(sound->midi_notes, insert_at, pair);
                     }
-                }
+                } else skip_count++;
             }
             // log the number of waves in this sound
             // printf("%s -> %d waves\n", sound_name, (int)stbds_arrlen(sound->waves));
         }
     }
-    printf("after " COLOR_YELLOW "%s" COLOR_RESET ", %d sounds\n", json_url, num_sounds());
+    printf(COLOR_YELLOW "%s" COLOR_RESET ", %d new sounds, added " COLOR_GREEN "%d" COLOR_RESET " waves\n", 
+        trimurl(json_url), num_sounds()-old_num_sounds, wav_count);
     stbds_arrfree(json);
     return 1;
 }
@@ -140,7 +154,7 @@ int init_sampler(void) {
     //parse_strudel_json(DS "Dirt-Samples/strudel.json");
     parse_strudel_json(DS "tidal-drum-machines.json");
     parse_strudel_json(DS "piano.json");
-    parse_strudel_json(DS "Dirt-Samples.json");
+    //parse_strudel_json(DS "Dirt-Samples.json");
     parse_strudel_json(DS "EmuSP12.json");
     // parse_strudel_json(DS "uzu-drumkit.json"); 404 not found?
     parse_strudel_json(DS "vcsl.json");

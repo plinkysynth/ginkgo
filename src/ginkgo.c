@@ -23,6 +23,7 @@
 #include "3rdparty/stb_ds.h"
 #include "3rdparty/miniaudio.h"
 #include "3rdparty/pffft.h"
+#include "ansicols.h"
 #include "utils.h"
 #include "ginkgo.h"
 #include <GLFW/glfw3.h>
@@ -531,7 +532,7 @@ GLFWwindow *gl_init(int want_fullscreen) {
     if (!win)
         die("glfwCreateWindow failed");
     glfwGetWindowContentScale(win, &retina, NULL);
-    printf("retina: %f\n", retina);
+    //printf("retina: %f\n", retina);
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
 
@@ -1419,7 +1420,7 @@ int main(int argc, char **argv) {
     
     int num_inputs = midi_get_num_inputs();
     int num_outputs = midi_get_num_outputs();
-    printf("midi: %d inputs, %d outputs\n", num_inputs, num_outputs);
+    printf("midi: " COLOR_GREEN "%d" COLOR_RESET " inputs, " COLOR_GREEN "%d" COLOR_RESET " outputs\n", num_inputs, num_outputs);
     int midi_input_idx = 0;
     for (int i = 0; i < num_inputs; ++i) {
         const char *name = midi_get_input_name(i);
@@ -1430,7 +1431,7 @@ int main(int argc, char **argv) {
     }
     for (int i = 0; i < num_inputs; ++i) {
         const char *name = midi_get_input_name(i);
-        printf("input %d: %c%s\n", i, (i == midi_input_idx) ? '*' : ' ', name);
+        printf("input %d: %c" COLOR_YELLOW "%s" COLOR_RESET "\n", i, (i == midi_input_idx) ? '*' : ' ', name);
     }
     // for (int i = 0; i < num_outputs; ++i) {
     //     printf("output %d: %s\n", i, midi_get_output_name(i));

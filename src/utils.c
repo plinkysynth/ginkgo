@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdatomic.h>
 #include "3rdparty/stb_ds.h"
 #include "utils.h"
 

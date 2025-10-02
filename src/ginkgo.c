@@ -2,7 +2,6 @@
 // clang -std=c11 -O2 gpu.c -o gpu -I$(brew --prefix glfw)/include -L$(brew --prefix glfw)/lib -lglfw -framework OpenGL -framework
 // Cocoa -framework IOKit -framework CoreVideo
 #define STB_IMAGE_IMPLEMENTATION
-#define STB_DS_IMPLEMENTATION
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
 #define MINIAUDIO_IMPLEMENTATION
@@ -810,7 +809,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     float *new_closest_slider[16] = {};
     if (G) {
         for (int slideridx = 0; slideridx < 16; ++slideridx) {
-            for (int i = 0; i < G->sliders[slideridx].n; i += 2) {
+            for (int i = 0; i < G->sliders_hwm[slideridx]; i += 2) {
                 float *value_line = G->sliders[slideridx].data + i;
                 float value = value_line[0];
                 int line = (int)value_line[1];
@@ -1399,14 +1398,14 @@ void on_midi_input(uint8_t data[3], void *user) {
 }
 
 int main(int argc, char **argv) {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    init_sampler();
-    return 0;
-    void test_minipat(void);
-    test_minipat();
-    // return 0;
     printf("ginkgo - " __DATE__ " " __TIME__ "\n");
 
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    init_sampler();
+    //void test_minipat(void);
+    //test_minipat();
+    // return 0;
+    
     int num_inputs = midi_get_num_inputs();
     int num_outputs = midi_get_num_outputs();
     printf("midi: %d inputs, %d outputs\n", num_inputs, num_outputs);
@@ -1598,6 +1597,11 @@ int main(int argc, char **argv) {
             try_to_compile_audio(audio_tab.fname, &audio_tab.last_compile_log);
             parse_error_log(&audio_tab);
         }
+
+        // pump wave load requests
+        Sound *bd = get_sound_for_main_thread("bd");
+        get_wave(bd, 0);
+        pump_wave_load_requests_main_thread();
     }
     ma_device_stop(&dev);
     ma_device_uninit(&dev);

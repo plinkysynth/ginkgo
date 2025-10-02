@@ -5,6 +5,20 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
+
+// a tiny bit of stb_ds so we can call arrlen at least inline :)
+typedef struct
+{
+  size_t      length;
+  size_t      capacity;
+  void      * hash_table;
+  ptrdiff_t   temp;
+} _stbds_array_header;
+
+#define _stbds_header(t)  ((_stbds_array_header *) (t) - 1)
+#define _stbds_arrlen(a)        ((a) ? (ptrdiff_t) _stbds_header(a)->length : 0)
+
 
 #define STRINGIFY(x) #x
 
@@ -30,6 +44,39 @@ typedef int I;
 typedef uint32_t U;
 
 #include "notes.h"
+
+typedef struct wave_t {
+    const char *url; // interned url
+    float *frames;   // malloc'd
+    uint64_t num_frames;
+    float sample_rate;
+    uint32_t channels;
+    int midi_note;
+} wave_t;
+
+typedef struct int_pair_t {
+    int k, v;
+} int_pair_t;
+
+static inline int compare_int_pair(int_pair_t a, int_pair_t b) { return (a.k != b.k) ? a.k - b.k : a.v - b.v; }
+
+static inline int lower_bound_int_pair(int_pair_t *arr, int n, int_pair_t key) {
+    int lo = 0, hi = n;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (compare_int_pair(arr[mid], key) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+typedef struct Sound {
+    const char *name;       // interned name.
+    wave_t *waves;          // stb_ds array
+    int_pair_t *midi_notes; // sorted stb_ds array of pairs <midinote, waveindex>
+} Sound;
 
 typedef struct bump_array_t {
     int i, n; // n is the high watermark, the data array points at data4 if possible, or allocates in blocks of power of 2
@@ -72,6 +119,21 @@ typedef struct bq_t {
     float b0, b1, b2, a1, a2;
 } bq_t;
 
+typedef struct sound_pair_t {
+    char *key;
+    Sound *value;
+} sound_pair_t;
+
+typedef struct sound_request_key_t {
+    Sound *sound;
+    int index;
+} sound_request_key_t;
+
+typedef struct sound_request_t {
+    sound_request_key_t key;
+    int value;
+} sound_request_t;
+
 #define STATE_BASIC_FIELDS                                                                                                         \
     int _ver;                                                                                                                      \
     int _size;                                                                                                                     \
@@ -84,15 +146,18 @@ typedef struct bq_t {
     int old_mb;                                                                                                                    \
     double iTime;                                                                                                                  \
     uint32_t sampleidx;                                                                                                            \
+    atomic_flag load_request_cs;                                                                                                   \
+    sound_request_t *load_requests;                                                                                                   \
     bq_t reverb_lpf, reverb_hpf;                                                                                                   \
     bump_array_t sliders[16];                                                                                                      \
+    int sliders_hwm[16];                                                                                                           \
     bump_array_t audio_bump;
 
 typedef struct basic_state_t {
     STATE_BASIC_FIELDS
 } basic_state_t;
 
-basic_state_t *_BG;
+extern basic_state_t *_BG;
 #define G _BG
 
 #define PI 3.14159265358979323846f
@@ -335,10 +400,18 @@ static inline stereo stbq(stereo s, bq_t coeffs) {
     return (stereo){bqfilter(state, s.l, coeffs), bqfilter(state + 2, s.r, coeffs)};
 }
 
-static void init_basic_state(void) {
-    // init the darkening / downsampling filter for the reverb.
-    G->reverb_lpf = bqlpf(0.0625, QBUTTER);
-    G->reverb_hpf = bqhpf(0.125, QBUTTER);
+int test_lib_func(void);
+void init_basic_state(void);
+stereo reverb(stereo inp);
+const wave_t *request_wave_load(Sound *sound, int index);
+
+static inline const wave_t *get_wave(Sound *sound, int index) {
+    if (!sound) return NULL;
+    int n = _stbds_arrlen(sound->waves);
+    if (!n) return NULL;
+    index %= n;
+    wave_t *w = &sound->waves[index];
+    return w->frames ? w :request_wave_load(sound, index);
 }
 
 static inline float sample_linear(float pos, const float *smpl) {
@@ -363,7 +436,7 @@ static inline float sample_catmull_rom(float pos, const float *smpl) {
     return catmull_rom(smpl[i + 0], smpl[i + 1], smpl[i + 2], smpl[i + 3], pos - (float)i);
 }
 
-extern uint32_t rnd_seed;
+static uint32_t rnd_seed;
 
 static inline float rnd01(void) {
     rnd_seed = pcg_next(rnd_seed);
@@ -510,82 +583,7 @@ static inline float lpf4(float x, float f) {
 
 // }
 
-static float reverbbuf[65536];
-static int reverb_pos = 0;
-#define AP(len)                                                                                                                    \
-    {                                                                                                                              \
-        int j = (i + len) & 65535;                                                                                                 \
-        float d = reverbbuf[j];                                                                                                    \
-        reverbbuf[i] = acc -= d * 0.5;                                                                                             \
-        acc = (acc * 0.5) + d;                                                                                                     \
-        i = j;                                                                                                                     \
-    }
-#define DELAY(len)                                                                                                                 \
-    {                                                                                                                              \
-        reverbbuf[i] = acc;                                                                                                        \
-        int j = (i + len) & 65535;                                                                                                 \
-        acc = reverbbuf[j];                                                                                                        \
-        i = j;                                                                                                                     \
-    }
-
-static inline stereo reverb_internal(stereo inp) { // runs at 4x downsampled rate
-    float acc = inp.l + inp.r;
-    const float decay = 0.95f;
-    static float top, right_fb;
-    float lout, rout;
-    int i = reverb_pos;
-    reverb_pos = (reverb_pos - 1) & 65535;
-    AP(142);
-    AP(107);
-    AP(379);
-    AP(277);
-    top = acc;
-    // left branch
-    acc = top + right_fb * decay;
-    AP(672); // wobble
-    lout = acc;
-    DELAY(4453);
-    acc *= decay;
-    AP(1800);
-    DELAY(3720);
-    // right branch
-    acc = top + acc * decay;
-    AP(908); // wobble
-    rout = acc;
-    DELAY(4217);
-    acc *= decay;
-    AP(2656);
-    DELAY(3162); // +1
-    right_fb = acc;
-
-    return STEREO(lout, rout);
-}
-
-static inline stereo reverb(stereo inp) {
-
-    float *state = ba_get(&G->audio_bump, 8 + 8); // 8 for filters, 8 for 4x stereo output samples
-    stereo *state2 = (stereo *)(state + 8);
-    ////////////////////////// 4x DOWNSAMPLE
-    inp = (stereo){
-        bqfilter(state, inp.l, G->reverb_lpf),
-        bqfilter(state + 2, inp.r, G->reverb_lpf),
-    };
-    int outslot = (G->sampleidx >> 2) & 3;
-    if ((G->sampleidx & 3) == 0) {
-        inp = (stereo){
-            bqfilter(state + 4, inp.l, G->reverb_hpf),
-            bqfilter(state + 6, inp.r, G->reverb_hpf),
-        };
-        state2[outslot] = reverb_internal(inp);
-    }
-    ////////////////////////// 4x CATMULL ROM UPSAMPLE
-    int t0 = (outslot - 3) & 3, t1 = (outslot - 2) & 3, t2 = (outslot - 1) & 3, t3 = outslot;
-    float f = ((G->sampleidx & 3) + 1) * 0.25f;
-    float lout = catmull_rom(state2[t0].l, state2[t1].l, state2[t2].l, state2[t3].l, f);
-    float rout = catmull_rom(state2[t0].r, state2[t1].r, state2[t2].r, state2[t3].r, f);
-    return (stereo){lout, rout};
-}
-
+/*
 static inline void lorenz_euler(float s[3], float dt, float sigma, float beta, float rho) {
     if (dt > 1e-3f)
         dt = 1e-3f;
@@ -607,7 +605,7 @@ static inline float *lorenz(float dt) {
     }
     lorenz_euler(s, dt, 10.f, 2.66666666666666666666f, 28.f);
     return s;
-}
+}*/
 
 // midi note 69 is A4 (440hz)
 // what note is 48khz?
@@ -661,6 +659,8 @@ static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
         }                                                                                                                          \
     }
 
+void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_size, int version, void (*init_state)(void));
+
 #ifdef LIVECODE
 typedef struct state state;
 stereo do_sample(stereo inp);
@@ -668,35 +668,23 @@ void init_state(void);
 size_t get_state_size(void);
 int get_state_version(void);
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
-    size_t state_size = get_state_size();
-    int version = get_state_version();
-    if (!_G || _G->_ver != version || _G->_size != state_size) {
-        /* free(G); - safer to just let it leak :)  virtual memory ftw  */
-        _G = calloc(1, state_size);
-        _G->_ver = version;
-        _G->_size = state_size;
-    }
-    G = _G;
-    G->reloaded = reloaded;
-    if (reloaded) {
-        init_basic_state();
-        init_state();
-    }
-    if (!G->audio_bump.data) {
-        ba_grow(&G->audio_bump, 65536);
-    }
+    G = dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
     for (int i = 0; i < frames; i++) {
+        // reset the per-sample bump allocators
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
             G->sliders[slider_idx].i = 0;
         G->audio_bump.i = 0;
         audio[i] = do_sample(audio[i]);
         G->sampleidx++;
-        for (int slider_idx = 0; slider_idx < 16; slider_idx++)
-            G->sliders[slider_idx].n = G->sliders[slider_idx].i;
         G->reloaded = 0;
     }
+    // remember the high watermark for the sliders
+    for (int slider_idx = 0; slider_idx < 16; slider_idx++)
+        G->sliders_hwm[slider_idx] = G->sliders[slider_idx].i;
+
     return G;
 }
+
 #endif
 
 #define STATE_VERSION(version, ...)                                                                                                \
@@ -710,5 +698,4 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 #ifdef LIVECODE
 #undef G
 #define G ((state *)_BG)
-uint32_t rnd_seed = 1;
 #endif

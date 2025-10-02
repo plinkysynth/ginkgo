@@ -9,7 +9,7 @@ static void sanitize_url(const char *url, char *out, size_t cap) {
     size_t i = 0;
     for (; url[i] && i + 1 < cap; ++i) {
         out[i] =
-            (url[i] == '/' || url[i] == ':' || url[i] == '.' || url[i] == '?' || url[i] == '#' || url[i] == '&' || url[i] == '*')
+            ((url[i] == '/' && url[i+1]=='/') || url[i] == ':' || url[i] == '<' || url[i] == '>' || url[i] == '?' || url[i] == '#' || url[i] == '&' || url[i] == '*' || url[i]=='|')
                 ? '_'
                 : url[i];
     }
@@ -87,8 +87,15 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
             return out_path;
         }
     }
-
-    mkdir(cache_root, 0755); // best-effort
+    char *p = out_path;
+    while (*p == '/') p++;
+    for (; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            mkdir(out_path, 0755);
+            *p = '/';
+        }
+    }
 
     char etag_path[1200], tmp_path[1200];
     snprintf(etag_path, sizeof etag_path, "%s/%s.etag", cache_root, name);

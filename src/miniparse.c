@@ -11,6 +11,7 @@
 #include "3rdparty/stb_ds.h"
 #include "hash_literal.h"
 #include "miniparse.h"
+#include "ansicols.h"
 
 enum NodeType {
 #include "node_types.h"
@@ -22,11 +23,8 @@ static const char *node_type_names[N_LAST] = {
 #include "node_types.h"     
 };
 
-struct { // global map of all sounds. key is interned name, value likewise allocated once ever. thus we can just store Sound* and/or
-         // compare name ptrs.
-    char *key;
-    Sound *value;
-} *g_sounds;
+sound_pair_t*g_sounds; // global map of all sounds. key is interned name, value likewise allocated once ever. thus we can just store Sound* and/or
+// compare name ptrs.
 
 // kinda base64, but we depart to make some punctiation more 'useful'.
 // . and _ look low, so they are 1 and 0
@@ -58,7 +56,14 @@ static inline int is_rest(const Sound *sound) {
     return sound->name[1] == 0 && (sound->name[0] == '-' || sound->name[0] == '_' || sound->name[0] == '~');
 }
 
-Sound *get_sound(const char *name) { // ...by name.
+int get_num_sounds_for_main_thread(void) {
+    // for (int i = 0; i < stbds_shlen(g_sounds); ++i) {
+    //     printf("%s\n", g_sounds[i].value->name);
+    // }
+    return stbds_shlen(g_sounds);
+}
+
+Sound *get_sound_for_main_thread(const char *name) { // ...by name.
     Sound *sound = shget(g_sounds, name);
     if (!sound) {
         name = strdup(name); // intern the name!
@@ -69,24 +74,18 @@ Sound *get_sound(const char *name) { // ...by name.
     return sound;
 }
 
+Sound *add_alias_for_main_thread(const char *alias, const char *name) {
+    Sound *point_at_sound = get_sound_for_main_thread(name);
+    Sound *alias_sound = shget(g_sounds, alias);
+    if (!alias_sound) {
+        alias = strdup(alias); // intern the name!
+        shput(g_sounds, alias, point_at_sound);
+        alias_sound = point_at_sound;
+    }
+    return alias_sound;
+}
 
-// ansi printing colors
-#define COLOR_RED "\033[31m"
-#define COLOR_GREEN "\033[32m"
-#define COLOR_YELLOW "\033[33m"
-#define COLOR_BLUE "\033[34m"
-#define COLOR_MAGENTA "\033[35m"
-#define COLOR_CYAN "\033[36m"
-#define COLOR_WHITE "\033[37m"
-#define COLOR_RESET "\033[0m"
-#define COLOR_BOLD "\033[1m"
-#define COLOR_BRIGHT_RED "\033[91m"
-#define COLOR_BRIGHT_GREEN "\033[92m"
-#define COLOR_BRIGHT_YELLOW "\033[93m"
-#define COLOR_BRIGHT_BLUE "\033[94m"
-#define COLOR_BRIGHT_MAGENTA "\033[95m"
-#define COLOR_BRIGHT_CYAN "\033[96m"
-#define COLOR_BRIGHT_WHITE "\033[97m"
+
 
 const char *print_midinote(int note) {
     static char buf[4];
@@ -345,7 +344,7 @@ static int parse_leaf(Pattern *p) {
             char name[partend - partstart + 1];
             memcpy(name, p->s + partstart, partend - partstart);
             name[partend - partstart] = '\0';
-            v->sound = get_sound(name);
+            v->sound = get_sound_for_main_thread(name);
         }
         partstart = partend + 1;
     }

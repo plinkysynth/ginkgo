@@ -37,6 +37,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     } else {
         memcpy(audio, i, frames * sizeof(stereo));
     }
+    // this causes the dll's copy of G to be copied to the main program's copy of G.
     if (dsp)
         G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp);
     // if (!wav_recording) {
@@ -119,8 +120,8 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    #define CLANG_OPTIONS "-x c -g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -D LIVECODE -I. -Isrc/"
-    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so - 2>&1", fname, version);
+    #define CLANG_OPTIONS "-g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -D LIVECODE -I. -Isrc/ build/ginkgo_lib.o"
+    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so -x c - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
     if (!fp) {

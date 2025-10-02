@@ -1,20 +1,9 @@
 #pragma once
 
-/* TODO - synth stuff etc :)
-typedef struct Wave {
-    const char *filename;
-    short *wavedata;
-    int length;
-    int sample_rate;
-    int note;
-} Wave;
-*/
-typedef struct Sound {
-    const char *name; // interned name.
-    // Wave *waves;      // stb_ds array, indexed by idx or searched by nearest note
-} Sound;
-
-Sound *get_sound(const char *name); // ...by name.
+Sound *get_sound_for_main_thread(const char *name); // ...by name.
+int get_num_sounds_for_main_thread(void);
+Sound *add_alias_for_main_thread(const char *short_alias, const char *long_name);
+int parse_midinote(const char *s, const char *e, int allow_p_prefix); 
 
 typedef struct Value { // the value associated with a node in the parse tree. nb sound idx like bd:3 is assigned later at hap-time.
     Sound *sound;

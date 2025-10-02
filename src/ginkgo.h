@@ -8,8 +8,6 @@
 #include <stdatomic.h>
 #include "3rdparty/stb_ds.h"
 
-
-
 #define STRINGIFY(x) #x
 
 #define OVERSAMPLE 2
@@ -105,10 +103,6 @@ static inline float *ba_get(bump_array_t *sa, int count) {
     return &sa->data[i];
 }
 
-typedef struct bq_t {
-    float b0, b1, b2, a1, a2;
-} bq_t;
-
 typedef struct sound_pair_t {
     char *key;
     Sound *value;
@@ -137,9 +131,8 @@ typedef struct sound_request_t {
     double iTime;                                                                                                                  \
     uint32_t sampleidx;                                                                                                            \
     atomic_flag load_request_cs;                                                                                                   \
-    sound_pair_t*sounds;  \
-    sound_request_t *load_requests;                                                                                                   \
-    bq_t reverb_lpf, reverb_hpf;                                                                                                   \
+    sound_pair_t *sounds;                                                                                                          \
+    sound_request_t *load_requests;                                                                                                \
     bump_array_t sliders[16];                                                                                                      \
     int sliders_hwm[16];                                                                                                           \
     bump_array_t audio_bump;
@@ -154,6 +147,7 @@ extern basic_state_t *_BG;
 #define PI 3.14159265358979323846f
 #define TAU 6.28318530717958647692f
 #define HALF_PI 1.57079632679489661923f
+#define QUARTER_PI 0.78539816339744830962f
 
 #define countof(array) (sizeof(array) / sizeof(array[0]))
 
@@ -297,99 +291,69 @@ static inline stereo stereo_medium(stereo s) { return (stereo){.l = tanhf(s.l), 
 
 static inline stereo stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
-static inline bq_t bqlpf(float fc, float q) {
-    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
-    float alpha = s / (2.0f * q);
-    float k = 1.0f / (1.0f + alpha);
-    return (bq_t){.b0 = 0.5f * (1.0f - c) * k,
-                  .b1 = (1.0f - c) * k, // was wrong in your snippet
-                  .b2 = 0.5f * (1.0f - c) * k,
-                  .a1 = -2.0f * c * k,
-                  .a2 = (1.0f - alpha) * k};
+typedef struct svf_state_t {
+    float ic1eq, ic2eq;
+} svf_state_t;
+
+typedef struct svf_output_t {
+    float lp, bp, hp;
+} svf_output_t;
+
+// g = tanf(M_PI * fc / fs), R = 1/Q
+static inline svf_output_t svf_process(svf_state_t *f, float x, float g, float R) {
+    const float a1 = 1.f / (1.f + g * (g + R)); // precompute?
+    const float v3 = x - f->ic2eq;
+    const float v1 = a1 * (f->ic1eq + g * v3);
+    const float v2 = f->ic2eq + g * v1;
+    // state updates (trapezoidal integrators)
+    //v1 = soft(v1); v2=soft(v2); // nonlinearity anyone?
+    f->ic1eq = 2.f * v1 - f->ic1eq;
+    f->ic2eq = 2.f * v2 - f->ic2eq;
+    return (svf_output_t){.lp = v2, .bp = v1, .hp = v3 - R * v1 - v2};
 }
 
-static inline bq_t bqhpf(float fc, float q) {
-    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
-    float alpha = s / (2.0f * q);
-    float k = 1.0f / (1.0f + alpha);
-    return (bq_t){.b0 = 0.5f * (1.0f + c) * k,
-                  .b1 = -(1.0f + c) * k,
-                  .b2 = 0.5f * (1.0f + c) * k,
-                  .a1 = -2.0f * c * k,
-                  .a2 = (1.0f - alpha) * k};
+// approximation to tanh for 0-0.25 nyquist.
+static inline float svf_g_approx(float fc) { // fc is 0-1 by convention here. (1='nyquist' but we oversample 2x)
+    // return tanf(QUARTER_PI * fc / FS);
+    //  https://www.desmos.com/calculator/qoy3dgydch
+    static const float A = 0.7715117872827156f;
+    static const float B = 0.22026338589733901;
+    return fc * (A + B * fc * fc); // tan fit
 }
 
-static inline bq_t bqpeaking(float fc, float q, float gain_db) {
-    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
-    float alpha = s / (2.0f * q);
-    float A = powf(10.0f, gain_db / 40.0f); // linear gain for peaking EQ
-    float a0 = 1.0f + alpha / A;
-    float k = 1.0f / a0;
-    return (bq_t){.b0 = (1.0f + alpha * A) * k,
-                  .b1 = -2.0f * c * k,
-                  .b2 = (1.0f - alpha * A) * k,
-                  .a1 = -2.0f * c * k,
-                  .a2 = (1.0f - alpha / A) * k};
+static inline float svf_R(float q) { return 1.f / q; }
+
+// these functions use a hand tuned curve for g and R that is 'nice to use', not exactly mapped to freq (but its not far off)
+static inline float svf_g_nice(float fc) { return fc; }
+static inline float svf_R_nice(float q) { return SQRT2 * (1.02f - minf(q, 1.f)); }
+
+static inline float lpf(float x, float fc, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).lp;
 }
 
-static inline bq_t bq_bandpass(float fc, float q) {
-    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
-    float alpha = s / (2.0f * q), k = 1.0f / (1.0f + alpha);
-    return (bq_t){.b0 = alpha * k, .b1 = 0.0f, .b2 = -alpha * k, .a1 = -2.0f * c * k, .a2 = (1.0f - alpha) * k};
+static inline float hpf(float x, float fc, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).hp;
 }
 
-static inline bq_t bq_notch(float fc, float q) {
-    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
-    float alpha = s / (2.0f * q), k = 1.0f / (1.0f + alpha);
-    return (bq_t){.b0 = 1.0f * k, .b1 = -2.0f * c * k, .b2 = 1.0f * k, .a1 = -2.0f * c * k, .a2 = (1.0f - alpha) * k};
+static inline float bpf(float x, float fc, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).bp;
 }
 
-static inline bq_t bq_lowshelf(float fc, float slope, float gain_db) {
-    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
-    float A = powf(10.0f, gain_db / 40.0f);
-    float alpha = 0.5f * s * sqrtf((A + 1.0f / A) * (1.0f / slope - 1.0f) + 2.0f);
-    float t = 2.0f * sqrtf(A) * alpha;
-
-    float a0 = (A + 1.0f) + (A - 1.0f) * c + t;
-    float k = 1.0f / a0;
-    return (bq_t){.b0 = A * ((A + 1.0f) - (A - 1.0f) * c + t) * k,
-                  .b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * c) * k,
-                  .b2 = A * ((A + 1.0f) - (A - 1.0f) * c - t) * k,
-                  .a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * c) * k,
-                  .a2 = ((A + 1.0f) + (A - 1.0f) * c - t) * k};
+static inline float peakf(float x, float gain, float fc, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
+    return o.lp + o.hp + gain*o.bp;
 }
 
-static inline bq_t bq_highshelf(float fc, float slope, float gain_db) {
-    float s = sinf(fc * HALF_PI), c = cosf(fc * HALF_PI);
-    float A = powf(10.0f, gain_db / 40.0f);
-    float alpha = 0.5f * s * sqrtf((A + 1.0f / A) * (1.0f / slope - 1.0f) + 2.0f);
-    float t = 2.0f * sqrtf(A) * alpha;
-
-    float a0 = (A + 1.0f) - (A - 1.0f) * c + t;
-    float k = 1.0f / a0;
-    return (bq_t){.b0 = A * ((A + 1.0f) + (A - 1.0f) * c + t) * k,
-                  .b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * c) * k,
-                  .b2 = A * ((A + 1.0f) + (A - 1.0f) * c - t) * k,
-                  .a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * c) * k,
-                  .a2 = ((A + 1.0f) - (A - 1.0f) * c - t) * k};
+static inline float notchf(float x, float fc, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
+    return o.lp + o.hp;
 }
 
-static inline float bqfilter(float state[2], float x, bq_t coeffs) {
-    float y = coeffs.b0 * x + state[0];
-    state[0] = coeffs.b1 * x - coeffs.a1 * y + state[1];
-    state[1] = coeffs.b2 * x - coeffs.a2 * y;
-    return y;
-}
-
-static inline float bq(float x, bq_t coeffs) {
-    float *state = ba_get(&G->audio_bump, 2);
-    return bqfilter(state, x, coeffs);
-}
-
-static inline stereo stbq(stereo s, bq_t coeffs) {
-    float *state = ba_get(&G->audio_bump, 4);
-    return (stereo){bqfilter(state, s.l, coeffs), bqfilter(state + 2, s.r, coeffs)};
-}
 
 int test_lib_func(void);
 void init_basic_state(void);
@@ -398,35 +362,32 @@ wave_t *request_wave_load(Sound *sound, int index);
 
 // for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
 // however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
-static inline Sound *get_sound(const char *name) {
-    return shget(G->sounds, name);
-}
+static inline Sound *get_sound(const char *name) { return shget(G->sounds, name); }
 
-
-static inline int num_sounds(void) {
-    return stbds_hmlen(G->sounds);
-}
+static inline int num_sounds(void) { return stbds_hmlen(G->sounds); }
 
 static inline wave_t *get_wave(Sound *sound, int index) {
-    if (!sound) return NULL;
+    if (!sound)
+        return NULL;
     int n = stbds_arrlen(sound->waves);
-    if (!n) return NULL;
+    if (!n)
+        return NULL;
     index %= n;
     wave_t *w = &sound->waves[index];
-    return w->frames ? w :request_wave_load(sound, index);
+    return w->frames ? w : request_wave_load(sound, index);
 }
 
 static inline wave_t *get_wave_by_name(char *name) {
-    int index=0;
-    const char *colon=strchr(name, ':');
+    int index = 0;
+    const char *colon = strchr(name, ':');
     if (!colon)
         return get_wave(get_sound(name), index);
-    index = atoi(colon+1);
-    char name2[colon-name+1];
-    memcpy(name2, name, colon-name);
-    name2[colon-name] = '\0';
+    index = atoi(colon + 1);
+    char name2[colon - name + 1];
+    memcpy(name2, name, colon - name);
+    name2[colon - name] = '\0';
     return get_wave(get_sound(name2), index);
-} 
+}
 
 static inline float sample_linear(float pos, const float *smpl) {
     int i = (int)floorf(pos);

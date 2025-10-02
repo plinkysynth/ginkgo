@@ -22,11 +22,9 @@ kicklinn
 #endif
 
 
-STATE_VERSION(1, bq_t lpf, hpf; )
+STATE_VERSION(1,  )
 
 void init_state(void) {
-    G->lpf = bqlpf(/*=====*/0.25, QBUTTER);
-    G->hpf = bqhpf(/*=======*/0.5, QBUTTER);
 }
 
 stereo do_sample(stereo inp) {
@@ -36,15 +34,19 @@ stereo do_sample(stereo inp) {
     chord1 = chord1 * vol(S0) + 
         chord2 * vol(S1) +
         chord3 * vol(S0);
-   F out = lpf4(chord1, 0.3);
+   float cutoff = vol(S4);
+   float reso = vol(S5);
+   F out = lpf(chord1, cutoff, reso);
+   out=lpf(out, cutoff, reso);
+
     //out = squareo(P_E4) * 0.5;
     
-    float t= exp2f(-0.0002f * (G->sampleidx&65535));
-    out += sino(P_A5) * t;
+    // float t= exp2f(-0.0002f * (G->sampleidx&65535));
+    // out += sino(P_A5) * t;
     
-    wave_t *wave=get_wave_by_name("harp:0");
-    out=0.f;
-    if (wave && wave->frames && wave->num_frames) out=wave->frames[(G->sampleidx) % (wave->num_frames/20)] * 10.;
+    // wave_t *wave=get_wave_by_name("harp:0");
+    // out=0.f;
+    // if (wave && wave->frames && wave->num_frames) out=wave->frames[(G->sampleidx) % (wave->num_frames/20)] * 10.;
     
    	stereo dry=STEREO(out,out);
     return dry;

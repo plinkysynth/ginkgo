@@ -9,9 +9,7 @@ basic_state_t dummy_state;
 basic_state_t *_BG = &dummy_state;
 
 void init_basic_state(void) {
-    // init the darkening / downsampling filter for the reverb.
-    G->reverb_lpf = bqlpf(0.0625, QBUTTER);
-    G->reverb_hpf = bqhpf(0.125, QBUTTER);
+    
 }
 
 static float reverbbuf[65536];
@@ -70,16 +68,16 @@ stereo reverb(stereo inp) {
     float *state = ba_get(&G->audio_bump, 8 + 8); // 8 for filters, 8 for 4x stereo output samples
     stereo *state2 = (stereo *)(state + 8);
     ////////////////////////// 4x DOWNSAMPLE
-    inp = (stereo){
-        bqfilter(state, inp.l, G->reverb_lpf),
-        bqfilter(state + 2, inp.r, G->reverb_lpf),
-    };
+    // inp = (stereo){
+    //     bqfilter(state, inp.l, G->reverb_lpf),
+    //     bqfilter(state + 2, inp.r, G->reverb_lpf),
+    // };
     int outslot = (G->sampleidx >> 2) & 3;
     if ((G->sampleidx & 3) == 0) {
-        inp = (stereo){
-            bqfilter(state + 4, inp.l, G->reverb_hpf),
-            bqfilter(state + 6, inp.r, G->reverb_hpf),
-        };
+        // inp = (stereo){
+        //     bqfilter(state + 4, inp.l, G->reverb_hpf),
+        //     bqfilter(state + 6, inp.r, G->reverb_hpf),
+        // };
         state2[outslot] = reverb_internal(inp);
     }
     ////////////////////////// 4x CATMULL ROM UPSAMPLE

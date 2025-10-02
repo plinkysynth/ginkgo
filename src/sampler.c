@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+#include <ctype.h>
+#include <string.h>
 #include "3rdparty/stb_ds.h"
 #include "3rdparty/sj.h"
 #include "3rdparty/miniaudio.h"
@@ -15,18 +17,21 @@ const char *fetch_to_cache(const char *url, int prefer_offline); // from http_fe
 
 const char *trimurl(const char *url) {
     // shorten url for printing
-    if (strncmp(url, "https://", 8)==0) url += 8;
-    if (strncmp(url, "http://", 7)==0) url += 7;
-    if (strncmp(url, "raw.githubusercontent.com/", 26)==0) url += 26;
+    if (strncmp(url, "https://", 8) == 0)
+        url += 8;
+    if (strncmp(url, "http://", 7) == 0)
+        url += 7;
+    if (strncmp(url, "raw.githubusercontent.com/", 26) == 0)
+        url += 26;
     return url;
 }
 
 bool decode_file_to_f32(const char *path, wave_t *out) {
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 48000); // keep source ch/sr
-    float *pcm=NULL;
-    uint64_t num_frames=0;
-    ma_result rc = ma_decode_file(path, &cfg, &num_frames, (void**) &pcm);
-    if (rc!=MA_SUCCESS || num_frames==0) {
+    float *pcm = NULL;
+    uint64_t num_frames = 0;
+    ma_result rc = ma_decode_file(path, &cfg, &num_frames, (void **)&pcm);
+    if (rc != MA_SUCCESS || num_frames == 0) {
         free(pcm);
         return false;
     }
@@ -35,20 +40,22 @@ bool decode_file_to_f32(const char *path, wave_t *out) {
     out->channels = cfg.channels;
     out->frames = pcm;
     const char *trimmed_path = strrchr(path, '/');
-    printf("read %lld samples @ %dkhz from " COLOR_YELLOW "%s" COLOR_RESET "\n", out->num_frames,(int)out->sample_rate/1000, trimmed_path ? trimmed_path+1 : path);
+    printf("read %lld samples @ %dkhz from " COLOR_YELLOW "%s" COLOR_RESET "\n", out->num_frames, (int)out->sample_rate / 1000,
+           trimmed_path ? trimmed_path + 1 : path);
     return true;
 }
 
 static float _silence[16] = {};
 
 void load_wave_now(wave_t *wave) {
-    if (wave->frames) return ; // already loaded
+    if (wave->frames)
+        return; // already loaded
     const char *fname = fetch_to_cache(wave->url, 1);
     if (fname) {
         decode_file_to_f32(fname, wave);
     }
     if (!wave->frames) {
-        fprintf(stderr,"warning: wave %s failed to load. replacing with silence\n", wave->url);
+        fprintf(stderr, "warning: wave %s failed to load. replacing with silence\n", wave->url);
         wave->num_frames = 1;
         wave->sample_rate = 48000;
         wave->channels = 1;
@@ -60,8 +67,7 @@ bool sj_iter_array_or_object(sj_Reader *r, sj_Value obj, sj_Value *key, sj_Value
     if (obj.type == SJ_ARRAY) {
         *key = (sj_Value){};
         return sj_iter_array(r, obj, val);
-    }
-    else if (obj.type == SJ_OBJECT)
+    } else if (obj.type == SJ_OBJECT)
         return sj_iter_object(r, obj, key, val);
     else
         return false;
@@ -78,16 +84,46 @@ int parse_strudel_alias_json(const char *json_url) {
         if (soundval.type == SJ_STRING) {
             char *long_name = temp_cstring_from_span(soundkey.start, soundkey.end);
             char *short_name = temp_cstring_from_span(soundval.start, soundval.end);
-            //printf("alias %s -> %s\n", long_name, short_name);
+            // printf("alias %s -> %s\n", long_name, short_name);
             add_alias_init_only(short_name, long_name);
         } else {
-            fprintf(stderr, "alias json warning: unexpected object type: %.*s %d\n", (int)(soundkey.end - soundkey.start), soundkey.start, soundval.type);
+            fprintf(stderr, "alias json warning: unexpected object type: %.*s %d\n", (int)(soundkey.end - soundkey.start),
+                    soundkey.start, soundval.type);
         }
     }
-    printf(COLOR_YELLOW "%s" COLOR_RESET " added " COLOR_GREEN "%d" COLOR_RESET " new aliases\n", trimurl(json_url), num_sounds()-old_num_sounds);
+    printf(COLOR_YELLOW "%s" COLOR_RESET " added " COLOR_GREEN "%d" COLOR_RESET " new aliases\n", trimurl(json_url),
+           num_sounds() - old_num_sounds);
     stbds_arrfree(json);
     return 1;
 }
+
+static inline bool char_needs_escaping(char c) {
+    return !(isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~');
+}
+static inline int get_url_length_after_escaping(const char *s, const char *e) {
+    int len = e - s;
+    for (; s < e; s++)
+        if (char_needs_escaping(*s))
+            len += 2;
+    return len;
+}
+
+static inline const char *escape_url(char *dstbuf, const char *s, const char *e) {
+    const static char hex[16] = "0123456789abcdef";
+    char *d = dstbuf;
+    for (; s < e; s++) {
+        if (char_needs_escaping(*s)) {
+            *d++ = '%';
+            *d++ = hex[*s >> 4];
+            *d++ = hex[*s & 0xf];
+        } else {
+            *d++ = *s;
+        }
+    }
+    *d = 0; // null terminator
+    return dstbuf;
+}
+
 int parse_strudel_json(const char *json_url) {
     const char *json_fname = fetch_to_cache(json_url, 1);
     char *json = load_file(json_fname);
@@ -105,42 +141,46 @@ int parse_strudel_json(const char *json_url) {
             } else {
                 printf("json warning: unexpected object type: %.*s %d\n", (int)(soundkey.end - soundkey.start), soundval.start,
                        soundval.type);
-            }        
+            }
         } else {
             char *sound_name = temp_cstring_from_span(soundkey.start, soundkey.end);
-            Sound *sound =get_sound_init_only(sound_name);
-                sj_Value samplekey, sample;
+            Sound *sound = get_sound_init_only(sound_name);
+            sj_Value samplekey, sample;
             for (int i = 0; sj_iter_array_or_object(&r, soundval, &samplekey, &sample); i++) {
                 char *url = NULL;
-                int urllen = sample.end - sample.start + base.end - base.start + 1;
-                stbds_arrsetlen(url, urllen);
-                snprintf(url, urllen, "%.*s%.*s", (int)(base.end - base.start), base.start, (int)(sample.end - sample.start),
-                         sample.start);
-                
+                int numbase = base.end - base.start;
+                int numurl = get_url_length_after_escaping(sample.start, sample.end);
+                stbds_arrsetlen(url, numbase + numurl + 1);
+                memcpy(url, base.start, numbase);
+                escape_url(url + numbase, sample.start, sample.end);
                 int midinote = parse_midinote(samplekey.start, samplekey.end, false);
-                //printf("%.*s (%d) -> %s\n", (int)(samplekey.end-samplekey.start), samplekey.start, midinote, url);
+                // printf("%.*s (%d) -> %s\n", (int)(samplekey.end-samplekey.start), samplekey.start, midinote, url);
                 int j;
-                for (j = 0; j< stbds_arrlen(sound->waves); ++j) if (strcmp(sound->waves[j].url, url)==0) break;
-                if (j==stbds_arrlen(sound->waves)) {
+                for (j = 0; j < stbds_arrlen(sound->waves); ++j)
+                    if (strcmp(sound->waves[j].url, url) == 0)
+                        break;
+                if (j == stbds_arrlen(sound->waves)) {
                     wav_count++;
-                    wave_t wave={.url = url};
-                    bool eager=false;
-                    if (eager) 
-                        load_wave_now(&wave);                        
-                    stbds_arrput(sound->waves, wave); // TODO; if this causes sound->waves to grow, we may get an exception on the other thread...
-                    if (midinote>=0) {
+                    wave_t wave = {.url = url};
+                    bool eager = false;
+                    if (eager)
+                        load_wave_now(&wave);
+                    stbds_arrput(sound->waves,
+                                 wave); // TODO; if this causes sound->waves to grow, we may get an exception on the other thread...
+                    if (midinote >= 0) {
                         int_pair_t pair = {.k = midinote, .v = j};
                         int insert_at = lower_bound_int_pair(sound->midi_notes, stbds_arrlen(sound->midi_notes), pair);
                         stbds_arrins(sound->midi_notes, insert_at, pair);
                     }
-                } else skip_count++;
+                } else
+                    skip_count++;
             }
             // log the number of waves in this sound
             // printf("%s -> %d waves\n", sound_name, (int)stbds_arrlen(sound->waves));
         }
     }
-    printf(COLOR_YELLOW "%s" COLOR_RESET ", %d new sounds, added " COLOR_GREEN "%d" COLOR_RESET " waves\n", 
-        trimurl(json_url), num_sounds()-old_num_sounds, wav_count);
+    printf(COLOR_YELLOW "%s" COLOR_RESET ", %d new sounds, added " COLOR_GREEN "%d" COLOR_RESET " waves\n", trimurl(json_url),
+           num_sounds() - old_num_sounds, wav_count);
     stbds_arrfree(json);
     return 1;
 }
@@ -148,13 +188,14 @@ int parse_strudel_json(const char *json_url) {
 int init_sampler(void) {
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"
 #define TS "https://raw.githubusercontent.com/todepond/samples/main/"
-// bd seems to be in here...
+    // bd seems to be in here...
     parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/uzu-drumkit/refs/heads/main/strudel.json");
-    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json"); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
-    //parse_strudel_json(DS "Dirt-Samples/strudel.json");
+    parse_strudel_json(
+        "https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json"); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
+    // parse_strudel_json(DS "Dirt-Samples/strudel.json");
     parse_strudel_json(DS "tidal-drum-machines.json");
     parse_strudel_json(DS "piano.json");
-    //parse_strudel_json(DS "Dirt-Samples.json");
+    // parse_strudel_json(DS "Dirt-Samples.json");
     parse_strudel_json(DS "EmuSP12.json");
     // parse_strudel_json(DS "uzu-drumkit.json"); 404 not found?
     parse_strudel_json(DS "vcsl.json");
@@ -164,13 +205,15 @@ int init_sampler(void) {
 }
 
 void pump_wave_load_requests_main_thread(void) {
-    if (!G) return;
+    if (!G)
+        return;
     while (1) {
         spin_lock(&G->load_request_cs);
         int n = stbds_hmlen(G->load_requests);
         sound_request_t *req = n ? &G->load_requests[0] : NULL;
         spin_unlock(&G->load_request_cs);
-        if (!n) return;
+        if (!n)
+            return;
         if (req) {
             load_wave_now(&req->key.sound->waves[req->key.index]);
             spin_lock(&G->load_request_cs);

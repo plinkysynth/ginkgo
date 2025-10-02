@@ -5,7 +5,7 @@
 #include <unistd.h>
 // #define DEBUG_FETCH 1
 
-static void sanitize_url(const char *url, char *out, size_t cap) {
+static void sanitize_url_for_local_filesystem(const char *url, char *out, size_t cap) {
     size_t i = 0;
     for (; url[i] && i + 1 < cap; ++i) {
         out[i] =
@@ -75,7 +75,7 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
     size_t out_cap = sizeof out_path;
     char name[1024];
     const char *cache_root = "webcache";
-    sanitize_url(url, name, sizeof name);
+    sanitize_url_for_local_filesystem(url, name, sizeof name);
     
     snprintf(out_path, out_cap, "%s/%s", cache_root, name);
     if (prefer_offline) {
@@ -109,6 +109,7 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
     if (!curl) curl = curl_easy_init();
     if (!curl)
         return NULL;
+
     struct curl_slist *hdrs = NULL;
     if (prev_etag[0]) {
         char h[300];

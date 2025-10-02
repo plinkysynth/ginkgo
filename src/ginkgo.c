@@ -1223,7 +1223,7 @@ void load_file_into_editor(EditorState *E, bool init) {
         E->font_width = 12;
         E->font_height = 24;
     }
-    stbds_arrfreef(E->str);
+    stbds_arrfree(E->str);
     E->str = load_file(E->fname);
 }
 

@@ -46,11 +46,16 @@ uint32_t status_bar_color = 0;
 // --- colors 3 digits bg, 3 digits fg, 2 digits character.
 #define C_SELECTION 0xc48fff00u
 #define C_SELECTION_FIND_MODE 0x4c400000u
+
+#define C_AUTOCOMPLETE_SECONDARY 0x111c4800u
+#define C_AUTOCOMPLETE 0xc4800000u
+
 #define C_NUM 0x000cc700u
 #define C_DEF 0x000fff00u
 #define C_KW 0x0009ac00u
 #define C_TYPE 0x000a9c00u
 #define C_PREPROC 0x0009a900u
+#define C_SOUND 0x000e8400u
 #define C_STR 0x0008df00u
 #define C_COM 0x000fd800u
 #define C_PUN 0x000aaa00u
@@ -532,7 +537,7 @@ GLFWwindow *gl_init(int want_fullscreen) {
     if (!win)
         die("glfwCreateWindow failed");
     glfwGetWindowContentScale(win, &retina, NULL);
-    //printf("retina: %f\n", retina);
+    // printf("retina: %f\n", retina);
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
 
@@ -736,22 +741,11 @@ int close_bracket(tokenizer_t *t, int *count, char opc) {
     return C_ERR;
 }
 
-void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_line, const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    int length = vsnprintf(NULL, 0, fmt, args);
-    if (length > TMW * 16)
-        length = TMW * 16;
-    va_end(args);
-    va_start(args, fmt);
-    char buf[length + 1];
-    vsnprintf(buf, length + 1, fmt, args);
-    buf[length] = 0;
-    va_end(args);
+void print_span_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_line, const char *s, const char *e) {
     int leftx = x;
     if (y >= TMH)
         return;
-    for (const char *c = buf; *c; c++) {
+    for (const char *c = s; c < e; c++) {
         if (*c == '\n') {
             if (!multi_line)
                 break;
@@ -766,6 +760,19 @@ void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_lin
         x++;
     }
 }
+void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_line, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int length = vsnprintf(NULL, 0, fmt, args);
+    if (length > TMW * 16)
+        length = TMW * 16;
+    va_end(args);
+    va_start(args, fmt);
+    char buf[length + 1];
+    vsnprintf(buf, length + 1, fmt, args);
+    va_end(args);
+    print_span_to_screen(ptr, x, y, color, multi_line, buf, buf + length);
+}
 
 int vertical_bar(int y) { // y=0 (empty) to y=16 (full)
     if (y <= 0)
@@ -779,32 +786,67 @@ int horizontal_tick(int x) { // x=0 (4 pixel tick starting from left edge) to x=
     return 128 + 16 + clampi(x + 4, 0, 15);
 }
 
-static inline int ispathchar(char c) { return isalnum(c) || c=='_' || c=='-' || c=='.'; }
+static inline int ispathchar(char c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 
 const char *skip_path(const char *s, const char *e) {
-    while (s < e && isspace(*s)) ++s;
+    while (s < e && isspace(*s))
+        ++s;
     while (s < e) {
-        if (*s != '/') return s;
+        if (*s != '/')
+            return s;
         ++s; // skip /
-        while (s < e && (ispathchar(*s))) ++s;
+        while (s < e && (ispathchar(*s)))
+            ++s;
     }
     return s;
 }
 
 const char *find_line_end_or_comment(const char *s, const char *e) {
     while (s < e) {
-        if (*s == '\n') return s;
-        if (*s == '/' && s+1 < e && s[1] == '/') return s;
-        if (*s == '/' && s+1 < e && s[1] == '*') {
-            const char *c=s;
+        if (*s == '\n')
+            return s;
+        if (*s == '/' && s + 1 < e && s[1] == '/')
+            return s;
+        if (*s == '/' && s + 1 < e && s[1] == '*') {
+            const char *c = s;
             while (1) {
-                if (s+2 > e || *s=='\n') return c; // unterminated block comment
-                if (s[0]=='*' && s[1]=='/') { s+=2; break; } // terminated block comment - keep going
+                if (s + 2 > e || *s == '\n')
+                    return c; // unterminated block comment
+                if (s[0] == '*' && s[1] == '/') {
+                    s += 2;
+                    break;
+                } // terminated block comment - keep going
             }
         }
         ++s;
     }
     return e;
+}
+
+static inline Sound *get_sound_span(const char *s, const char *e) { return get_sound(temp_cstring_from_span(s, e)); }
+
+autocomplete_option_t autocomplete_score(const char *users, int userlen, int minmatch, const char *option) {
+    autocomplete_option_t rv={option};
+    // find the longest substring of option that starts at 'users'
+    for (const char *c = option; *c; c++) {
+        int i;
+        for (i = 0; i < userlen; i++)
+            if (users[i] != c[i])
+                break;
+        if (c == option && c[i] == 0) // complete match doesnt count as 'completion'...
+            continue;
+        int score = i;
+        if (score < minmatch)
+            continue;
+        if (c == option)
+            score += 20; // boost if the match is at the start
+        if (score > rv.value) {
+            rv.value = score;
+            rv.xoffset = c-option;
+            rv.matchlen = i;
+        }
+    }
+    return rv;
 }
 
 int code_color(EditorState *E, uint32_t *ptr) {
@@ -844,8 +886,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
     memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
     int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
-    int cursor_in_curve_start_idx = 0;
-    int cursor_in_curve_end_idx = 0;
+    int cursor_in_type = 0;
+    int cursor_token_start_idx = 0;
+    int cursor_token_end_idx = 0;
     int pattern_entry_idx = -1;
     int pattern_mode = 0; // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
     slider_spec_t slider_spec;
@@ -884,7 +927,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 col = C_COM;
                 j = scan_block_comment(t.str, i, t.n);
                 if (looks_like_slider_comment(t.str, t.n, i, &slider_spec)) {
-                    if (!(E->cursor_idx >= i && E->cursor_idx < j) || (G && G->mb!=0))
+                    if (!(E->cursor_idx >= i && E->cursor_idx < j) || (G && G->mb != 0))
                         token_is_slider = true;
                     col = C_SLIDER;
                 }
@@ -910,8 +953,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             col = C_STR;
             j = scan_string(t.str, i, t.n, '\'');
             if (pattern_mode && E->cursor_idx >= i && E->cursor_idx < j) {
-                cursor_in_curve_start_idx = i;
-                cursor_in_curve_end_idx = j;
+                cursor_in_type = 'c'; // curve
             } else {
                 token_is_curve = pattern_mode;
             }
@@ -941,18 +983,23 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     col = C_NOTE;
                 } else
                     switch (h) {
-                        CASE8("void", "float", "double", "int", "uint", "char", "short", "long")
-                            : CASE8("signed", "unsigned", "bool", "size_t", "ptrdiff_t", "ssize_t", "off_t", "time_t")
-                            : CASE8("int8_t", "uint8_t", "int16_t", "uint16_t", "uint32_t", "uint64_t", "float32_t", "float64_t")
-                            : CASE8("vec2", "vec3", "vec4", "mat2", "mat3", "mat4", "sampler2D", "sampler3D") : col = C_TYPE;
-                        break;
-                        CASE8("if", "else", "for", "while", "do", "switch", "case", "break")
-                            : CASE8("continue", "return", "uniform", "in", "out", "layout", "struct", "class")
-                            : CASE8("enum", "union", "typedef", "static", "extern", "inline", "volatile", "const")
-                            : CASE2("register", "restrict") : col = C_KW;
-                        break;
-                        CASE2("define", "pragma") : col = C_PREPROC;
-                        break;
+#define T(x)                                                                                                                       \
+    case HASH(#x):                                                                                                                 \
+        col = C_TYPE;                                                                                                              \
+        break;
+#define K(x)                                                                                                                       \
+    case HASH(#x):                                                                                                                 \
+        col = C_KW;                                                                                                                \
+        break;
+#define P(x)                                                                                                                       \
+    case HASH(#x):                                                                                                                 \
+        col = C_PREPROC;                                                                                                           \
+        break;
+#define M(x)                                                                                                                       \
+    case HASH(#x):                                                                                                                 \
+        col = C_KW;                                                                                                                \
+        break;
+#include "tokens.h"
                         CASE8("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7") : CASE2("S8", "S9") : {
                             int slideridx = (t.str[i + 1] - '0');
                             if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll)
@@ -981,7 +1028,18 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         wasinclude = true;
                         col = C_PREPROC;
                         break;
+                    default:
+                        if (pattern_mode) {
+                            Sound *s = get_sound_span(t.str + i, t.str + j);
+                            if (s)
+                                col = C_SOUND;
+                        }
+                        break;
                     }
+                if (i <= E->cursor_idx && j >= E->cursor_idx) {
+                    cursor_in_type = 'i';
+                }
+
             } else {
                 j = scan_number(t.str, i, t.n, t.prev_nonspace);
                 if (j > i)
@@ -1001,12 +1059,16 @@ int code_color(EditorState *E, uint32_t *ptr) {
             int numdata = j - i - 2;
             curve_data = alloca(4 * numdata);
             fill_curve_data_from_string(curve_data, t.str + i + 1, numdata);
-        } 
+        }
+        if (cursor_token_start_idx == cursor_token_end_idx && i <= E->cursor_idx && j >= E->cursor_idx) {
+            cursor_token_start_idx = i;
+            cursor_token_end_idx = j;
+        }
         int starti = i;
         int slider_val = 0;
-        if (token_is_slider && slider_spec.maxval != slider_spec.minval && j>i+2) {
+        if (token_is_slider && slider_spec.maxval != slider_spec.minval && j > i + 2) {
             float v = (slider_spec.curval - slider_spec.minval) / (slider_spec.maxval - slider_spec.minval);
-            slider_val = (int)(v * ((j-i-2) * 8.f - 4.f));
+            slider_val = (int)(v * ((j - i - 2) * 8.f - 4.f));
         }
         for (; i < j; ++i) {
             char ch = tok_get(&t, i);
@@ -1016,7 +1078,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 if (i > starti && i < j - 1) {
                     ch = vertical_bar((int)(curve_data[i - starti - 1] * 16.f + 0.5f));
                 }
-            } else if (token_is_slider && i>starti && i<j-1) {
+            } else if (token_is_slider && i > starti && i < j - 1) {
                 ch = horizontal_tick(slider_val - (i - starti - 1) * 8);
             }
             if (i >= se && i < ee)
@@ -1081,7 +1143,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     if (E->cursor_in_pattern_area) {
         // draw a popup below the cursor
         int basex = left;
-        int chartx = basex + 13;    
+        int chartx = basex + 13;
         int code_start_idx = xy_to_idx(E, 0, E->cursor_y);
         const char *line_start = t.str + code_start_idx;
         const char *line_end = find_line_end_or_comment(line_start, t.str + t.n);
@@ -1094,43 +1156,47 @@ int code_color(EditorState *E, uint32_t *ptr) {
         const char *codes = t.str + code_start_idx;
         const char *codee = t.str + code_end_idx;
         uint32_t hash = fnv1_hash(codes, codee);
-        if (hash!=cached_compiled_string_hash) {
+        if (hash != cached_compiled_string_hash) {
             cached_compiled_string_hash = hash;
             cached_parser.s = codes;
             cached_parser.n = codee - codes;
             parse_pattern(&cached_parser);
-            if (cached_parser.err<=0) {
+            if (cached_parser.err <= 0) {
                 stbds_arrsetlen(cached_haps, 0);
                 make_haps(&cached_parser, cached_parser.root, 0.f, 4.f, 1.f, 0.f, &cached_haps, FLAG_NONE, 0, 1.f);
             }
         }
         int nhaps = cached_haps ? stbds_arrlen(cached_haps) : 0;
         if (nhaps) {
-            struct { Sound *key; int value; } *rows = NULL;
+            struct {
+                Sound *key;
+                int value;
+            } *rows = NULL;
             int numrows = 0;
             const Node *nodes = cached_parser.nodes;
             int ss = get_select_start(E);
             int se = get_select_end(E);
-            for (int i=0; i<nhaps; i++) {
+            for (int i = 0; i < nhaps; i++) {
                 const Hap *h = &cached_haps[i];
                 Sound *sound = nodes[h->node].value.sound;
                 int row_plus_one = stbds_hmget(rows, sound);
                 if (!row_plus_one) {
                     row_plus_one = ++numrows;
-                    if (numrows > 16) break;
+                    if (numrows > 16)
+                        break;
                     stbds_hmput(rows, sound, row_plus_one);
                     int y = E->cursor_y - E->intscroll + row_plus_one;
-                    if (y>=0 && y<TMH) {
+                    if (y >= 0 && y < TMH) {
                         int sound_idx = h->sound_idx;
                         const char *sound_name = sound ? sound->name : "";
                         print_to_screen(t.ptr, basex, y, 0x11188800, false, "%10s:%d ", sound_name, sound_idx);
                         print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s:%d", sound_name, sound_idx);
-                        for (int x=0;x<128;++x) {
-                            uint32_t col = ((x&31)==0) ? C_CHART_HILITE : (x&8) ? C_CHART : C_CHART_HOVER;
-                            t.ptr[y * TMW + x + chartx] = col | (unsigned char)(' ');   
+                        for (int x = 0; x < 128; ++x) {
+                            uint32_t col = ((x & 31) == 0) ? C_CHART_HILITE : (x & 8) ? C_CHART : C_CHART_HOVER;
+                            t.ptr[y * TMW + x + chartx] = col | (unsigned char)(' ');
                         }
                     }
-                }    
+                }
                 // draw the hap h
                 int y = E->cursor_y - E->intscroll + row_plus_one;
                 int hapstart_idx = nodes[h->node].start + code_start_idx;
@@ -1142,30 +1208,117 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     hapcol = C_CHART_HILITE;
                 int hapx1 = (int)(h->t0 * 32.f);
                 int hapx2 = (int)(h->t1 * 32.f);
-                for (int x=hapx1;x<hapx2;++x) {
-                    if (x>=0 && x<128) {
+                for (int x = hapx1; x < hapx2; ++x) {
+                    if (x >= 0 && x < 128) {
                         uint32_t charcol = hapcol ? hapcol : t.ptr[y * TMW + x + chartx] & 0xffffff00u;
-                        t.ptr[y * TMW + x + chartx] = charcol | (unsigned char)((x==hapx1) ? 128+16+2 : (x==hapx2-1) ? '>' : 128+16+15);
+                        t.ptr[y * TMW + x + chartx] = charcol | (unsigned char)((x == hapx1)       ? 128 + 16 + 2
+                                                                                : (x == hapx2 - 1) ? '>'
+                                                                                                   : 128 + 16 + 15);
                     }
                 }
             }
             stbds_hmfree(rows);
-            
         }
         if (cached_parser.err) {
             print_to_screen(t.ptr, basex + cached_parser.err, E->cursor_y + 1 - E->intscroll, C_ERR, false, cached_parser.errmsg);
         }
     }
 
+    E->autocomplete_index = 0;
+    stbds_hmfree(E->autocomplete_options);
+    if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after) {
+        // autocomplete popup
+        int num_chars_so_far = E->cursor_idx - cursor_token_start_idx;
+        int token_len = cursor_token_end_idx - cursor_token_start_idx;
+        const char *token = &t.str[cursor_token_start_idx];
+        int x, y;
+        idx_to_xy(E, cursor_token_start_idx, &x, &y);
+        y -= E->intscroll;
+        if (num_chars_so_far >= 2) { // at least 2 chars
+            int pm = E->cursor_in_pattern_area;
+            
+            int bestscore = 2;
+            char *bestoption = NULL;
+
+
+#define COMPARE_PREFIX(x)                                                                                                          \
+    {                                                                                                                              \
+        autocomplete_option_t score = autocomplete_score(token, token_len, num_chars_so_far, x);                                                                       \
+        if (score.value >= 2) {                                                                                                          \
+            stbds_hmputs(E->autocomplete_options, score);                                                                                \
+            if (score.value > bestscore) {                                                                                               \
+                bestscore = score.value;                                                                                                 \
+                bestoption = (char *)x;                                                                                            \
+            }                                                                                                                      \
+        }                                                                                                                          \
+    }
+#define K(x)                                                                                                                       \
+    if (!pm)                                                                                                                       \
+        COMPARE_PREFIX(#x);
+#define T(x)                                                                                                                       \
+    if (!pm)                                                                                                                       \
+        COMPARE_PREFIX(#x);
+#define P(x)                                                                                                                       \
+    if (!pm)                                                                                                                       \
+        COMPARE_PREFIX(#x);
+#define M(x)                                                                                                                       \
+    if (pm)                                                                                                                        \
+        COMPARE_PREFIX(#x);
+#include "tokens.h"
+            if (pm) {
+                int n = num_sounds();
+                for (int i = 0; i < n; ++i) {
+                    char *name = G->sounds[i].key;
+                    COMPARE_PREFIX(name);
+                }
+            }
+            int numchoices = stbds_hmlen(E->autocomplete_options);
+            if (numchoices == 0) {
+                stbds_hmfree(E->autocomplete_options);
+                E->autocomplete_options = NULL;
+                E->autocomplete_index = 0;
+                E->autocomplete_scroll_y = 0;
+            } else {
+                int avoid_y = y;
+                int unscrolled_besti = stbds_hmgeti(E->autocomplete_options, bestoption);
+                int besti = unscrolled_besti + E->autocomplete_scroll_y;
+                if (besti>=numchoices) besti=numchoices-1;
+                if (besti<0) besti=0;
+                E->autocomplete_scroll_y = besti - unscrolled_besti;
+                E->autocomplete_index = besti;
+                y -= besti;
+                for (int i = 0; i < numchoices; ++i) {
+                    if (y == avoid_y)
+                        y++;
+                    if (y >= TMH)
+                        break;
+                    if (y >= 0) {
+                        autocomplete_option_t *o = &E->autocomplete_options[i];
+                        if (o->matchlen == strlen(o->key))
+                            continue;
+                        if (y==avoid_y+1) {
+                            print_span_to_screen(t.ptr, x + left - o->xoffset, y, C_AUTOCOMPLETE, false, o->key, o->key + o->xoffset);
+                            print_span_to_screen(t.ptr, x + left, y, C_SELECTION, false, o->key + o->xoffset, o->key + o->xoffset + o->matchlen);
+                            print_to_screen(t.ptr, x + left + o->matchlen, y, C_AUTOCOMPLETE, false, o->key + o->xoffset + o->matchlen);    
+                        } else {
+                            print_to_screen(t.ptr, x + left - o->xoffset, y, C_AUTOCOMPLETE_SECONDARY, false, o->key);
+                        }
+                    }
+                    y++;
+                }
+            } 
+        }
+        // print_to_screen(t.ptr, E->cursor_x, E->cursor_y + 1 - E->intscroll, C_SELECTION, false, "autocomplete popup");
+    }
     // draw a popup Above the cursor if its inside a curve
-    if (cursor_in_curve_end_idx > cursor_in_curve_start_idx) {
+    if (cursor_in_type == 'c' && cursor_token_end_idx - cursor_token_start_idx >= 2) {
         // trim the '
-        cursor_in_curve_end_idx--;
-        cursor_in_curve_start_idx++;
+        int cursor_in_curve_start_idx = cursor_token_start_idx + 1;
+        int cursor_in_curve_end_idx = cursor_token_end_idx - 1;
         int x, y;
         idx_to_xy(E, cursor_in_curve_start_idx, &x, &y);
         x += left;
-        int datalen = cursor_in_curve_end_idx - cursor_in_curve_start_idx;
+        int datalen = maxi(0, cursor_in_curve_end_idx - cursor_in_curve_start_idx);
         // work out bounding box also
         float x1 = x * E->font_width;
         float x2 = x1 + datalen * E->font_width;
@@ -1229,7 +1382,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
 
     return E->num_lines;
 }
-
 
 void load_file_into_editor(EditorState *E, bool init) {
     if (init) {
@@ -1414,10 +1566,10 @@ int main(int argc, char **argv) {
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
-    //void test_minipat(void);
-    //test_minipat();
-    // return 0;
-    
+    // void test_minipat(void);
+    // test_minipat();
+    //  return 0;
+
     int num_inputs = midi_get_num_inputs();
     int num_outputs = midi_get_num_outputs();
     printf("midi: " COLOR_GREEN "%d" COLOR_RESET " inputs, " COLOR_GREEN "%d" COLOR_RESET " outputs\n", num_inputs, num_outputs);

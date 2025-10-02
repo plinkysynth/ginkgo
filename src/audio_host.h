@@ -105,6 +105,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     }
     atomic_store_explicit(&g_dsp_used, dsp, memory_order_release);
 }
+#undef K
 
 int64_t get_time_us(void) {
     struct timeval tv;

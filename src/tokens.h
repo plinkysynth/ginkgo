@@ -1,0 +1,76 @@
+// T = type
+// K = keyword
+// P = preprocessor
+// M = mininotation
+
+T(void)
+T(float)
+T(double)
+T(int)
+T(uint)
+T(char)
+T(short)
+T(long)
+T(signed)
+T(unsigned)
+T(bool)
+T(size_t)
+T(ptrdiff_t)
+T(ssize_t)
+T(off_t)
+T(time_t)
+T(int8_t)
+T(uint8_t)
+T(int16_t)
+T(uint16_t)
+T(uint32_t)
+T(uint64_t)
+T(float32_t)
+T(float64_t)
+T(vec2)
+T(vec3)
+T(vec4)
+T(mat2)
+T(mat3)
+T(mat4)
+T(sampler2D)
+T(sampler3D)
+T(const)
+
+K(if)
+K(else)
+K(for)
+K(while)
+K(do)
+K(switch)
+K(case)
+K(break)
+K(continue)
+K(return)
+K(uniform)
+K(in)
+K(out)
+K(layout)
+K(struct)
+K(class)
+K(enum)
+K(union)
+K(typedef)
+K(static)
+K(extern)
+K(inline)
+K(volatile)
+K(register)
+K(restrict)
+
+P(define)
+P(pragma)
+
+M(note)
+M(sound)
+
+
+#undef T
+#undef K
+#undef P
+#undef M

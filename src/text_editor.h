@@ -15,10 +15,21 @@ typedef struct edit_op_t {
     int select_idx_after;
 } edit_op_t;
 
+typedef struct autocomplete_option_t {
+    const char *key;
+    int value;
+    int xoffset;
+    int matchlen;
+} autocomplete_option_t;
+
 typedef struct EditorState {
     char *str;           // stb stretchy buffer
     char *fname;         // name of the file
     edit_op_t *edit_ops; // stretchy buffer
+    autocomplete_option_t *autocomplete_options; // stretchy buffer
+    int autocomplete_index;
+    int autocomplete_scroll_y;
+    float autocomplete_show_after;
     int undo_idx;
     bool is_shader; // is this a shader file?
     bool mouse_hovering_chart;
@@ -280,7 +291,12 @@ int count_leading_spaces(EditorState *E, int start_idx) {
 static inline bool isseparator(char c) { return c==' ' || c=='\t' || c=='\n' || c=='\r' || c==';' || c==',' || c==':' || c=='.' || c=='(' || c==')' || c=='[' || c==']' || c=='{' || c=='}' || c=='\'' || c=='\"' || c=='`'; }
 static inline bool isnewline(char c) { return c=='\n' || c=='\r'; }
 
+static inline void postpone_autocomplete_show(EditorState *E) {
+    E->autocomplete_show_after = G->iTime + 0.5f;
+}
+
 void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
+    postpone_autocomplete_show(E);
     y += E->scroll_y;
     int tmw = (fbw-64.f) / E->font_width;
     float fx = (x / E->font_width + 0.5f);
@@ -412,6 +428,11 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     if (key == GLFW_KEY_ESCAPE && mods == 0) {
         if (E->find_mode) {
             E->find_mode = false;
+        } else if (E->autocomplete_options) {
+            E->autocomplete_options = NULL;
+            E->autocomplete_index = 0;
+            E->autocomplete_scroll_y = 0;
+            E->autocomplete_show_after = G->iTime + 10000.f; // completely ban autocomplete if you press escape.
         } else {
             E->select_idx = E->cursor_idx;
         }
@@ -558,6 +579,13 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         } else {
             int ss = get_select_start(E);
             int se = get_select_end(E);
+            if (!shift && E->autocomplete_options && E->autocomplete_index >= 0 && E->autocomplete_index < stbds_hmlen(E->autocomplete_options)) {
+                autocomplete_option_t *option = &E->autocomplete_options[E->autocomplete_index];
+                int matchfrom = E->cursor_idx - option->matchlen;
+                if (matchfrom<0) matchfrom = 0;
+                push_edit_op(E, matchfrom, matchfrom+option->matchlen, option->key, 1);
+                break;
+            }
             int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
             if (sy==ey && !shift) goto insert_character;
             ss = xy_to_idx(E, 0, sy);
@@ -590,6 +618,7 @@ insert_character:
             if (E->find_mode) {
                 jump_to_found_text(E, shift, key);
             } else {
+                E->autocomplete_show_after = 0.f; // after typing, we can immediately show autocomplete.
                 // delete the selection; insert the character
                 int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
                 char buf[ls+2];
@@ -601,6 +630,7 @@ insert_character:
         }
         break;
     case GLFW_KEY_LEFT:
+        postpone_autocomplete_show(E);
         if (super) {
             // same as home
             int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
@@ -612,6 +642,7 @@ insert_character:
         reset_selection = !shift;
         break;
     case GLFW_KEY_RIGHT:
+        postpone_autocomplete_show(E);
         if (super) {
             // same as end
             E->cursor_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
@@ -625,7 +656,11 @@ insert_character:
     case GLFW_KEY_UP:
         if (E->find_mode) {
             jump_to_found_text(E, 1, 0);
+            postpone_autocomplete_show(E);
+        } else if (E->autocomplete_options) {
+            E->autocomplete_scroll_y--;
         } else {
+            postpone_autocomplete_show(E);
             E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 1);
             set_target_x = 0;
             reset_selection = !shift;
@@ -634,23 +669,30 @@ insert_character:
     case GLFW_KEY_DOWN:
         if (E->find_mode) {
             jump_to_found_text(E, 0, 0);
+            postpone_autocomplete_show(E);
+        } else if (E->autocomplete_options) {
+            E->autocomplete_scroll_y++;
         } else {
+            postpone_autocomplete_show(E);
             E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 1);
             set_target_x = 0;
             reset_selection = !shift;
         }
         break;
     case GLFW_KEY_HOME: {
+        postpone_autocomplete_show(E);
         int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
         E->cursor_idx = xy_to_idx(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
         reset_selection = !shift;
         break;
     }
     case GLFW_KEY_END:
+        postpone_autocomplete_show(E);
         E->cursor_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
         reset_selection = !shift;
         break;
     case GLFW_KEY_PAGE_UP:
+        postpone_autocomplete_show(E);
         if (E->find_mode) {
             jump_to_found_text(E, 1, 0);
         } else {
@@ -660,6 +702,7 @@ insert_character:
         }
         break;
     case GLFW_KEY_PAGE_DOWN:
+    postpone_autocomplete_show(E);
         if (E->find_mode) {
             jump_to_found_text(E, 0, 0);
         } else {

@@ -27,15 +27,6 @@ STATE_VERSION(1,  )
 void init_state(void) {
 }
 
-
-
-
-
-
-
-
-
-
 stereo do_sample(stereo inp) {
     F chord1 = sawo(P_C3) + sawo(P_Ds4) + sawo(P_C4) + pwmo(P_C1,0.25);
     F chord2 = sawo(P_Gs2) + sawo(P_F4) + sawo(P_C4) + pwmo(P_F1,0.25);
@@ -59,13 +50,10 @@ stereo do_sample(stereo inp) {
     //drums=soft(drums*10.)/10.;
     //out+=rndt() * 0.1f;
     
-   	stereo dry=STEREO(out*0.5f,out*0.5f);
-    stereo wet=reverb(stmul(dry,0.125f));
-    wet = stadd(wet,dry);
-    wet.l+=drums*0.5;
-    wet.r+=drums*0.5;
+   	stereo dry=stereo{out*0.5f,out*0.5f};
+    stereo wet=reverb(dry*0.125f);
+    wet = wet+dry+drums*0.5f;
     return wet;
-    return stadd(dry,reverb(dry));
 }
 
 /*                           :-:.                              

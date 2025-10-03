@@ -123,7 +123,7 @@ static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { 
             // L = shimmer from shimmerpos1, R = shimmer from shimmerpos2
             stereo shim1 = STEREO(reverbbuf[(i + shimmerpos1) & RVMASK], reverbbuf[(i + shimmerpos2) & RVMASK]);
             stereo shim2 = STEREO(reverbbuf[(i + shimmerpos1 + 1) & RVMASK], reverbbuf[(i + shimmerpos2 + 1) & RVMASK]);
-            stereo shim = staverage(shim1, shim2);
+            stereo shim = (shim1+shim2);
     
             // Fixed point crossfade:
             float shimo = shim.l * ((SHIMMER_FADE_LEN - 1) - shimmerfade) +
@@ -132,7 +132,7 @@ static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { 
     
             // Apply user-selected shimmer amount.
             // Tone down shimmer amount.
-            shimo *= k_reverb_shim * 0.5f;
+            shimo *= k_reverb_shim * 0.25f;
         
             acc += shimo;
             outl = shimo;

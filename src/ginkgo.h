@@ -236,13 +236,14 @@ typedef struct stereo {
     float l, r;
 } stereo;
 
-#define STEREO(l, r)                                                                                                               \
-    (stereo) { l, r }
-
-static inline stereo stadd(stereo a, stereo b) { return STEREO(a.l + b.l, a.r + b.r); }
-static inline stereo staverage(stereo a, stereo b) { return STEREO((a.l + b.l) * 0.5f, (a.r + b.r) * 0.5f); }
-static inline stereo stsub(stereo a, stereo b) { return STEREO(a.l - b.l, a.r - b.r); }
-static inline stereo stmul(stereo a, float b) { return STEREO(a.l * b, a.r * b); }
+#define STEREO(l, r) stereo{l, r}
+     
+static inline stereo operator+(stereo a, stereo b) { return STEREO(a.l + b.l, a.r + b.r); }
+static inline stereo operator+(stereo a, float b) { return STEREO(a.l + b, a.r + b); }
+static inline stereo operator-(stereo a, stereo b) { return STEREO(a.l - b.l, a.r - b.r); }
+static inline stereo operator*(stereo a, float b) { return STEREO(a.l * b, a.r * b); }
+static inline stereo operator*(stereo a, stereo b) { return STEREO(a.l * b.l, a.r * b.r); }
+static inline stereo operator/(stereo a, float b) { return STEREO(a.l / b, a.r / b); }
 
 static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }

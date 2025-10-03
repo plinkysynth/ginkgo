@@ -28,15 +28,23 @@ void init_state(void) {
 }
 
 
+
+
+
+
+
+
+
+
 stereo do_sample(stereo inp) {
-    F chord1 = sawo(P_C3) + sawo(P_E4) + sawo(P_G4);
-    F chord2 = sawo(P_C3) + sawo(P_F4) + sawo(P_A4);
-    F chord3 = sawo(P_G3) + sawo(P_D3) + sawo(P_B3);
-    chord1 = chord1 * vol(S0(0.5)) + 
+    F chord1 = sawo(P_C3) + sawo(P_Ds4) + sawo(P_C4) + pwmo(P_C1,0.25);
+    F chord2 = sawo(P_Gs2) + sawo(P_F4) + sawo(P_C4) + pwmo(P_F1,0.25);
+    F chord3 = sawo(P_D3) + sawo(P_D3) + sawo(P_B3) + pwmo(P_G1,0.25);
+    chord1 = chord1 * vol(slew(S0(0.5),1e-4,1e-6)) + 
         chord2 * vol(S1(0.)) +
         chord3 * vol(S0(0.));
-   float cutoff = vol(S4(0.5));
-   F out = hpf(chord1, cutoff, 0.f);
+   float cutoff = vol(S4(0.75));
+   F out = lpf(chord1, cutoff, 0.f);
    //printf("%f\n", out);
    //out=chord1;
 
@@ -45,13 +53,18 @@ stereo do_sample(stereo inp) {
     // float t= exp2f(-0.0002f * (G->sampleidx&65535));
     // out += sino(P_A5) * t;
     
-    wave_t *wave=get_wave_by_name("bd:4");
-    
-    if (wave && wave->frames && wave->num_frames) out+=wave->frames[(G->sampleidx/2) % (wave->num_frames)];
+    wave_t *wave=get_wave_by_name((char*)"break_sesame");
+    F drums = 0.;
+    if (wave && wave->frames && wave->num_frames) drums = wave->frames[(G->sampleidx/2) % (wave->num_frames)];
+    //drums=soft(drums*10.)/10.;
     //out+=rndt() * 0.1f;
     
-   	stereo dry=STEREO(out,out);
-    return dry;
+   	stereo dry=STEREO(out*0.5f,out*0.5f);
+    stereo wet=reverb(stmul(dry,0.125f));
+    wet = stadd(wet,dry);
+    wet.l+=drums*0.5;
+    wet.r+=drums*0.5;
+    return wet;
     return stadd(dry,reverb(dry));
 }
 

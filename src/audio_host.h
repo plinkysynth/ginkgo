@@ -70,8 +70,8 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         // saturation on output...
         stereo acc;
         if (OVERSAMPLE == 2) {
-            history[history_pos & 63] = stereo_hard(ensure_finite_stereo(audio[k*2+0]));
-            history[(history_pos + 1) & 63] = stereo_hard(ensure_finite_stereo(audio[k*2+1]));
+            history[history_pos & 63] = stereo_medium(ensure_finite_stereo(audio[k*2+0]));
+            history[(history_pos + 1) & 63] = stereo_medium(ensure_finite_stereo(audio[k*2+1]));
             history_pos += 2;
             // 2x downsample FIR
             int center_idx = history_pos - K * 2;
@@ -85,7 +85,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
                 acc.r += fir_kernel[tap] * (t0.r + t1.r);
             }
         } else {
-            acc = stereo_hard(audio[k]);
+            acc = stereo_medium(audio[k]);
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;
@@ -121,8 +121,8 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    #define CLANG_OPTIONS "-g -std=c11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -D LIVECODE -I. -Isrc/ build/ginkgo_lib.o"
-    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so -x c - 2>&1", fname, version);
+    #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ build/ginkgo_lib.o"
+    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
     if (!fp) {

@@ -254,7 +254,7 @@ const char *kFS = SHADER(
     });
 // clang-format on
 
-EditorState audio_tab = {.fname = "livesrc/audio.c", .is_shader = false};
+EditorState audio_tab = {.fname = "livesrc/audio.cpp", .is_shader = false};
 EditorState shader_tab = {.fname = "livesrc/video.glsl", .is_shader = true};
 EditorState *curE = &audio_tab;
 GLuint prog = 0, prog2 = 0;

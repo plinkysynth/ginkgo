@@ -7,7 +7,9 @@
 #include <string.h>
 #include <stdatomic.h>
 #include "3rdparty/stb_ds.h"
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #define STRINGIFY(x) #x
 
 #define OVERSAMPLE 2
@@ -91,7 +93,7 @@ static noinline void ba_grow(bump_array_t *sa, int newn) {
     int newallocsize = next_pow2(newn);
     if (oldallocsize == newallocsize)
         return;
-    float *newdata = (newn <= 4) ? sa->data4 : calloc(newallocsize, sizeof(float));
+    float *newdata = (newn <= 4) ? sa->data4 : (float *)calloc(newallocsize, sizeof(float));
     memcpy(newdata, sa->data, sa->n * sizeof(float));
     // if (sa->data != sa->data4)
     //     free(sa->data); // let it leak :)
@@ -202,6 +204,25 @@ static inline float update_lfo(float state[2], float sin_dphase) { // quadrature
     return state[1] += (state[0] * sin_dphase);
 }
 
+static inline float lfo(float dphase) {
+    float *state = ba_get_default(&G->audio_bump, 2, 1.f);
+    update_lfo(state, dphase);
+    return state[1];
+}
+
+static inline const float *lfo2(float dphase) { // quadrature output
+    float *state = ba_get_default(&G->audio_bump, 2, 1.f);
+    update_lfo(state, dphase);
+    return state;
+}
+
+static inline float slew(float x, float upfac, float downfac) {
+    float *state = ba_get(&G->audio_bump, 1);
+    float old = state[0];
+    state[0] = old + (x - old) * ((x > old) ? upfac : downfac);
+    return state[0];
+}
+
 // TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.
 // but this is simple so we'll go with simple.
 static inline int euclid_rhythm(int stepidx, int numset, int numsteps, int rot) {
@@ -219,6 +240,7 @@ typedef struct stereo {
     (stereo) { l, r }
 
 static inline stereo stadd(stereo a, stereo b) { return STEREO(a.l + b.l, a.r + b.r); }
+static inline stereo staverage(stereo a, stereo b) { return STEREO((a.l + b.l) * 0.5f, (a.r + b.r) * 0.5f); }
 static inline stereo stsub(stereo a, stereo b) { return STEREO(a.l - b.l, a.r - b.r); }
 static inline stereo stmul(stereo a, float b) { return STEREO(a.l * b, a.r * b); }
 
@@ -292,6 +314,7 @@ static inline float ladder(float inp, float s[5], float f, float r) {
     return y3;
 }
 
+
 static inline float soft(float x) { return atanf(x) * (2.f / PI); }
 static inline float medium(float x) { return tanhf(x); }
 static inline float hard(float x) { return clampf(x, -1.f, 1.f); }
@@ -306,24 +329,21 @@ static inline stereo stereo_medium(stereo s) { return (stereo){.l = tanhf(s.l), 
 
 static inline stereo stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
-typedef struct svf_state_t {
-    float ic1eq, ic2eq;
-} svf_state_t;
 
 typedef struct svf_output_t {
     float lp, bp, hp;
 } svf_output_t;
 
 // g = tanf(M_PI * fc / fs), R = 1/Q
-static inline svf_output_t svf_process(svf_state_t *f, float x, float g, float R) {
+static inline svf_output_t svf_process(float *f, float x, float g, float R) {
     const float a1 = 1.f / (1.f + g * (g + R)); // precompute?
-    const float v3 = x - f->ic2eq;
-    const float v1 = a1 * (f->ic1eq + g * v3);
-    const float v2 = f->ic2eq + g * v1;
+    const float v3 = x - f[1];
+    const float v1 = a1 * (f[0] + g * v3);
+    const float v2 = f[1] + g * v1;
     // state updates (trapezoidal integrators)
     //v1 = soft(v1); v2=soft(v2); // nonlinearity anyone?
-    f->ic1eq = 2.f * v1 - f->ic1eq;
-    f->ic2eq = 2.f * v2 - f->ic2eq;
+    f[0] = 2.f * v1 - f[0];
+    f[1] = 2.f * v2 - f[1];
     return (svf_output_t){.lp = v2, .bp = v1, .hp = x - R * v1 - v2};
 }
 
@@ -343,7 +363,7 @@ static inline float svf_g_nice(float fc) { return pow2(fc); }
 static inline float svf_R_nice(float q) { return SQRT2 * (1.02f - minf(q, 1.f)); }
 
 static inline float lpf(float x, float fc, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 2);
     float y = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).lp;
     if (isnan(y)) {
         printf("nan in lpf\n");
@@ -352,18 +372,18 @@ static inline float lpf(float x, float fc, float q) {
 }
 
 static inline float hpf(float x, float fc, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 2);
     return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).hp;
 }
 
 static inline float bpf(float x, float fc, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 2);
     return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).bp;
 }
 
 // 4 pole lowpass
 static inline float lpf4(float x, float fc, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, 2 * sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 4);
     float g = svf_g_nice(fc), r = svf_R_nice(q);
     x = svf_process(state, x, g, r).lp;
     return svf_process(state+1, x, g, r).lp;
@@ -371,7 +391,7 @@ static inline float lpf4(float x, float fc, float q) {
 
 // 4 pole hipass
 static inline float hpf4(float x, float fc, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, 2 * sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 4);
     float g = svf_g_nice(fc), r = svf_R_nice(q);
     x = svf_process(state, x, g, r).hp;
     return svf_process(state+1, x, g, r).hp;
@@ -379,7 +399,7 @@ static inline float hpf4(float x, float fc, float q) {
 
 // 4 pole bandpass
 static inline float bpf4(float x, float fclo, float fchi, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, 2 * sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 4);
     float r = svf_R_nice(q);
     x = svf_process(state, x, svf_g_nice(fchi), r).lp;
     return svf_process(state+1, x, svf_g_nice(fclo), r).hp;
@@ -387,13 +407,13 @@ static inline float bpf4(float x, float fclo, float fchi, float q) {
 
 
 static inline float peakf(float x, float gain, float fc, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 2);
     svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
     return o.lp + o.hp + gain*o.bp;
 }
 
 static inline float notchf(float x, float fc, float q) {
-    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
+    float *state = ba_get(&G->audio_bump, 2);
     svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
     return o.lp + o.hp;
 }
@@ -674,7 +694,7 @@ void init_state(void);
 size_t get_state_size(void);
 int get_state_version(void);
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
-    G = dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
+    G = (basic_state_t*)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
     for (int i = 0; i < frames; i++) {
         // reset the per-sample bump allocators
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
@@ -704,4 +724,7 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 #ifdef LIVECODE
 #undef G
 #define G ((state *)_BG)
+#endif
+#ifdef __cplusplus
+}
 #endif

@@ -193,7 +193,7 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
     if (!_G || _G->_ver != version || _G->_size != state_size) {
         /* free(G); - safer to just let it leak :)  virtual memory ftw  */
         basic_state_t *oldg = _G;
-        _G = calloc(1, state_size);
+        _G = (basic_state_t *)calloc(1, state_size);
         if (oldg) memcpy(_G, oldg, sizeof(basic_state_t)); // preserve the basic state...
         // ...but update the version number and size.
         _G->_ver = version;

@@ -24,7 +24,7 @@ typedef struct autocomplete_option_t {
 
 typedef struct EditorState {
     char *str;                                   // stb stretchy buffer
-    char *fname;                                 // name of the file
+    const char *fname;                                 // name of the file
     edit_op_t *edit_ops;                         // stretchy buffer
     autocomplete_option_t *autocomplete_options; // stretchy buffer
     int autocomplete_index;
@@ -834,7 +834,8 @@ void parse_error_log(EditorState *E) {
     for (const char *c = E->last_compile_log; *c; c++) {
         int col = 0, line = 0;
         if (sscanf(c, "ERROR: %d:%d:", &col, &line) == 2) {
-            hmput(E->error_msgs, line - 1, c);
+            int val = line - 1;
+            hmput(E->error_msgs, val, c);
         }
         if (c[0] == '.' && c[1] == '/')
             c += 2;
@@ -847,7 +848,8 @@ void parse_error_log(EditorState *E) {
                 while (isspace(*colend))
                     ++colend;
                 // printf("compile error on line %d, column %d, [%s]\n", line, col, colend);
-                hmput(E->error_msgs, line - 1, colend);
+                int val = line - 1;
+                hmput(E->error_msgs, val, colend);
             }
         }
         while (*c && *c != '\n')
@@ -1186,7 +1188,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     int left = 64 / E->font_width;
     tokenizer_t t = {.ptr = ptr,
                      .str = E->str,
-                     .n = stbds_arrlen(E->str),
+                     .n = (int)stbds_arrlen(E->str),
                      .x = left,
                      .y = -E->intscroll,
                      .cursor_x = E->cursor_x,
@@ -1392,9 +1394,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
         if (h != HASH("include") && !is_space((unsigned)c))
             wasinclude = false;
         float *curve_data = NULL;
-        if (token_is_curve) {
+        if (token_is_curve && j>i+2) {
             int numdata = j - i - 2;
-            curve_data = alloca(4 * numdata);
+            curve_data = (float *)alloca(4 * numdata);
             fill_curve_data_from_string(curve_data, t.str + i + 1, numdata);
         }
         if (cursor_token_start_idx == cursor_token_end_idx && i <= E->cursor_idx && j >= E->cursor_idx) {
@@ -1436,7 +1438,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 t.x = next_tab(t.x - left) + left;
             else if (ch == '\n' || ch == 0) {
                 // look for an error message
-                const char *errline = hmget(E->error_msgs, t.y + E->intscroll);
+                int ysc=t.y + E->intscroll;
+                const char *errline = hmget(E->error_msgs, ysc);
                 if (errline) {
                     uint32_t errcol = C_ERR;
                     if (strncasecmp(errline, "warning:", 8) == 0)

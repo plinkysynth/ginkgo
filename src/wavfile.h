@@ -74,10 +74,10 @@ static inline void write_wav_header(FILE *file, int n_samples, int sample_rate, 
     'f', 'm', 't', ' ',                     // Subchunk1ID
     16, 0, 0, 0,                            // Subchunk1Size (16 for PCM or IEEE float)
     3, 0,                                    // AudioFormat (3 for IEEE float)
-    channels, 0,                             // NumChannels
+    (uint8_t)channels, 0,                             // NumChannels
     0, 0, 0, 0,                             // SampleRate (to be filled)
     0, 0, 0, 0,                             // ByteRate (to be filled)
-    4*channels, 0,                          // BlockAlign (4 bytes per sample per channel)
+    (uint8_t)(4*channels), 0,                          // BlockAlign (4 bytes per sample per channel)
     32, 0,                                   // BitsPerSample (32)
     'd', 'a', 't', 'a',                     // Subchunk2ID
     0, 0, 0, 0                              // Subchunk2Size (to be filled)

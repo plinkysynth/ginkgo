@@ -30,7 +30,7 @@ static const char *node_type_names[N_LAST] = {
 // = looks middle-y so we make that 32.
 // thus you can interpolate key values with _ = ^
 const char btoa_tab[65] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+$@";
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
 
 //clang-format off
 const uint8_t atob_tab[256] = {
@@ -836,7 +836,7 @@ void test_minipat(void) {
     // const char *s = "[bd <hh oh>,rim*<4 8>]";
     // const char *s = "[bd,sd*1.1]";
     printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
-    Pattern p={s,strlen(s)};
+    Pattern p={s,(int)strlen(s)};
     parse_pattern(&p);
     pretty_print(s, p.nodes, p.root, 0);
     char *chart = print_pattern_chart(&p);

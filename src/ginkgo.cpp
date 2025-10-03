@@ -301,8 +301,9 @@ GLuint try_to_compile_shader(EditorState *E) {
     if (!E->is_shader) {
         return 0;
     }
-    char *fs2_str = (char *)calloc(1, strlen(kFS2_prefix) + stbds_arrlen(E->str) + strlen(kFS2_suffix) + 64);
-    sprintf(fs2_str, "%s\n#line 1\n%.*s\n%s", kFS2_prefix, (int)stbds_arrlen(E->str), E->str, kFS2_suffix);
+    int len = strlen(kFS2_prefix) + stbds_arrlen(E->str) + strlen(kFS2_suffix) + 64;
+    char *fs2_str = (char *)calloc(1, len);
+    snprintf(fs2_str, len, "%s\n#line 1\n%.*s\n%s", kFS2_prefix, (int)stbds_arrlen(E->str), E->str, kFS2_suffix);
     GLuint fs2 = compile_shader(E, GL_FRAGMENT_SHADER, fs2_str);
     GLuint new_prog2 = fs2 ? link_program(vs, fs2) : 0;
     if (new_prog2) {

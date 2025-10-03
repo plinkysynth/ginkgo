@@ -8,20 +8,20 @@
 #include <stdbool.h>
 
 typedef struct {
-    char *data, *cur, *end;
+    const char *data, *cur, *end;
     int depth;
-    char *error;
+    const char *error;
 } sj_Reader;
 
 typedef struct {
     int type;
-    char *start, *end;
+    const char *start, *end;
     int depth;
 } sj_Value;
 
 enum { SJ_ERROR, SJ_END, SJ_ARRAY, SJ_OBJECT, SJ_NUMBER, SJ_STRING, SJ_BOOL, SJ_NULL };
 
-sj_Reader sj_reader(char *data, size_t len);
+sj_Reader sj_reader(const char *data, size_t len);
 sj_Value sj_read(sj_Reader *r);
 bool sj_iter_array(sj_Reader *r, sj_Value arr, sj_Value *val);
 bool sj_iter_object(sj_Reader *r, sj_Value obj, sj_Value *key, sj_Value *val);
@@ -32,7 +32,7 @@ void sj_location(sj_Reader *r, int *line, int *col);
 #ifdef SJ_IMPL
 
 
-sj_Reader sj_reader(char *data, size_t len) {
+sj_Reader sj_reader(const char *data, size_t len) {
     return (sj_Reader){ .data = data, .cur = data, .end = data + len };
 }
 
@@ -42,7 +42,7 @@ static bool sj__is_number_cont(char c) {
         ||  c == 'e' || c == 'E' || c == '.' || c == '-' || c == '+';
 }
 
-static bool sj__is_string(char *cur, char *end, char *expect) {
+static bool sj__is_string(const char *cur, const char *end, const char *expect) {
     while (*expect) {
         if (cur == end || *cur != *expect) {
             return false;
@@ -145,7 +145,7 @@ bool sj_iter_object(sj_Reader *r, sj_Value obj, sj_Value *key, sj_Value *val) {
 
 void sj_location(sj_Reader *r, int *line, int *col) {
     int ln = 1, cl = 1;
-    for (char *p = r->data; p != r->cur; p++) {
+    for (const char *p = r->data; p != r->cur; p++) {
         if (*p == '\n') { ln++; cl = 0; }
         cl++;
     }

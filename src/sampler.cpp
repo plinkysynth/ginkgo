@@ -109,7 +109,7 @@ static inline int get_url_length_after_escaping(const char *s, const char *e) {
 }
 
 static inline const char *escape_url(char *dstbuf, const char *s, const char *e) {
-    const static char hex[16] = "0123456789abcdef";
+    const static char hex[17] = "0123456789abcdef";
     char *d = dstbuf;
     for (; s < e; s++) {
         if (char_needs_escaping(*s)) {
@@ -145,9 +145,10 @@ int parse_strudel_json(const char *json_url, const char *sound_prefix) {
             }
         } else {
             int sound_name_len = (soundkey.end-soundkey.start) + prefix_len;
-            char sound_name[sound_name_len+1]={};
+            char sound_name[sound_name_len+1];
             memcpy(sound_name, sound_prefix, prefix_len);
             memcpy(sound_name+prefix_len, soundkey.start, soundkey.end-soundkey.start);
+            sound_name[sound_name_len] = 0;
             Sound *sound = get_sound_init_only(sound_name);
             sj_Value samplekey, sample;
             for (int i = 0; sj_iter_array_or_object(&r, soundval, &samplekey, &sample); i++) {

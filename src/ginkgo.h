@@ -27,6 +27,10 @@
 #define SIN45 0.70710678118654752440f
 #define QBUTTER 0.70710678118654752440f
 
+// size of virtual textmode screen:
+#define TMW 512
+#define TMH 256
+
 typedef float F;
 typedef int I;
 typedef uint32_t U;
@@ -102,6 +106,16 @@ static inline float *ba_get(bump_array_t *sa, int count) {
     sa->i += count;
     return &sa->data[i];
 }
+static inline float *ba_get_default(bump_array_t *sa, int count, float def) {
+    int i = sa->i;
+    if (RARE(i + count > sa->n)) {
+        ba_grow(sa, i + count);
+        if (count>0) sa->data[i] = def;
+    }
+    sa->i += count;
+    return &sa->data[i];
+}
+
 
 typedef struct sound_pair_t {
     char *key;
@@ -169,11 +183,12 @@ static inline float squaref(float x) { return x * x; }
 static inline float fracf(float x) { return x - floorf(x); }
 
 static inline float pow2(float x) { return x * x; }
+static inline float pow3(float x) { return x * x * x; }
 static inline float pow4(float x) {
     x = x * x;
     return x * x;
 }
-static inline float vol(float x) { return pow4(x); } // a nice volume curve thats kinda db-like but goes to exactly 0 and 1.
+static inline float vol(float x) { return pow3(x); } // a nice volume curve thats kinda db-like but goes to exactly 0 and 1.
 
 static inline float saturate(float x) { return clampf(x, 0.f, 1.f); }
 
@@ -309,7 +324,7 @@ static inline svf_output_t svf_process(svf_state_t *f, float x, float g, float R
     //v1 = soft(v1); v2=soft(v2); // nonlinearity anyone?
     f->ic1eq = 2.f * v1 - f->ic1eq;
     f->ic2eq = 2.f * v2 - f->ic2eq;
-    return (svf_output_t){.lp = v2, .bp = v1, .hp = v3 - R * v1 - v2};
+    return (svf_output_t){.lp = v2, .bp = v1, .hp = x - R * v1 - v2};
 }
 
 // approximation to tanh for 0-0.25 nyquist.
@@ -323,13 +338,17 @@ static inline float svf_g_approx(float fc) { // fc is 0-1 by convention here. (1
 
 static inline float svf_R(float q) { return 1.f / q; }
 
-// these functions use a hand tuned curve for g and R that is 'nice to use', not exactly mapped to freq (but its not far off)
-static inline float svf_g_nice(float fc) { return fc; }
+// these functions use a hand tuned curve for g and R that is 'nice to use', not mapped to freq
+static inline float svf_g_nice(float fc) { return pow2(fc); }
 static inline float svf_R_nice(float q) { return SQRT2 * (1.02f - minf(q, 1.f)); }
 
 static inline float lpf(float x, float fc, float q) {
     svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
-    return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).lp;
+    float y = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).lp;
+    if (isnan(y)) {
+        printf("nan in lpf\n");
+    }
+    return y;
 }
 
 static inline float hpf(float x, float fc, float q) {
@@ -341,6 +360,31 @@ static inline float bpf(float x, float fc, float q) {
     svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
     return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).bp;
 }
+
+// 4 pole lowpass
+static inline float lpf4(float x, float fc, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, 2 * sizeof(svf_state_t) / sizeof(float));
+    float g = svf_g_nice(fc), r = svf_R_nice(q);
+    x = svf_process(state, x, g, r).lp;
+    return svf_process(state+1, x, g, r).lp;
+}
+
+// 4 pole hipass
+static inline float hpf4(float x, float fc, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, 2 * sizeof(svf_state_t) / sizeof(float));
+    float g = svf_g_nice(fc), r = svf_R_nice(q);
+    x = svf_process(state, x, g, r).hp;
+    return svf_process(state+1, x, g, r).hp;
+}
+
+// 4 pole bandpass
+static inline float bpf4(float x, float fclo, float fchi, float q) {
+    svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, 2 * sizeof(svf_state_t) / sizeof(float));
+    float r = svf_R_nice(q);
+    x = svf_process(state, x, svf_g_nice(fchi), r).lp;
+    return svf_process(state+1, x, svf_g_nice(fclo), r).hp;
+}
+
 
 static inline float peakf(float x, float gain, float fc, float q) {
     svf_state_t *state = (svf_state_t *)ba_get(&G->audio_bump, sizeof(svf_state_t) / sizeof(float));
@@ -519,19 +563,6 @@ static inline float lpf1(float x, float f) {
     float *state = ba_get(&G->audio_bump, 1);
     return state[0] += (x - state[0]) * f;
 }
-static inline float lpf2(float x, float f) {
-    float *state = ba_get(&G->audio_bump, 2);
-    state[0] += (x - state[0]) * f;
-    return state[1] += (state[0] - state[1]) * f;
-}
-static inline float lpf4(float x, float f) {
-    float *state = ba_get(&G->audio_bump, 4);
-    state[0] += (x - state[0]) * f;
-    state[1] += (state[0] - state[1]) * f;
-    state[2] += (state[1] - state[2]) * f;
-    return state[3] += (state[2] - state[3]) * f;
-}
-
 // static inline float adsr(float gate, float attack, float decay, float sustain, float release) {
 //     float *state = ba_get(&G->audio_bump, 2);
 //     float decaying = state[0];
@@ -593,37 +624,37 @@ static inline float midi2dphase(float midi) { return exp2f((midi - 150.232644862
 
 typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G, stereo *audio, int frames, int reloaded);
 
-static inline float do_slider(int slider_idx, basic_state_t *G, int myline) {
+static inline float do_slider(int slider_idx, basic_state_t *G, int myline, float def) {
     slider_idx &= 15;
     myline &= 255;
-    float *value_line = ba_get(&G->sliders[slider_idx], 2);
+    float *value_line = ba_get_default(&G->sliders[slider_idx], 2, def);
     value_line[1] = myline - 1; // we count lines from 0
     return value_line[0];
 }
 
-#define S_(slider_idx) do_slider(slider_idx, (basic_state_t *)G, __LINE__)
-#define S0 S_(0)
-#define S1 S_(1)
-#define S2 S_(2)
-#define S3 S_(3)
-#define S4 S_(4)
-#define S5 S_(5)
-#define S6 S_(6)
-#define S7 S_(7)
-#define S8 S_(8)
-#define S9 S_(9)
-#define S10 S_(10)
-#define S11 S_(11)
-#define S12 S_(12)
-#define S13 S_(13)
-#define S14 S_(14)
-#define S15 S_(15)
-#define SA S_(10)
-#define SB S_(11)
-#define SC S_(12)
-#define SD S_(13)
-#define SE S_(14)
-#define SF S_(15)
+#define S_(slider_idx, def) do_slider(slider_idx, (basic_state_t *)G, __LINE__, def)
+#define S0(def) S_(0,def)
+#define S1(def) S_(1,def)
+#define S2(def) S_(2,def)
+#define S3(def) S_(3,def)
+#define S4(def) S_(4,def)
+#define S5(def) S_(5,def)
+#define S6(def) S_(6,def)
+#define S7(def) S_(7,def)
+#define S8(def) S_(8,def)
+#define S9(def) S_(9,def)
+#define S10(def) S_(10,def)
+#define S11(def) S_(11,def)
+#define S12(def) S_(12,def)
+#define S13(def) S_(13,def)
+#define S14(def) S_(14,def)
+#define S15 S_(15, def)  
+#define SA S_(10,def)
+#define SB S_(11,def)
+#define SC S_(12,def)
+#define SD S_(13,def)
+#define SE S_(14,def)
+#define SF S_(15,def)
 #define LOG(...)                                                                                                                   \
     {                                                                                                                              \
         static int count = 0;                                                                                                      \

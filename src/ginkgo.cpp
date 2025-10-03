@@ -168,7 +168,7 @@ const char *kFS = SHADER(
                 ampscale = 0.5f;
                 is_fft = true;
                 float dither = fract(pix.x*23.5325f) / 2048.f;
-                pix.y = (48.f / 48000.f * 4096.f) * pow(1000.f, v_uv.y + dither); // 24hz to nyquist
+                pix.y = (96.f / 48000.f * 4096.f) * pow(500.f, v_uv.y + dither); // 24hz to nyquist
                 base_y = 256 - 12;
                 pix.x = fftx;
                 nextx = pix.y * 1.003;
@@ -596,8 +596,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
                 squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) - peak_mag;
             // if (magl_db < minv) {minv = magl_db;mini = i;}
             // if (magl_db > maxv) {maxv = magl_db;maxi = i;}
-            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 3.f, 0.f, 255.f));
-            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 3.f, 0.f, 255.f));
+            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 4.f, 0.f, 255.f));
+            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 4.f, 0.f, 255.f));
             scope_dst[i] = (l8 << 0) | (r8 << 8);
         }
         // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, mini, maxv, maxi);

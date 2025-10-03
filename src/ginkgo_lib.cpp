@@ -13,19 +13,14 @@ void init_basic_state(void) {
 }
 
 #define RVMASK 65535
-static float reverbbuf[65536];
-static int reverb_pos = 0;
 
 static float k_reverb_fade = 240  / 256.f; // 240 originally
 static float k_reverb_shim = 120 / 256.f;
 static float k_reverb_wob = 0.3333f; // amount of wobble
 static const float lforate1 = 1.f / 32777.f * 9.4f;// * 2.f; // speed of wobble
 static const float lforate2 = 1.3f / 32777.f * 3.15971f;// * 2.f; // speed of wobble
-static int shimmerpos1 = 2000;
-static int shimmerpos2 = 1000;
-static int shimmerfade = 0;
-static int dshimmerfade = 32768/4096;
-static float aplfo[2]={1.f,0.f}, aplfo2[2]={1.f,0.f};
+
+
 
 static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { // read buf[basei-wobpos>>12] basically
 	basei -= (int)wobpos;
@@ -37,11 +32,13 @@ static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { 
 
 
     stereo plinky_reverb(stereo input) {
-        int i = reverb_pos;
+        reverb_state_t *R = &G->R;
+        float *reverbbuf = R->reverbbuf;
+        int i = R->reverb_pos;
         float outl = 0, outr = 0;
-        float wob = update_lfo(aplfo, lforate1) * k_reverb_wob;
+        float wob = update_lfo(R->aplfo, lforate1) * k_reverb_wob;
         float apwobpos = (wob + 1.f) * 64.f;
-        wob = update_lfo(aplfo2, lforate2)  * k_reverb_wob;
+        wob = update_lfo(R->aplfo2, lforate2)  * k_reverb_wob;
         float delaywobpos = (wob + 1.f) * 64.f;
     #define RVDIV /2
     #define CHECKACC // assert(acc>=-32768 && acc<32767);
@@ -86,8 +83,8 @@ static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { 
     //	float reinject2 = acc;
         AP(277);
         float reinject = acc;
-        static float fb1 = 0;
-        acc += fb1;
+        
+        acc += R->fb1;
         AP_WOBBLE(672, apwobpos);
         AP(1800);
         DELAY(4453);
@@ -110,24 +107,24 @@ static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { 
             // - dshimmerfade controls the speed at which we fade.
     
             #define SHIMMER_FADE_LEN 32768
-            shimmerfade += dshimmerfade;
+            R->shimmerfade += R->dshimmerfade;
     
-            if (shimmerfade >= SHIMMER_FADE_LEN) {
-                shimmerfade -= SHIMMER_FADE_LEN;
+            if (R->shimmerfade >= SHIMMER_FADE_LEN) {
+                R->shimmerfade -= SHIMMER_FADE_LEN;
     
-                shimmerpos1 = shimmerpos2;
-                shimmerpos2 = (rand() & 4095) + 8192;
-                dshimmerfade = (rand() & 7) + 8; // somewhere between SHIMMER_FADE_LEN/2048 and SHIMMER_FADE_LEN/4096 ie 8 and 16
+                R->shimmerpos1 = R->shimmerpos2;
+                R->shimmerpos2 = (rand() & 4095) + 8192;
+                R->dshimmerfade = (rand() & 7) + 8; // somewhere between SHIMMER_FADE_LEN/2048 and SHIMMER_FADE_LEN/4096 ie 8 and 16
             }
     
             // L = shimmer from shimmerpos1, R = shimmer from shimmerpos2
-            stereo shim1 = STEREO(reverbbuf[(i + shimmerpos1) & RVMASK], reverbbuf[(i + shimmerpos2) & RVMASK]);
-            stereo shim2 = STEREO(reverbbuf[(i + shimmerpos1 + 1) & RVMASK], reverbbuf[(i + shimmerpos2 + 1) & RVMASK]);
+            stereo shim1 = STEREO(reverbbuf[(i + R->shimmerpos1) & RVMASK], reverbbuf[(i + R->shimmerpos2) & RVMASK]);
+            stereo shim2 = STEREO(reverbbuf[(i + R->shimmerpos1 + 1) & RVMASK], reverbbuf[(i + R->shimmerpos2 + 1) & RVMASK]);
             stereo shim = (shim1+shim2);
     
             // Fixed point crossfade:
-            float shimo = shim.l * ((SHIMMER_FADE_LEN - 1) - shimmerfade) +
-                                    shim.r * shimmerfade;
+            float shimo = shim.l * ((SHIMMER_FADE_LEN - 1) - R->shimmerfade) +
+                                    shim.r * R->shimmerfade;
             shimo *= 1.f/SHIMMER_FADE_LEN;  // Divide by SHIMMER_FADE_LEN
     
             // Apply user-selected shimmer amount.
@@ -138,30 +135,28 @@ static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { 
             outl = shimo;
             outr = shimo;
     
-            shimmerpos1--;
-            shimmerpos2--;
+            R->shimmerpos1--;
+            R->shimmerpos2--;
         }
     
     
         const static float k_reverb_color = 0.95f;
-        static float lpf = 0.f, dc = 0.f;
-        lpf += (((acc * k_reverb_fade)) - lpf) * k_reverb_color;
-        dc += (lpf - dc) * 0.005f;
-        acc = (lpf - dc);
+        R->lpf += (((acc * k_reverb_fade)) - R->lpf) * k_reverb_color;
+        R->dc += (R->lpf - R->dc) * 0.005f;
+        acc = (R->lpf - R->dc);
         outl += acc;
     
         acc += reinject;
         AP_WOBBLE(908, delaywobpos);
         AP(2656);
         DELAY(3163);
-        static float lpf2 = 0.f;
-        lpf2+= (((acc * k_reverb_fade) ) - lpf2) * k_reverb_color;
-        acc = (lpf2);
+        R->lpf2+= (((acc * k_reverb_fade) ) - R->lpf2) * k_reverb_color;
+        acc = (R->lpf2);
     
         outr += acc;
     
-        reverb_pos = (reverb_pos - 1) & RVMASK;
-        fb1=(acc*k_reverb_fade);
+        R->reverb_pos = (R->reverb_pos - 1) & RVMASK;
+        R->fb1=(acc*k_reverb_fade);
         return STEREO(outl, outr);
         
     
@@ -192,6 +187,7 @@ stereo reverb(stereo inp) {
 void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_size, int version, void (*init_state)(void)) {
     if (!_G || _G->_ver != version || _G->_size != state_size) {
         /* free(G); - safer to just let it leak :)  virtual memory ftw  */
+        printf("CLEARING STATE\n");
         basic_state_t *oldg = _G;
         _G = (basic_state_t *)calloc(1, state_size);
         if (oldg) memcpy(_G, oldg, sizeof(basic_state_t)); // preserve the basic state...

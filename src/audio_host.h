@@ -70,8 +70,8 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         // saturation on output...
         stereo acc;
         if (OVERSAMPLE == 2) {
-            history[history_pos & 63] = stereo_medium(ensure_finite_stereo(audio[k*2+0]));
-            history[(history_pos + 1) & 63] = stereo_medium(ensure_finite_stereo(audio[k*2+1]));
+            history[history_pos & 63] = sclip(ensure_finite(audio[k*2+0]));
+            history[(history_pos + 1) & 63] = sclip(ensure_finite(audio[k*2+1]));
             history_pos += 2;
             // 2x downsample FIR
             int center_idx = history_pos - K * 2;
@@ -85,7 +85,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
                 acc.r += fir_kernel[tap] * (t0.r + t1.r);
             }
         } else {
-            acc = stereo_medium(audio[k]);
+            acc = sclip(ensure_finite(audio[k]));
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;

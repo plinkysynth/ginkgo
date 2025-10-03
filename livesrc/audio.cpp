@@ -27,32 +27,26 @@ STATE_VERSION(1,  )
 void init_state(void) {
 }
 
-stereo do_sample(stereo inp) {
-    F chord1 = sawo(P_C3) + sawo(P_Ds4) + sawo(P_C4) + pwmo(P_C1,0.25);
-    F chord2 = sawo(P_Gs2) + sawo(P_F4) + sawo(P_C4) + pwmo(P_F1,0.25);
-    F chord3 = sawo(P_D3) + sawo(P_D3) + sawo(P_B3) + pwmo(P_G1,0.25);
-    chord1 = chord1 * vol(slew(S0(0.5),1e-4,1e-6)) + 
-        chord2 * vol(S1(0.)) +
-        chord3 * vol(S0(0.));
-   float cutoff = vol(S4(0.75));
-   F out = lpf(chord1, cutoff, 0.f);
-   //printf("%f\n", out);
-   //out=chord1;
+float rompler(const char *fname) {
+	wave_t *wave=get_wave_by_name(fname);
+	return (wave && wave->frames) ? wave->frames[(G->sampleidx/2) % (wave->num_frames)] : 0.f;
+}
 
-    //out = squareo(P_E4) * 0.5;
-    
-    // float t= exp2f(-0.0002f * (G->sampleidx&65535));
-    // out += sino(P_A5) * t;
-    
-    wave_t *wave=get_wave_by_name((char*)"break_sesame");
-    F drums = 0.;
-    if (wave && wave->frames && wave->num_frames) drums = wave->frames[(G->sampleidx/2) % (wave->num_frames)];
-    //drums=soft(drums*10.)/10.;
-    //out+=rndt() * 0.1f;
-    
-   	stereo dry=stereo{out*0.5f,out*0.5f};
-    stereo wet=reverb(dry*0.125f);
-    wet = wet+dry+drums*0.5f;
+
+stereo do_sample(stereo inp) {
+    F chord1 = sawo(P_C3) + sawo(P_Ds4) + sawo(P_C4) + pwmo(P_C1,0.25) + sino(P_C5) + sino(P_C6);
+    F chord2 = sawo(P_Gs2) + sawo(P_F4) + sawo(P_C4) + pwmo(P_F1,0.25) + sino(P_F5) + sino(P_Ds6);
+    F chord3 = sawo(P_D3) + sawo(P_B3) + sawo(P_G2) + pwmo(P_G1,0.25) + sino(P_G5);
+    chord1 = chord1 * vol(slew(S0(0.5))) + 
+        chord2 * vol(slew(S1(0.))) +
+        chord3 * vol(slew(S0(0.)));
+   //F bass = sclip(lpf_dp(sawo(P_C1)+sawo(P_C2*1.03324f)+sawo(P_C2*0.99532f), P_C3, 0.1f))*0.2; // growly bass    
+   F drums = 0.5f * sclip(5.*rompler("break_sesame")) * sclip(10.*S4(0)); 
+   F mixed = chord1;
+    stereo dry=stereo{mixed*0.5f,mixed*0.5f};
+    stereo wet=reverb(dry*0.5f);
+    wet = wet+dry*0.2+drums*0.5f;
+    wet = sclip(wet);
     return wet;
 }
 

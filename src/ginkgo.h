@@ -112,12 +112,12 @@ static inline float *ba_get_default(bump_array_t *sa, int count, float def) {
     int i = sa->i;
     if (RARE(i + count > sa->n)) {
         ba_grow(sa, i + count);
-        if (count>0) sa->data[i] = def;
+        if (count > 0)
+            sa->data[i] = def;
     }
     sa->i += count;
     return &sa->data[i];
 }
-
 
 typedef struct sound_pair_t {
     char *key;
@@ -134,27 +134,41 @@ typedef struct sound_request_t {
     int value;
 } sound_request_t;
 
-#define STATE_BASIC_FIELDS                                                                                                         \
-    int _ver;                                                                                                                      \
-    int _size;                                                                                                                     \
-    int reloaded;                                                                                                                  \
-    uint8_t midi_cc[128];                                                                                                          \
-    uint32_t midi_cc_gen[128];                                                                                                     \
-    int cursor_x, cursor_y;                                                                                                        \
-    float mx, my;                                                                                                                  \
-    int mb;                                                                                                                        \
-    int old_mb;                                                                                                                    \
-    double iTime;                                                                                                                  \
-    uint32_t sampleidx;                                                                                                            \
-    atomic_flag load_request_cs;                                                                                                   \
-    sound_pair_t *sounds;                                                                                                          \
-    sound_request_t *load_requests;                                                                                                \
-    bump_array_t sliders[16];                                                                                                      \
-    int sliders_hwm[16];                                                                                                           \
-    bump_array_t audio_bump;
+struct reverb_state_t {
+    float reverbbuf[65536];
+    int reverb_pos;
+    int shimmerpos1 = 2000;
+    int shimmerpos2 = 1000;
+    int shimmerfade = 0;
+    int dshimmerfade = 32768/4096;
+    float aplfo[2]={1.f,0.f};
+    float aplfo2[2]={1.f,0.f};
+    float fb1 = 0;
+    float lpf = 0.f, dc = 0.f;
+    float lpf2 = 0.f;
+};
+
+
 
 typedef struct basic_state_t {
-    STATE_BASIC_FIELDS
+    int _ver;
+    int _size;
+    int reloaded;
+    uint8_t midi_cc[128];
+    uint32_t midi_cc_gen[128];
+    int cursor_x, cursor_y;
+    float mx, my;
+    int mb;
+    int old_mb;
+    double iTime;
+    uint32_t sampleidx;
+    atomic_flag load_request_cs;
+    sound_pair_t *sounds;
+    sound_request_t *load_requests;
+    bump_array_t sliders[16];
+    int sliders_hwm[16];
+    bump_array_t audio_bump;
+    reverb_state_t R;
 } basic_state_t;
 
 extern basic_state_t *_BG;
@@ -216,7 +230,7 @@ static inline const float *lfo2(float dphase) { // quadrature output
     return state;
 }
 
-static inline float slew(float x, float upfac, float downfac) {
+static inline float slew(float x, float upfac = 1e-5, float downfac = 1e-5) {
     float *state = ba_get(&G->audio_bump, 1);
     float old = state[0];
     state[0] = old + (x - old) * ((x > old) ? upfac : downfac);
@@ -236,8 +250,9 @@ typedef struct stereo {
     float l, r;
 } stereo;
 
-#define STEREO(l, r) stereo{l, r}
-     
+#define STEREO(l, r)                                                                                                               \
+    stereo { l, r }
+
 static inline stereo operator+(stereo a, stereo b) { return STEREO(a.l + b.l, a.r + b.r); }
 static inline stereo operator+(stereo a, float b) { return STEREO(a.l + b, a.r + b); }
 static inline stereo operator-(stereo a, stereo b) { return STEREO(a.l - b.l, a.r - b.r); }
@@ -315,21 +330,21 @@ static inline float ladder(float inp, float s[5], float f, float r) {
     return y3;
 }
 
+static inline float ssclip(float x) { return atanf(x) * (2.f / PI); }
+static inline float sclip(float x) { return tanhf(x); }
+static inline float clip(float x) { return clampf(x, -1.f, 1.f); }
 
-static inline float soft(float x) { return atanf(x) * (2.f / PI); }
-static inline float medium(float x) { return tanhf(x); }
-static inline float hard(float x) { return clampf(x, -1.f, 1.f); }
-
-static inline stereo ensure_finite_stereo(stereo s) {
-    return (stereo){.l = isfinite(s.l) ? s.l : 0.f, .r = isfinite(s.r) ? s.r : 0.f};
+static inline float ensure_finite(float s) {
+    return isfinite(s) ? s : 0.f;
 }
 
-static inline stereo stereo_soft(stereo s) { return (stereo){.l = atanf(s.l) * (2.f / PI), .r = atanf(s.r) * (2.f / PI)}; }
+static inline stereo ensure_finite(stereo s) {
+    return (stereo){.l = ensure_finite(s.l), .r = ensure_finite(s.r)};
+}
 
-static inline stereo stereo_medium(stereo s) { return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)}; }
-
-static inline stereo stereo_hard(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
-
+static inline stereo ssclip(stereo s) { return (stereo){.l = atanf(s.l) * (2.f / PI), .r = atanf(s.r) * (2.f / PI)}; }
+static inline stereo sclip(stereo s) { return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)}; }
+static inline stereo clip(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
 
 typedef struct svf_output_t {
     float lp, bp, hp;
@@ -342,18 +357,18 @@ static inline svf_output_t svf_process(float *f, float x, float g, float R) {
     const float v1 = a1 * (f[0] + g * v3);
     const float v2 = f[1] + g * v1;
     // state updates (trapezoidal integrators)
-    //v1 = soft(v1); v2=soft(v2); // nonlinearity anyone?
+    // v1 = soft(v1); v2=soft(v2); // nonlinearity anyone?
     f[0] = 2.f * v1 - f[0];
     f[1] = 2.f * v2 - f[1];
     return (svf_output_t){.lp = v2, .bp = v1, .hp = x - R * v1 - v2};
 }
 
 // approximation to tanh for 0-0.25 nyquist.
-static inline float svf_g_approx(float fc) { // fc is 0-1 by convention here. (1='nyquist' but we oversample 2x)
-    // return tanf(QUARTER_PI * fc / FS);
+static inline float svf_g_approx(float fc) { // fc is like a dphase, ie P_C4 etc constants work
+    // return tanf(PI * fc / FS);
     //  https://www.desmos.com/calculator/qoy3dgydch
-    static const float A = 0.7715117872827156f;
-    static const float B = 0.22026338589733901;
+    static const float A = 0.7715117872827156f * 4.f;
+    static const float B = 0.22026338589733901f * 4.f;
     return fc * (A + B * fc * fc); // tan fit
 }
 
@@ -363,12 +378,15 @@ static inline float svf_R(float q) { return 1.f / q; }
 static inline float svf_g_nice(float fc) { return pow2(fc); }
 static inline float svf_R_nice(float q) { return SQRT2 * (1.02f - minf(q, 1.f)); }
 
+static inline float lpf_dp(float x, float fc_dp, float q) { // takes fc as an osc style dphase
+    float *state = ba_get(&G->audio_bump, 2);
+    float y = svf_process(state, x, svf_g_approx(fc_dp), svf_R_nice(q)).lp;
+    return y;
+}
+
 static inline float lpf(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
     float y = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).lp;
-    if (isnan(y)) {
-        printf("nan in lpf\n");
-    }
     return y;
 }
 
@@ -387,7 +405,7 @@ static inline float lpf4(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 4);
     float g = svf_g_nice(fc), r = svf_R_nice(q);
     x = svf_process(state, x, g, r).lp;
-    return svf_process(state+1, x, g, r).lp;
+    return svf_process(state + 1, x, g, r).lp;
 }
 
 // 4 pole hipass
@@ -395,7 +413,7 @@ static inline float hpf4(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 4);
     float g = svf_g_nice(fc), r = svf_R_nice(q);
     x = svf_process(state, x, g, r).hp;
-    return svf_process(state+1, x, g, r).hp;
+    return svf_process(state + 1, x, g, r).hp;
 }
 
 // 4 pole bandpass
@@ -403,14 +421,13 @@ static inline float bpf4(float x, float fclo, float fchi, float q) {
     float *state = ba_get(&G->audio_bump, 4);
     float r = svf_R_nice(q);
     x = svf_process(state, x, svf_g_nice(fchi), r).lp;
-    return svf_process(state+1, x, svf_g_nice(fclo), r).hp;
+    return svf_process(state + 1, x, svf_g_nice(fclo), r).hp;
 }
-
 
 static inline float peakf(float x, float gain, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
     svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
-    return o.lp + o.hp + gain*o.bp;
+    return o.lp + o.hp + gain * o.bp;
 }
 
 static inline float notchf(float x, float fc, float q) {
@@ -418,7 +435,6 @@ static inline float notchf(float x, float fc, float q) {
     svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
     return o.lp + o.hp;
 }
-
 
 int test_lib_func(void);
 void init_basic_state(void);
@@ -442,7 +458,7 @@ static inline wave_t *get_wave(Sound *sound, int index) {
     return w->frames ? w : request_wave_load(sound, index);
 }
 
-static inline wave_t *get_wave_by_name(char *name) {
+static inline wave_t *get_wave_by_name(const char *name) {
     int index = 0;
     const char *colon = strchr(name, ':');
     if (!colon)
@@ -654,28 +670,28 @@ static inline float do_slider(int slider_idx, basic_state_t *G, int myline, floa
 }
 
 #define S_(slider_idx, def) do_slider(slider_idx, (basic_state_t *)G, __LINE__, def)
-#define S0(def) S_(0,def)
-#define S1(def) S_(1,def)
-#define S2(def) S_(2,def)
-#define S3(def) S_(3,def)
-#define S4(def) S_(4,def)
-#define S5(def) S_(5,def)
-#define S6(def) S_(6,def)
-#define S7(def) S_(7,def)
-#define S8(def) S_(8,def)
-#define S9(def) S_(9,def)
-#define S10(def) S_(10,def)
-#define S11(def) S_(11,def)
-#define S12(def) S_(12,def)
-#define S13(def) S_(13,def)
-#define S14(def) S_(14,def)
-#define S15 S_(15, def)  
-#define SA S_(10,def)
-#define SB S_(11,def)
-#define SC S_(12,def)
-#define SD S_(13,def)
-#define SE S_(14,def)
-#define SF S_(15,def)
+#define S0(def) S_(0, def)
+#define S1(def) S_(1, def)
+#define S2(def) S_(2, def)
+#define S3(def) S_(3, def)
+#define S4(def) S_(4, def)
+#define S5(def) S_(5, def)
+#define S6(def) S_(6, def)
+#define S7(def) S_(7, def)
+#define S8(def) S_(8, def)
+#define S9(def) S_(9, def)
+#define S10(def) S_(10, def)
+#define S11(def) S_(11, def)
+#define S12(def) S_(12, def)
+#define S13(def) S_(13, def)
+#define S14(def) S_(14, def)
+#define S15 S_(15, def)
+#define SA S_(10, def)
+#define SB S_(11, def)
+#define SC S_(12, def)
+#define SD S_(13, def)
+#define SE S_(14, def)
+#define SF S_(15, def)
 #define LOG(...)                                                                                                                   \
     {                                                                                                                              \
         static int count = 0;                                                                                                      \
@@ -695,7 +711,7 @@ void init_state(void);
 size_t get_state_size(void);
 int get_state_version(void);
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
-    G = (basic_state_t*)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
+    G = (basic_state_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
     for (int i = 0; i < frames; i++) {
         // reset the per-sample bump allocators
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
@@ -715,10 +731,7 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 #endif
 
 #define STATE_VERSION(version, ...)                                                                                                \
-    typedef struct state {                                                                                                         \
-        STATE_BASIC_FIELDS                                                                                                         \
-        __VA_ARGS__                                                                                                                \
-    } state;                                                                                                                       \
+    typedef struct state : public basic_state_t{__VA_ARGS__} state;                                                                \
     size_t get_state_size(void) { return sizeof(state); }                                                                          \
     int get_state_version(void) { return version; }
 

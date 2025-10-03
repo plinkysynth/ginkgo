@@ -18,7 +18,7 @@
 /euclid sd(3,8) '.  a      z . ' 
 
 kicklinn
-
+Breaks_Let_There_Break
 #endif
 
 
@@ -44,9 +44,9 @@ stereo do_sample(stereo inp) {
     // float t= exp2f(-0.0002f * (G->sampleidx&65535));
     // out += sino(P_A5) * t;
     
-    // wave_t *wave=get_wave_by_name("harp:0");
-    // out=0.f;
-    // if (wave && wave->frames && wave->num_frames) out=wave->frames[(G->sampleidx) % (wave->num_frames/20)] * 10.;
+    wave_t *wave=get_wave_by_name("bass0:1");
+    out=0.f;
+    if (wave && wave->frames && wave->num_frames) out=wave->frames[(G->sampleidx/2) % (wave->num_frames)];
     
    	stereo dry=STEREO(out,out);
     return dry;

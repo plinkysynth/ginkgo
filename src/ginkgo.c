@@ -827,6 +827,7 @@ static inline Sound *get_sound_span(const char *s, const char *e) { return get_s
 
 autocomplete_option_t autocomplete_score(const char *users, int userlen, int minmatch, const char *option) {
     autocomplete_option_t rv={option};
+    /*
     // find the longest substring of option that starts at 'users'
     for (const char *c = option; *c; c++) {
         int i;
@@ -845,7 +846,28 @@ autocomplete_option_t autocomplete_score(const char *users, int userlen, int min
             rv.xoffset = c-option;
             rv.matchlen = i;
         }
+    }*/
+    // try: letters must appear in order...
+    const char *src = users;
+    const char *srcend = users+userlen;
+    const char *c = option;
+
+    while (*c && src<srcend) {
+        while (src<srcend && *c && tolower(*src) != tolower(*c)) {
+            ++c;
+            if (src==users) rv.xoffset++;
+        }
+        int matchweight=1;
+        while (src<srcend && *c && tolower(*src) == tolower(*c)) {
+            ++c; ++src; rv.value+=matchweight; rv.matchlen++; matchweight+=5;
+        }
+        if (src>=srcend || *src!='_') break;
+        src++;
+        rv.matchlen++;
+        rv.value++;
     }
+    if (rv.matchlen < minmatch || rv.matchlen==strlen(option))
+        rv.value = 0;
     return rv;
 }
 
@@ -948,6 +970,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
         case '"': {
             col = C_STR;
             j = scan_string(t.str, i, t.n, '"');
+            if (!pattern_mode && i <= E->cursor_idx && j >= E->cursor_idx) {
+                cursor_in_type = 'i';
+            }
+
         } break;
         case '\'': {
             col = C_STR;
@@ -1111,7 +1137,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
                 // fill to the end of the line
-                if (pattern_mode) {
+                if (pattern_mode && t.y>=0 && t.y<TMH) {
                     for (; t.x < tmw; t.x++) {
                         t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     }
@@ -1228,14 +1254,19 @@ int code_color(EditorState *E, uint32_t *ptr) {
     stbds_hmfree(E->autocomplete_options);
     if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after) {
         // autocomplete popup
-        int num_chars_so_far = E->cursor_idx - cursor_token_start_idx;
-        int token_len = cursor_token_end_idx - cursor_token_start_idx;
         const char *token = &t.str[cursor_token_start_idx];
+        int pm = E->cursor_in_pattern_area;
+        if (token[0] == '"') {
+            token++;
+            cursor_token_start_idx++;
+            pm = true;
+        }
+        int token_len = cursor_token_end_idx - cursor_token_start_idx;
+        int num_chars_so_far = E->cursor_idx - cursor_token_start_idx;
         int x, y;
         idx_to_xy(E, cursor_token_start_idx, &x, &y);
         y -= E->intscroll;
         if (num_chars_so_far >= 2) { // at least 2 chars
-            int pm = E->cursor_in_pattern_area;
             
             int bestscore = 2;
             char *bestoption = NULL;
@@ -1297,9 +1328,15 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         if (o->matchlen == strlen(o->key))
                             continue;
                         if (y==avoid_y+1) {
-                            print_span_to_screen(t.ptr, x + left - o->xoffset, y, C_AUTOCOMPLETE, false, o->key, o->key + o->xoffset);
-                            print_span_to_screen(t.ptr, x + left, y, C_SELECTION, false, o->key + o->xoffset, o->key + o->xoffset + o->matchlen);
-                            print_to_screen(t.ptr, x + left + o->matchlen, y, C_AUTOCOMPLETE, false, o->key + o->xoffset + o->matchlen);    
+                            int xx = x+left-o->xoffset;
+                            const char *s=token;
+                            const char *e=token+token_len;
+                            for (const char *c=o->key; *c; c++) {
+                                bool match = s<e && (tolower(*c)==tolower(*s));
+                                if (match) s++;
+                                if (xx>=0 && xx<TMW && y>=0 && y<TMH) t.ptr[xx+y*TMW] = (match?C_SELECTION:C_AUTOCOMPLETE) | (unsigned char)(*c);
+                                xx++;
+                            }
                         } else {
                             print_to_screen(t.ptr, x + left - o->xoffset, y, C_AUTOCOMPLETE_SECONDARY, false, o->key);
                         }

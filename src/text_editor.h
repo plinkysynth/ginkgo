@@ -23,9 +23,9 @@ typedef struct autocomplete_option_t {
 } autocomplete_option_t;
 
 typedef struct EditorState {
-    char *str;           // stb stretchy buffer
-    char *fname;         // name of the file
-    edit_op_t *edit_ops; // stretchy buffer
+    char *str;                                   // stb stretchy buffer
+    char *fname;                                 // name of the file
+    edit_op_t *edit_ops;                         // stretchy buffer
     autocomplete_option_t *autocomplete_options; // stretchy buffer
     int autocomplete_index;
     int autocomplete_scroll_y;
@@ -57,8 +57,8 @@ typedef struct EditorState {
     error_msg_t *error_msgs;
     float click_fx;
     float click_fy;
-    float click_slider_value; 
-    int click_down_idx; // where in the text we clicked down.   
+    float click_slider_value;
+    int click_down_idx; // where in the text we clicked down.
 } EditorState;
 
 typedef struct slider_spec_t {
@@ -128,8 +128,6 @@ int looks_like_slider_comment(const char *str, int n, int idx,
     out->value_end_idx = i;
     return 1;
 }
-
-
 
 edit_op_t apply_edit_op(EditorState *E, edit_op_t op, int update_cursor_idx) {
     int old_cursor_idx = E->cursor_idx;
@@ -288,17 +286,18 @@ int count_leading_spaces(EditorState *E, int start_idx) {
     return x;
 }
 
-static inline bool isseparator(char c) { return c==' ' || c=='\t' || c=='\n' || c=='\r' || c==';' || c==',' || c==':' || c=='.' || c=='(' || c==')' || c=='[' || c==']' || c=='{' || c=='}' || c=='\'' || c=='\"' || c=='`'; }
-static inline bool isnewline(char c) { return c=='\n' || c=='\r'; }
-
-static inline void postpone_autocomplete_show(EditorState *E) {
-    E->autocomplete_show_after = G->iTime + 0.5f;
+static inline bool isseparator(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ';' || c == ',' || c == ':' || c == '.' || c == '(' ||
+           c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '\'' || c == '\"' || c == '`';
 }
+static inline bool isnewline(char c) { return c == '\n' || c == '\r'; }
+
+static inline void postpone_autocomplete_show(EditorState *E) { E->autocomplete_show_after = G->iTime + 0.5f; }
 
 void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
     postpone_autocomplete_show(E);
     y += E->scroll_y;
-    int tmw = (fbw-64.f) / E->font_width;
+    int tmw = (fbw - 64.f) / E->font_width;
     float fx = (x / E->font_width + 0.5f);
     float fy = (y / E->font_height);
     int cx = (int)fx;
@@ -307,21 +306,21 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
         E->click_fx = fx;
         E->click_fy = fy;
         E->mouse_dragging_chart = E->mouse_hovering_chart;
-    }        
-    if (E->mouse_hovering_chart && is_drag<0) {
+    }
+    if (E->mouse_hovering_chart && is_drag < 0) {
         E->mouse_clicked_chart = click_count > 0;
     }
     if (!E->mouse_dragging_chart) {
         // sliders on the right interaction
-        if (E->click_fx >= tmw-16 && E->click_fx < tmw) {
-            for (int slideridx=0;slideridx<16;++slideridx) {
-                for (int i=0;i<G->sliders[slideridx].n;i+=2) {
-                    int line = G->sliders[slideridx].data[i+1] - E->intscroll;
-                    if (line==(int)E->click_fy) {
+        if (E->click_fx >= tmw - 16 && E->click_fx < tmw) {
+            for (int slideridx = 0; slideridx < 16; ++slideridx) {
+                for (int i = 0; i < G->sliders[slideridx].n; i += 2) {
+                    int line = G->sliders[slideridx].data[i + 1] - E->intscroll;
+                    if (line == (int)E->click_fy) {
                         if (!is_drag) {
                             E->click_slider_value = G->sliders[slideridx].data[i];
                         } else {
-                            float newvalue = clampf(E->click_slider_value + (fx-E->click_fx)/16.f, 0.f, 1.f);
+                            float newvalue = clampf(E->click_slider_value + (fx - E->click_fx) / 16.f, 0.f, 1.f);
                             G->sliders[slideridx].data[i] = newvalue;
                         }
                         return;
@@ -334,14 +333,15 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
         int left = 64 / E->font_width;
         cx -= left;
 
-        //int looks_like_slider_comment(const char *str, int n, int idx,slider_spec_t *out) { // see if 'idx' is inside a /*0======5*/<whitespace>number type comment.
+        // int looks_like_slider_comment(const char *str, int n, int idx,slider_spec_t *out) { // see if 'idx' is inside a
+        // /*0======5*/<whitespace>number type comment.
         int click_idx = xy_to_idx(E, cx, cy);
         if (!is_drag) {
             E->click_down_idx = click_idx;
         }
         slider_spec_t slider_spec;
         if (looks_like_slider_comment(E->str, stbds_arrlen(E->str), E->click_down_idx, &slider_spec)) {
-            
+
             int slider_x1, slider_x2, slider_y;
             idx_to_xy(E, slider_spec.start_idx, &slider_x1, &slider_y);
             idx_to_xy(E, slider_spec.end_idx, &slider_x2, &slider_y);
@@ -349,17 +349,19 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                 E->click_slider_value = slider_spec.curval;
             }
             float dv = fx - E->click_fx;
-            float v = E->click_slider_value + (slider_spec.maxval - slider_spec.minval) * (dv / (slider_x2-slider_x1));
-            v=clampf(v, slider_spec.minval, slider_spec.maxval);
-            //printf("slider value: %f\n", v);
-            if (v!=slider_spec.curval) {
+            float v = E->click_slider_value + (slider_spec.maxval - slider_spec.minval) * (dv / (slider_x2 - slider_x1));
+            v = clampf(v, slider_spec.minval, slider_spec.maxval);
+            // printf("slider value: %f\n", v);
+            if (v != slider_spec.curval) {
                 char buf[32];
                 int numdecimals = clampi(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0, 5);
                 char fmtbuf[32];
                 snprintf(fmtbuf, sizeof(fmtbuf), "%%0.%df", numdecimals);
                 snprintf(buf, sizeof(buf), fmtbuf, v);
                 char *end = buf + strlen(buf);
-                if (strrchr(buf,'.')) while (end>buf && end[-1]=='0') --end;
+                if (strrchr(buf, '.'))
+                    while (end > buf && end[-1] == '0')
+                        --end;
                 *end = 0;
                 // TODO : undo merging. for now, just poke the text in directly.
                 stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
@@ -373,27 +375,35 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                 E->select_idx = E->cursor_idx;
             idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
             E->cursor_x_target = E->cursor_x;
-            if (is_drag<0 && click_count==2) {
+            if (is_drag < 0 && click_count == 2) {
                 // double click - select word
-                int idx,idx2;
-                for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isseparator(E->str[idx])) break;
-                for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isseparator(E->str[idx2])) break;
-                E->select_idx = idx2+1;
+                int idx, idx2;
+                for (idx = E->cursor_idx; idx < stbds_arrlen(E->str); ++idx)
+                    if (isseparator(E->str[idx]))
+                        break;
+                for (idx2 = E->cursor_idx; idx2 >= 0; --idx2)
+                    if (isseparator(E->str[idx2]))
+                        break;
+                E->select_idx = idx2 + 1;
                 E->cursor_idx = idx;
             }
-            if (is_drag<0 && click_count==3) {
+            if (is_drag < 0 && click_count == 3) {
                 // triple click - select line
-                int idx,idx2;
-                for (idx = E->cursor_idx; idx<stbds_arrlen(E->str); ++idx) if (isnewline(E->str[idx])) break;
-                for (idx2 = E->cursor_idx; idx2>=0; --idx2) if (isnewline(E->str[idx2])) break;
-                E->select_idx = idx2+1;
+                int idx, idx2;
+                for (idx = E->cursor_idx; idx < stbds_arrlen(E->str); ++idx)
+                    if (isnewline(E->str[idx]))
+                        break;
+                for (idx2 = E->cursor_idx; idx2 >= 0; --idx2)
+                    if (isnewline(E->str[idx2]))
+                        break;
+                E->select_idx = idx2 + 1;
                 E->cursor_idx = idx;
             }
         }
     }
 }
 
-static inline bool isspaceortab(char c) { return c==' ' || c=='\t'; }
+static inline bool isspaceortab(char c) { return c == ' ' || c == '\t'; }
 
 int jump_to_found_text(EditorState *E, int backwards, int extra_char) {
     int delta = backwards ? -1 : 1;
@@ -401,18 +411,23 @@ int jump_to_found_text(EditorState *E, int backwards, int extra_char) {
     int se = get_select_end(E);
     const char *needle = E->str + ss;
     int needle_len = se - ss;
-    if (!extra_char) { ss+=delta; se+=delta; }
+    if (!extra_char) {
+        ss += delta;
+        se += delta;
+    }
     int n = stbds_arrlen(E->str);
-    if (extra_char) n--;
-    while (ss>=0 && se<=n) {
-        if (strncmp(needle, E->str + ss, needle_len) == 0 && (extra_char==0 || E->str[ss+needle_len]==extra_char)) {
+    if (extra_char)
+        n--;
+    while (ss >= 0 && se <= n) {
+        if (strncmp(needle, E->str + ss, needle_len) == 0 && (extra_char == 0 || E->str[ss + needle_len] == extra_char)) {
             E->select_idx = ss;
             E->cursor_idx = ss + needle_len + (extra_char ? 1 : 0);
             return 1;
         }
-        ss+=delta; se+=delta;
+        ss += delta;
+        se += delta;
     }
-    return 0; 
+    return 0;
 }
 
 void editor_key(GLFWwindow *win, EditorState *E, int key) {
@@ -462,8 +477,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         case GLFW_KEY_F: {
             E->find_mode = true;
             break;
-        }
-        break;
+        } break;
         case GLFW_KEY_C:
         case GLFW_KEY_X: {
             int se = get_select_start(E);
@@ -494,62 +508,104 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
                 ss = xy_to_idx(E, 0, sy);
                 se = xy_to_idx(E, 0x7fffffff, ey);
-                char *str = make_cstring_from_span(E->str + ss, E->str + se, ((ey-sy)+1)*4);
+                char *str = make_cstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
                 int minx = 0x7fffffff;
                 int all_commented = true;
-                int n = se-ss;
-                for (int idx = 0; idx<n; ) {
-                    int x=0;
-                    while (idx<n && isspaceortab(str[idx])) { if (str[idx]=='\t') x=next_tab(x); else ++x; ++idx; }
-                    if (idx<n && str[idx]=='\n') { ++idx; continue; } // skip blank lines
-                    minx=mini(x, minx);
-                    if (idx+2>=n || str[idx]!='/' || str[idx+1]!='/') all_commented=false;
-                    while (idx<n) { ++idx; if (str[idx-1]=='\n') break; }
+                int n = se - ss;
+                for (int idx = 0; idx < n;) {
+                    int x = 0;
+                    while (idx < n && isspaceortab(str[idx])) {
+                        if (str[idx] == '\t')
+                            x = next_tab(x);
+                        else
+                            ++x;
+                        ++idx;
+                    }
+                    if (idx < n && str[idx] == '\n') {
+                        ++idx;
+                        continue;
+                    } // skip blank lines
+                    minx = mini(x, minx);
+                    if (idx + 2 >= n || str[idx] != '/' || str[idx + 1] != '/')
+                        all_commented = false;
+                    while (idx < n) {
+                        ++idx;
+                        if (str[idx - 1] == '\n')
+                            break;
+                    }
                 }
                 if (all_commented) { // remove the comments!
-                    int dstidx=0;
-                    for (int idx = 0; idx<n;) {
-                        while (idx<n && isspaceortab(str[idx])) str[dstidx++]=str[idx++];
-                        if (idx+2<n && str[idx]=='/' && str[idx+1]=='/') {
-                            int oldidx=idx;
-                            idx+=2;
-                            if (idx<n && isspaceortab(str[idx])) idx++;
-                            if (idx<E->cursor_idx) E->cursor_idx+=oldidx-idx;
-                            if (idx<E->select_idx) E->select_idx+=oldidx-idx;
-
+                    int dstidx = 0;
+                    for (int idx = 0; idx < n;) {
+                        while (idx < n && isspaceortab(str[idx]))
+                            str[dstidx++] = str[idx++];
+                        if (idx + 2 < n && str[idx] == '/' && str[idx + 1] == '/') {
+                            int oldidx = idx;
+                            idx += 2;
+                            if (idx < n && isspaceortab(str[idx]))
+                                idx++;
+                            if (idx < E->cursor_idx)
+                                E->cursor_idx += oldidx - idx;
+                            if (idx < E->select_idx)
+                                E->select_idx += oldidx - idx;
                         }
-                        while (idx<n) { str[dstidx++]=str[idx++]; if (str[dstidx-1]=='\n') break; }
+                        while (idx < n) {
+                            str[dstidx++] = str[idx++];
+                            if (str[dstidx - 1] == '\n')
+                                break;
+                        }
                     }
-                    str[dstidx]=0;
+                    str[dstidx] = 0;
                 } else { // add comments at minx
-                    for (int idx = 0; idx<n;) {
-                        int x=0;
-                        while (idx<n && x<minx && isspaceortab(str[idx])) { if (str[idx]=='\t') x=next_tab(x); else ++x; ++idx; }
-                        if (idx<n && str[idx]!='\n') {
-                            memmove(str+idx+3, str+idx, n-idx);
-                            str[idx++]='/';
-                            str[idx++]='/';
-                            str[idx++]=' ';
-                            n+=3;
-                            if (idx<=E->cursor_idx) E->cursor_idx+=3;
-                            if (idx<=E->select_idx) E->select_idx+=3;
+                    for (int idx = 0; idx < n;) {
+                        int x = 0;
+                        while (idx < n && x < minx && isspaceortab(str[idx])) {
+                            if (str[idx] == '\t')
+                                x = next_tab(x);
+                            else
+                                ++x;
+                            ++idx;
                         }
-                        while (idx<n) { ++idx; if (str[idx-1]=='\n') break; }
+                        if (idx < n && str[idx] != '\n') {
+                            memmove(str + idx + 3, str + idx, n - idx);
+                            str[idx++] = '/';
+                            str[idx++] = '/';
+                            str[idx++] = ' ';
+                            n += 3;
+                            if (idx <= E->cursor_idx)
+                                E->cursor_idx += 3;
+                            if (idx <= E->select_idx)
+                                E->select_idx += 3;
+                        }
+                        while (idx < n) {
+                            ++idx;
+                            if (str[idx - 1] == '\n')
+                                break;
+                        }
                     }
-                    str[n]=0;
-                    
+                    str[n] = 0;
                 }
                 push_edit_op(E, ss, se, str, 0);
                 E->find_mode = false;
-                if (sy!=ey) {
+                if (sy != ey) {
                     E->select_idx = ss;
-                    E->cursor_idx = ss+strlen(str);
+                    E->cursor_idx = ss + strlen(str);
                 }
                 stbds_arrfree(str);
                 break;
-            }        
-        break; }
+            }
+            break;
         }
+        }
+    bool autocomplete_valid = !shift && E->autocomplete_options && E->autocomplete_index >= 0 &&
+                              E->autocomplete_index < stbds_hmlen(E->autocomplete_options);
+    if (autocomplete_valid && (key=='\t' || key=='\n')) {
+        autocomplete_option_t *option = &E->autocomplete_options[E->autocomplete_index];
+        int matchfrom = E->cursor_idx - option->matchlen;
+        if (matchfrom < 0)
+            matchfrom = 0;
+        push_edit_op(E, matchfrom, matchfrom + option->matchlen, option->key, 1);
+    } else
     switch (key & 0xFFFF) {
     case '\b':
     case GLFW_KEY_BACKSPACE:
@@ -557,10 +613,9 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             int ss = get_select_start(E);
             int se = get_select_end(E);
             E->select_idx = ss;
-            E->cursor_idx = maxi(ss,se-1);
+            E->cursor_idx = maxi(ss, se - 1);
             break;
-        }
-        else if (has_selection) {
+        } else if (has_selection) {
             push_edit_op(E, get_select_start(E), get_select_end(E), NULL, 1);
         } else if (E->cursor_idx > 0) {
             push_edit_op(E, E->cursor_idx - 1, E->cursor_idx, NULL, 1);
@@ -579,41 +634,43 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         } else {
             int ss = get_select_start(E);
             int se = get_select_end(E);
-            if (!shift && E->autocomplete_options && E->autocomplete_index >= 0 && E->autocomplete_index < stbds_hmlen(E->autocomplete_options)) {
-                autocomplete_option_t *option = &E->autocomplete_options[E->autocomplete_index];
-                int matchfrom = E->cursor_idx - option->matchlen;
-                if (matchfrom<0) matchfrom = 0;
-                push_edit_op(E, matchfrom, matchfrom+option->matchlen, option->key, 1);
-                break;
-            }
             int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
-            if (sy==ey && !shift) goto insert_character;
+            if (sy == ey && !shift)
+                goto insert_character;
             ss = xy_to_idx(E, 0, sy);
             se = xy_to_idx(E, 0x7fffffff, ey);
-            char *str = make_cstring_from_span(E->str + ss, E->str +se, ((ey-sy)+1)*4);
-            for (char *c=str;*c;) {
+            char *str = make_cstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
+            for (char *c = str; *c;) {
                 if (shift) {
                     // skip up to 4 spaces or a tab.
-                    char *nextchar=c;
-                    for (int i=0;i<4;++i,++nextchar) if (*nextchar=='\t') { nextchar++; break;} else if (*nextchar!=' ') break;
-                    memmove(c, nextchar, strlen(nextchar)+1);
+                    char *nextchar = c;
+                    for (int i = 0; i < 4; ++i, ++nextchar)
+                        if (*nextchar == '\t') {
+                            nextchar++;
+                            break;
+                        } else if (*nextchar != ' ')
+                            break;
+                    memmove(c, nextchar, strlen(nextchar) + 1);
                 } else {
-                    memmove(c+4, c, strlen(c)+1);
-                    memset(c,' ', 4);
+                    memmove(c + 4, c, strlen(c) + 1);
+                    memset(c, ' ', 4);
                 }
-                while (*c && *c!='\n') ++c;
-                if (*c=='\n') ++c;
+                while (*c && *c != '\n')
+                    ++c;
+                if (*c == '\n')
+                    ++c;
             }
             push_edit_op(E, ss, se, str, 1);
             E->select_idx = ss;
-            E->cursor_idx = ss+strlen(str);
+            E->cursor_idx = ss + strlen(str);
             stbds_arrfree(str);
         }
         break;
-    }        
+    }
     case '\n':
+
     case ' ' ... '~':
-insert_character:
+    insert_character:
         if (!super && !ctrl) {
             if (E->find_mode) {
                 jump_to_found_text(E, shift, key);
@@ -621,7 +678,7 @@ insert_character:
                 E->autocomplete_show_after = 0.f; // after typing, we can immediately show autocomplete.
                 // delete the selection; insert the character
                 int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
-                char buf[ls+2];
+                char buf[ls + 2];
                 buf[0] = key;
                 memset(buf + 1, ' ', ls);
                 buf[ls + 1] = 0;
@@ -702,7 +759,7 @@ insert_character:
         }
         break;
     case GLFW_KEY_PAGE_DOWN:
-    postpone_autocomplete_show(E);
+        postpone_autocomplete_show(E);
         if (E->find_mode) {
             jump_to_found_text(E, 0, 0);
         } else {

@@ -124,7 +124,8 @@ static inline const char *escape_url(char *dstbuf, const char *s, const char *e)
     return dstbuf;
 }
 
-int parse_strudel_json(const char *json_url) {
+int parse_strudel_json(const char *json_url, const char *sound_prefix) {
+    int prefix_len = sound_prefix ? strlen(sound_prefix) : 0;
     const char *json_fname = fetch_to_cache(json_url, 1);
     char *json = load_file(json_fname);
     sj_Reader r = sj_reader(json, stbds_arrlen(json));
@@ -143,7 +144,10 @@ int parse_strudel_json(const char *json_url) {
                        soundval.type);
             }
         } else {
-            char *sound_name = temp_cstring_from_span(soundkey.start, soundkey.end);
+            int sound_name_len = (soundkey.end-soundkey.start) + prefix_len;
+            char sound_name[sound_name_len+1]={};
+            memcpy(sound_name, sound_prefix, prefix_len);
+            memcpy(sound_name+prefix_len, soundkey.start, soundkey.end-soundkey.start);
             Sound *sound = get_sound_init_only(sound_name);
             sj_Value samplekey, sample;
             for (int i = 0; sj_iter_array_or_object(&r, soundval, &samplekey, &sample); i++) {
@@ -152,7 +156,13 @@ int parse_strudel_json(const char *json_url) {
                 int numurl = get_url_length_after_escaping(sample.start, sample.end);
                 stbds_arrsetlen(url, numbase + numurl + 1);
                 memcpy(url, base.start, numbase);
-                escape_url(url + numbase, sample.start, sample.end);
+                url[numbase] = 0;
+                if (strncmp(url, "file://", 7) == 0 || strstr(url, "://")==0) {
+                    memcpy(url + numbase, sample.start, sample.end - sample.start);
+                    url[numbase + (sample.end - sample.start)] = 0;
+                } else {
+                    escape_url(url + numbase, sample.start, sample.end);
+                }
                 int midinote = parse_midinote(samplekey.start, samplekey.end, false);
                 // printf("%.*s (%d) -> %s\n", (int)(samplekey.end-samplekey.start), samplekey.start, midinote, url);
                 int j;
@@ -185,22 +195,35 @@ int parse_strudel_json(const char *json_url) {
     return 1;
 }
 
+int num_waves(void) {
+    int n = num_sounds();
+    int numwaves=0;
+    for (int i =0 ;i<n;++i)
+        numwaves+=stbds_arrlen(G->sounds[i].value->waves);
+    return numwaves;
+}
+
 int init_sampler(void) {
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"
 #define TS "https://raw.githubusercontent.com/todepond/samples/main/"
     // bd seems to be in here...
-    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/uzu-drumkit/refs/heads/main/strudel.json");
+    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/uzu-drumkit/refs/heads/main/strudel.json", NULL);
     parse_strudel_json(
-        "https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json"); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
+        "https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json", NULL); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
     // parse_strudel_json(DS "Dirt-Samples/strudel.json");
-    parse_strudel_json(DS "tidal-drum-machines.json");
-    parse_strudel_json(DS "piano.json");
+    parse_strudel_json(DS "tidal-drum-machines.json", NULL);
+    parse_strudel_json(DS "piano.json", NULL);
     // parse_strudel_json(DS "Dirt-Samples.json");
-    parse_strudel_json(DS "EmuSP12.json");
+    parse_strudel_json(DS "EmuSP12.json", NULL);
     // parse_strudel_json(DS "uzu-drumkit.json"); 404 not found?
-    parse_strudel_json(DS "vcsl.json");
-    parse_strudel_json(DS "mridangam.json");
+    parse_strudel_json(DS "vcsl.json", NULL);
+    parse_strudel_json(DS "mridangam.json", NULL);
+    parse_strudel_json("https://raw.githubusercontent.com/yaxu/clean-breaks/main/strudel.json", "break_");
+    parse_strudel_json("https://raw.githubusercontent.com/switchangel/breaks/main/strudel.json", "switchangel_");
+    parse_strudel_json("https://raw.githubusercontent.com/switchangel/pad/main/strudel.json", "switchangel_");
+    parse_strudel_json("file://samples/junglejungle/strudel.json", NULL);
     parse_strudel_alias_json(TS "tidal-drum-machines-alias.json");
+    printf(COLOR_YELLOW "%d" COLOR_RESET " sounds registered, " COLOR_GREEN "%d" COLOR_RESET " waves.\n", num_sounds(), num_waves());
     return 0;
 }
 

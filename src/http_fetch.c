@@ -70,6 +70,9 @@ static void write_small(const char *p, const char *s) {
 }
 
 const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the path to the cached file
+    if (strncmp(url, "file://", 7) == 0) {
+        return url + 7;
+    }
     static char out_path[1024];
     static CURL *curl;
     size_t out_cap = sizeof out_path;

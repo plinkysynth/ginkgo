@@ -34,32 +34,35 @@
 #include "sampler.h"
 #include "text_editor.h"
 
-char status_bar[512];
-double status_bar_time = 0;
-uint32_t status_bar_color = 0;
-
-
-
-void set_status_bar(uint32_t color, const char *msg, ...) {
-    va_list args;
-    va_start(args, msg);
-    vsnprintf(status_bar, sizeof(status_bar) - 1, msg, args);
-    va_end(args);
-    fprintf(stderr, "%s\n", status_bar);
-    status_bar_color = color;
-    status_bar_time = glfwGetTime();
-}
+#define RESW 1920
+#define RESH 1080
 
 static void die(const char *msg) {
     fprintf(stderr, "ERR: %s\n", msg);
     exit(1);
 }
+
 static void check_gl(const char *where) {
     GLenum e = glGetError();
     if (e != GL_NO_ERROR) {
         fprintf(stderr, "GL error 0x%04x at %s\n", e, where);
         exit(1);
     }
+}
+
+static void bind_texture_to_slot(GLuint shader, int slot, const char* uniform_name, GLuint texture, GLenum mag_filter) {
+    glUniform1i(glGetUniformLocation(shader, uniform_name), slot);
+    glActiveTexture(GL_TEXTURE0 + slot);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
+}
+
+static void draw_fullscreen_pass(GLuint fbo, int viewport_w, int viewport_h, GLuint vao) {
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glViewport(0, 0, viewport_w, viewport_h);    
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    check_gl("draw fullscreen pass");
 }
 
 static GLuint link_program(GLuint vs, GLuint fs) {
@@ -93,7 +96,7 @@ void main() {
     gl_Position = vec4(p.x * 2.0 - 1.0, p.y * 2.0 - 1.0, 0.0, 1.0);
 });
 
-const char *kFS2_prefix = SHADER(
+const char *kFS_user_prefix = SHADER(
 out vec4 o_color; 
 in vec2 v_uv; 
 uniform uint iFrame;
@@ -101,6 +104,7 @@ uniform float iTime;
 uint seed; 
 uniform sampler2D uFP; 
 uniform ivec2 uScreenPx;
+
 float saturate(float x) { return clamp(x, 0.0, 1.0); }
 uint pcg_next() { return seed = seed * 747796405u + 2891336453u; } 
 float rnd() { return float((pcg_next())) / 4294967296.0; } 
@@ -116,7 +120,7 @@ vec3 c(vec2 uv) {
     // user code follows
 );
     
-const char *kFS2_suffix = SHADER_NO_VERSION(
+const char *kFS_user_suffix = SHADER_NO_VERSION(
    return o; } // end of user shader
     void main() {
         vec2 fragCoord = gl_FragCoord.xy;
@@ -124,7 +128,7 @@ const char *kFS2_suffix = SHADER_NO_VERSION(
         o_color = vec4(c(v_uv), 1.0);
     });
 
-const char *kFS_downsample = SHADER(
+const char *kFS_bloom = SHADER(
     out vec4 o_color; 
     in vec2 v_uv; 
     uniform sampler2D uFP; 
@@ -145,7 +149,7 @@ const char *kFS_downsample = SHADER(
     }
 ); 
 
-const char *kFS = SHADER(
+const char *kFS_ui = SHADER(
     float saturate(float x) { return clamp(x, 0.0, 1.0); }
     uniform ivec2 uScreenPx; uniform float iTime; uniform float scroll_y; uniform vec4 cursor; out vec4 o_color; in vec2 v_uv;
     uniform ivec2 uFontPx;
@@ -288,16 +292,11 @@ const char *kFS = SHADER(
 EditorState audio_tab = {.fname = "livesrc/audio.cpp", .is_shader = false};
 EditorState shader_tab = {.fname = "livesrc/video.glsl", .is_shader = true};
 EditorState *curE = &audio_tab;
-GLuint prog = 0, prog2 = 0, prog_downsample = 0;
-GLuint vs = 0, fs = 0, fs_downsample = 0;
-GLuint loc_uScreenPx2 = 0;
-GLuint loc_iFrame2 = 0;
-GLuint loc_iTime2 = 0;
-GLuint loc_uFP2 = 0;
-GLuint loc_downsample_uFP = 0;
-GLuint loc_downsample_duv = 0;
-GLuint loc_downsample_fade = 0;
 size_t textBytes = (size_t)(TMW * TMH * 4);
+static float retina = 1.0f;
+
+GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0;
+GLuint vs = 0, fs_ui = 0, fs_bloom = 0;
 GLuint pbos[3];
 int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
@@ -335,28 +334,70 @@ GLuint try_to_compile_shader(EditorState *E) {
     if (!E->is_shader) {
         return 0;
     }
-    int len = strlen(kFS2_prefix) + stbds_arrlen(E->str) + strlen(kFS2_suffix) + 64;
-    char *fs2_str = (char *)calloc(1, len);
-    snprintf(fs2_str, len, "%s\n#line 1\n%.*s\n%s", kFS2_prefix, (int)stbds_arrlen(E->str), E->str, kFS2_suffix);
-    GLuint fs2 = compile_shader(E, GL_FRAGMENT_SHADER, fs2_str);
-    GLuint new_prog2 = fs2 ? link_program(vs, fs2) : 0;
-    if (new_prog2) {
-        glDeleteProgram(prog2);
-        prog2 = new_prog2;
-        loc_uScreenPx2 = glGetUniformLocation(prog2, "uScreenPx");
-        loc_iFrame2 = glGetUniformLocation(prog2, "iFrame");
-        loc_iTime2 = glGetUniformLocation(prog2, "iTime");
-        loc_uFP2 = glGetUniformLocation(prog2, "uFP");
+    int len = strlen(kFS_user_prefix) + stbds_arrlen(E->str) + strlen(kFS_user_suffix) + 64;
+    char *fs_user_str = (char *)calloc(1, len);
+    snprintf(fs_user_str, len, "%s\n#line 1\n%.*s\n%s", kFS_user_prefix, (int)stbds_arrlen(E->str), E->str, kFS_user_suffix);
+    GLuint fs_user = compile_shader(E, GL_FRAGMENT_SHADER, fs_user_str);
+    GLuint new_user_pass = fs_user ? link_program(vs, fs_user) : 0;
+    if (new_user_pass) {
+        glDeleteProgram(user_pass);
+        user_pass = new_user_pass;
     }
-    if (!prog2)
+    if (!user_pass)
         die("Failed to compile shader");
-    glDeleteShader(fs2);
-    free(fs2_str);
+    glDeleteShader(fs_user);
+    free(fs_user_str);
     GLenum e = glGetError(); // clear any errors
-    return new_prog2;
+    return new_user_pass;
 }
 
-float retina = 1.0f;
+GLuint gl_create_texture(int filter_mode, int wrap_mode) {
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    return tex;
+}
+
+GLFWwindow *gl_init(int want_fullscreen) {
+    if (!glfwInit())
+        die("glfwInit failed");
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, !want_fullscreen);
+#endif
+
+    GLFWmonitor *mon = want_fullscreen ? glfwGetPrimaryMonitor() : NULL;
+    // int count;
+    // const GLFWvidmode* modes = glfwGetVideoModes(mon, &count);
+    // const GLFWvidmode* pick = NULL;
+    // for (int i=0;i<count;i++) {
+    //     printf("mode %d: %d x %d - %d Hz\n", i, modes[i].width, modes[i].height, modes[i].refreshRate);
+    // }
+    const GLFWvidmode *vm = want_fullscreen ? glfwGetVideoMode(mon) : NULL;
+    int ww = want_fullscreen ? vm->width : 1920 / 2;
+    int wh = want_fullscreen ? vm->height : 1200 / 2;
+
+    GLFWwindow *win = glfwCreateWindow(ww, wh, "ginkgo", mon, NULL);
+    if (!win)
+        die("glfwCreateWindow failed");
+    glfwGetWindowContentScale(win, &retina, NULL);
+    // printf("retina: %f\n", retina);
+    glfwMakeContextCurrent(win);
+    glfwSwapInterval(1);
+
+    return win;
+}
+
+
 
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
     EditorState *E = curE;
@@ -459,55 +500,7 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
     }
 }
 
-GLuint gl_create_texture(int filter_mode, int wrap_mode) {
-    GLuint tex;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_mode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_mode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_mode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-    return tex;
-}
 
-GLFWwindow *gl_init(int want_fullscreen) {
-    if (!glfwInit())
-        die("glfwInit failed");
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-#ifdef __APPLE__
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, !want_fullscreen);
-#endif
-
-    GLFWmonitor *mon = want_fullscreen ? glfwGetPrimaryMonitor() : NULL;
-    // int count;
-    // const GLFWvidmode* modes = glfwGetVideoModes(mon, &count);
-    // const GLFWvidmode* pick = NULL;
-    // for (int i=0;i<count;i++) {
-    //     printf("mode %d: %d x %d - %d Hz\n", i, modes[i].width, modes[i].height, modes[i].refreshRate);
-    // }
-    const GLFWvidmode *vm = want_fullscreen ? glfwGetVideoMode(mon) : NULL;
-    int ww = want_fullscreen ? vm->width : 1920 / 2;
-    int wh = want_fullscreen ? vm->height : 1200 / 2;
-
-    GLFWwindow *win = glfwCreateWindow(ww, wh, "ginkgo", mon, NULL);
-    if (!win)
-        die("glfwCreateWindow failed");
-    glfwGetWindowContentScale(win, &retina, NULL);
-    // printf("retina: %f\n", retina);
-    glfwMakeContextCurrent(win);
-    glfwSwapInterval(1);
-
-    return win;
-}
-
-
-#define RESW 1920
-#define RESH 1080
 
 void editor_update(EditorState *E, GLFWwindow *win) {
     double mx, my;
@@ -730,33 +723,17 @@ int main(int argc, char **argv) {
     GLFWwindow *win = gl_init(want_fullscreen);
 
     vs = compile_shader(NULL, GL_VERTEX_SHADER, kVS);
-    fs = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS);
-    fs_downsample = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_downsample);
-    prog = link_program(vs, fs);
-    prog_downsample = link_program(vs, fs_downsample);
-    glDeleteShader(fs);
-    glDeleteShader(fs_downsample);
+    fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_ui);
+    fs_bloom = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_bloom);
+    ui_pass = link_program(vs, fs_ui);
+    bloom_pass = link_program(vs, fs_bloom);
+    glDeleteShader(fs_ui);
+    glDeleteShader(fs_bloom);
     
     load_file_into_editor(&shader_tab, true);
     load_file_into_editor(&audio_tab, true);
     try_to_compile_shader(&shader_tab);
 
-    GLint loc_downsample_uFP = glGetUniformLocation(prog_downsample, "uFP");
-    GLint loc_downsample_duv = glGetUniformLocation(prog_downsample, "duv");
-    GLint loc_downsample_fade = glGetUniformLocation(prog_downsample, "fade");
-
-    GLint loc_uText = glGetUniformLocation(prog, "uText");
-    GLint loc_uFont = glGetUniformLocation(prog, "uFont");
-    GLint loc_uFP = glGetUniformLocation(prog, "uFP");
-    GLint loc_uBloom = glGetUniformLocation(prog, "uBloom");
-    GLint loc_iTime = glGetUniformLocation(prog, "iTime");
-    GLint loc_scroll_y = glGetUniformLocation(prog, "scroll_y");
-    GLint loc_cursor = glGetUniformLocation(prog, "cursor");
-    GLint loc_uTextSize = glGetUniformLocation(prog, "uTextSize");
-    GLint loc_uCellPx = glGetUniformLocation(prog, "uCellPx");
-    GLint loc_uScreenPx = glGetUniformLocation(prog, "uScreenPx");
-    GLint loc_uFontPx = glGetUniformLocation(prog, "uFontPx");
-    GLint loc_status_bar_size = glGetUniformLocation(prog, "status_bar_size");
     int fw = 0, fh = 0, fc = 0;
     // stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
     stbi_uc *fontPixels = stbi_load("assets/font_brutalita.png", &fw, &fh, &fc, 4);
@@ -819,49 +796,36 @@ int main(int argc, char **argv) {
         editor_update(curE, win);
 
         double iTime = glfwGetTime() - t0;
-        ///////////// render the fpRT backbuffer (ie run the user shader)
+        ///////////// render the user pass (user shader)
         glDisable(GL_DEPTH_TEST);
         static uint32_t iFrame = 0;
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo[iFrame % 2]);
-        check_gl("bind fbo");
-        glViewport(0, 0, RESW, RESH);
-        if (!prog2) {
+        if (!user_pass) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo[iFrame % 2]);
+            glViewport(0, 0, RESW, RESH);
             glClearColor(0.f, 0.f, 0.f, 1.f);
             glClear(GL_COLOR_BUFFER_BIT);
         } else {
-            glUseProgram(prog2); // a fragment shader that writes RGBA16F
-            check_gl("use prog2");
-            glUniform2i(loc_uScreenPx2, RESW, RESH);
-            check_gl("uniform uScreenPx2");
-            glUniform1ui(loc_iFrame2, iFrame);
-            glUniform1f(loc_iTime2, iTime);
-            check_gl("uniform iFrame");
-
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, texFPRT[(iFrame + 1) % 2]);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glUniform1i(loc_uFP2, 0);
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            check_gl("draw fpRT");
+            glUseProgram(user_pass);
+            glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), RESW, RESH);
+            glUniform1ui(glGetUniformLocation(user_pass, "iFrame"), iFrame);
+            glUniform1f(glGetUniformLocation(user_pass, "iTime"), iTime);
+            
+            bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
+            
+            draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
         }
         // downsample the bloom mips
         for (int i=0; i<NUM_BLOOM_MIPS; ++i) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbo[i+2]);
             int resw = RESW>>(i+1);
             int resh = RESH>>(i+1);
-            glViewport(0, 0, resw, resh);
-            glUseProgram(prog_downsample);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, texFPRT[i ? (i+1) : (iFrame % 2)]);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glUniform1i(loc_downsample_uFP, 0);
+            glUseProgram(bloom_pass);
             float kernel_size = 1.5f;
-            glUniform2f(loc_downsample_duv, kernel_size/resw, kernel_size/resh);
-            glUniform1f(loc_downsample_fade, 1.f/16.f);
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            check_gl("draw bloom mip");
+            glUniform2f(glGetUniformLocation(bloom_pass, "duv"), kernel_size/resw, kernel_size/resh);
+            glUniform1f(glGetUniformLocation(bloom_pass, "fade"), 1.f/16.f);
+            
+            bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i ? (i+1) : (iFrame % 2)], GL_LINEAR);
+            
+            draw_fullscreen_pass(fbo[i+2], resw, resh, vao);
         }
         // upsample the bloom mips
         glEnable(GL_BLEND);
@@ -869,65 +833,49 @@ int main(int argc, char **argv) {
         glBlendFunc(GL_DST_ALPHA, GL_ONE);
         glBlendEquation(GL_FUNC_ADD);
         for (int i=NUM_BLOOM_MIPS-2; i>=0; --i) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbo[i+2]);
             int resw = RESW>>(i+1);
             int resh = RESH>>(i+1);
-            glViewport(0, 0, resw, resh);
-            glUseProgram(prog_downsample);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, texFPRT[i+2+1]);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glUniform1i(loc_downsample_uFP, 0);
+            glUseProgram(bloom_pass);
             float kernel_size = 3.f;
-            glUniform2f(loc_downsample_duv, kernel_size/resw, kernel_size/resh);
+            glUniform2f(glGetUniformLocation(bloom_pass, "duv"), kernel_size/resw, kernel_size/resh);
             float spikeyness = 0.5; // lower spikeyness here means we let thru more of the hires image -> sharper bloom kernel
-            glUniform1f(loc_downsample_fade, 1.f/16.f * spikeyness);
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            check_gl("draw bloom mip");
+            glUniform1f(glGetUniformLocation(bloom_pass, "fade"), 1.f/16.f * spikeyness);
+            
+            bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i+2+1], GL_LINEAR);
+            
+            draw_fullscreen_pass(fbo[i+2], resw, resh, vao);
         }
         glDisable(GL_BLEND);
 
 
-        ///////////// render the main backbuffer
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, fbw, fbh);
-        glUseProgram(prog);
-        glUniform1i(loc_uText, 0);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texText);
+        ///////////// render the UI pass (main backbuffer)
+        glUseProgram(ui_pass);
 
-        glUniform1i(loc_uFont, 1);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, texFont);
+        bind_texture_to_slot(ui_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
+        bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
+        bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
+        bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[2], GL_LINEAR);
 
-        glUniform1i(loc_uFP, 2);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, texFPRT[iFrame % 2]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glUniform1i(loc_uBloom, 3);
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, texFPRT[2]); // bloom
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        glUniform2i(loc_uScreenPx, fbw, fbh);
-        glUniform2i(loc_uFontPx, curE->font_width, curE->font_height);
-        glUniform1i(loc_status_bar_size, status_bar_color ? 1 : 0);
-        glUniform1f(loc_iTime, iTime);
-        glUniform1f(loc_scroll_y, curE->scroll_y - curE->intscroll * curE->font_height);
+        glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
+        glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
+        glUniform1i(glGetUniformLocation(ui_pass, "status_bar_size"), status_bar_color ? 1 : 0);
+        glUniform1f(glGetUniformLocation(ui_pass, "iTime"), iTime);
+        glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
         float f_cursor_x = curE->cursor_x * curE->font_width;
         float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
-        glUniform4f(loc_cursor, f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
+        glUniform4f(glGetUniformLocation(ui_pass, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
         curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * 0.2f;
         curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * 0.2f;
-        glBindVertexArray(vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        check_gl("draw text");
+        
+        draw_fullscreen_pass(0, fbw, fbh, vao);
+        
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_2D, 0);
 
         glfwSwapBuffers(win);
@@ -954,7 +902,7 @@ int main(int argc, char **argv) {
     glDeleteTextures(1, &texFont);
     glDeleteTextures(2 + NUM_BLOOM_MIPS, texFPRT);
     glDeleteFramebuffers(2 + NUM_BLOOM_MIPS, fbo);
-    glDeleteProgram(prog);
+    glDeleteProgram(ui_pass);
     glDeleteBuffers(3, pbos);
 
     glfwDestroyWindow(win);

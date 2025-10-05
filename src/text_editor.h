@@ -1332,7 +1332,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 col = C_DEF;
                 j = scan_ident(t.str, i, t.n);
                 h = literal_hash_span(t.str + i, t.str + j);
-                int midinote = parse_midinote(t.str + i, t.str + j, 1);
+                int midinote = parse_midinote(t.str + i, t.str + j, NULL, 1);
                 if (midinote >= 0) {
                     col = C_NOTE;
                 } else
@@ -1518,7 +1518,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             parse_pattern(&cached_parser);
             if (cached_parser.err <= 0) {
                 stbds_arrsetlen(cached_haps, 0);
-                make_haps(&cached_parser, cached_parser.root, 0.f, 4.f, 1.f, 0.f, &cached_haps, FLAG_NONE, 0, 1.f);
+                make_haps(&cached_parser, cached_parser.root, 0.f, 4.f, 1.f, 0.f, &cached_haps, 0);
             }
         }
         int nhaps = cached_haps ? stbds_arrlen(cached_haps) : 0;
@@ -1533,7 +1533,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             int se = get_select_end(E);
             for (int i = 0; i < nhaps; i++) {
                 const Hap *h = &cached_haps[i];
-                Sound *sound = nodes[h->node].value.sound;
+                Sound *sound = get_sound_by_index((int)h->params[P_SOUND]);
                 int row_plus_one = stbds_hmget(rows, sound);
                 if (!row_plus_one) {
                     row_plus_one = ++numrows;
@@ -1542,10 +1542,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     stbds_hmput(rows, sound, row_plus_one);
                     int y = E->cursor_y - E->intscroll + row_plus_one;
                     if (y >= 0 && y < TMH) {
-                        int sound_idx = h->sound_idx;
+                        int variant_idx = (int)h->params[P_VARIANT];
                         const char *sound_name = sound ? sound->name : "";
-                        print_to_screen(t.ptr, basex, y, 0x11188800, false, "%10s:%d ", sound_name, sound_idx);
-                        print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s:%d", sound_name, sound_idx);
+                        print_to_screen(t.ptr, basex, y, 0x11188800, false, "%10s:%d ", sound_name, variant_idx);
+                        print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s:%d", sound_name, variant_idx);
                         for (int x = 0; x < 128; ++x) {
                             uint32_t col = ((x & 31) == 0) ? C_CHART_HILITE : (x & 8) ? C_CHART : C_CHART_HOVER;
                             t.ptr[y * TMW + x + chartx] = col | (unsigned char)(' ');

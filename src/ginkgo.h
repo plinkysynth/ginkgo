@@ -444,6 +444,12 @@ wave_t *request_wave_load(Sound *sound, int index);
 // for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
 // however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
 static inline Sound *get_sound(const char *name) { return shget(G->sounds, name); }
+static inline int get_sound_index(const char *name) { return shgeti(G->sounds, name); }
+static inline Sound * get_sound_by_index(int i) {
+    if (i<0 || i>=stbds_hmlen(G->sounds)) 
+        return NULL;
+    return G->sounds[i].value;
+}
 
 static inline int num_sounds(void) { return stbds_hmlen(G->sounds); }
 

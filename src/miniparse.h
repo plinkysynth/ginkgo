@@ -3,44 +3,44 @@
 // init only ones are allowed to mutate the sound map.
 Sound *get_sound_init_only(const char *name); // ...by name.
 Sound *add_alias_init_only(const char *short_alias, const char *long_name);
-int parse_midinote(const char *s, const char *e, int allow_p_prefix); 
+int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix); 
 
-typedef struct Value { // the value associated with a node in the parse tree. nb sound idx like bd:3 is assigned later at hap-time.
-    Sound *sound;
-    union {
-        struct {
-            // if node type is not N_CURVE
-            float number;
-            float note;
-        };
-        struct {
-            // if node type is N_CURVE
-            float first_curve_data_idx; // we keep this as float so its the same type as number and note in case of bugs...
-            float num_curve_data;
-        };
-    };
-} Value;
+enum {
+    #define X(x, ...) x,
+    #include "params.h"
+    P_LAST
+};
+
+enum EValueType : uint8_t { // for Node.value_type
+    VT_NONE,
+    VT_NUMBER,
+    VT_NOTE,
+    VT_SOUND,
+};
 
 typedef struct Node {
-    int32_t type;
+    uint8_t type;
+    uint8_t value_type;  // note, number, sound
     int32_t start, end;  // half-open [start,end) character range (for syntax hilighting)
     int32_t first_child; // index or -1
     int32_t next_sib;    // index or -1 - linked list of siblings
     float total_length;  // total length of all children (nb elongated nodes are longer than 1)
-    Value value;         // for a leaf, the value; for others, maximum number value over all children.
+    float min_value, max_value; // parsed value of the node
 } Node;
 
-typedef struct Hap {
-    float t0, t1;
-    int node;
-    int sound_idx; // as in, bd:3. 
-    float local_t0, local_t1; // the local time range of the hap, in the pattern's time range.
+
+
+typedef struct Hap { 
+    float t0, t1; 
+    int node; // index of the node that generated this hap.
+    uint32_t valid_params; // which params have been assigned for this hap.
+    float params[P_LAST];
 } Hap;
 
-typedef struct Pattern {
-    const char *s;
+typedef struct Pattern { // a parsed version of a mini notation string
+    const char *s; // ...the string.
     int32_t n;   // length of string
-    int32_t i;   // current position in string
+    int32_t i;   // current position in string during parsing.
     Node *nodes; // stb_ds
     float *curvedata; // stb_ds
     int root;    // index of root node
@@ -50,13 +50,11 @@ typedef struct Pattern {
 } Pattern;
 
 const char *print_midinote(int note);
-int parse_midinote(const char *s, const char *e, int allow_p_prefix);
+int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
 int parse_pattern(Pattern *p);
 char* print_pattern_chart(Pattern *p);
-Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags, int sound_idx, float note_prob);
+Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags);
 void fill_curve_data_from_string(float *data, const char *s, int n); // responsible for the interpolation of lines
-
-#define FLAG_NONE 0 // for make_haps
 
 // base64 with # being 64 :) so we can do full range 0-64
 extern const char btoa_tab[65];

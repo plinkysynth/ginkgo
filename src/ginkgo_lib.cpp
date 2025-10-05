@@ -212,6 +212,9 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
 
 wave_t *request_wave_load(Sound *sound, int index) {
     if (!G) return NULL;
+    if (sound->name[1] == 0 && (sound->name[0] == '~' || sound->name[0] == '-')) {
+        return NULL; // never try to load the rest
+    }
     spin_lock(&G->load_request_cs);
     sound_request_key_t key = {sound, index};
     stbds_hmput(G->load_requests, key, 0); // TODO: its unsafe to use the pointer to w, as the list of waves may get resized. I think this is ok so long as we dont load sample packs mid session.

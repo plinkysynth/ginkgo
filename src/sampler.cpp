@@ -170,7 +170,7 @@ int parse_strudel_json(const char *json_url, const char *sound_prefix, bool eage
                 } else {
                     escape_url(url + numbase, sample.start, sample.end);
                 }
-                int midinote = parse_midinote(samplekey.start, samplekey.end, false);
+                int midinote = parse_midinote(samplekey.start, samplekey.end, NULL, false);
                 // printf("%.*s (%d) -> %s\n", (int)(samplekey.end-samplekey.start), samplekey.start, midinote, url);
                 int j;
                 for (j = 0; j < stbds_arrlen(sound->waves); ++j)
@@ -241,6 +241,10 @@ void dump_all_sounds(const char *fname) {
 }
 
 int init_sampler(void) {
+    // add sounds for 'rest'.
+    get_sound_init_only("~");
+    add_alias_init_only("-", "~");
+
     bool eager = false;
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"
 #define TS "https://raw.githubusercontent.com/todepond/samples/main/"

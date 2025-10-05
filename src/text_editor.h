@@ -1,4 +1,7 @@
 #pragma once
+#include "hash_literal.h"
+#include "utils.h"
+#include "miniparse.h"
 
 int fbw, fbh; // current framebuffer size in pixels
 

@@ -124,8 +124,15 @@ void pretty_print(const char *src, Node *nodes, int i, int depth) {
     for (int j = 0; j < depth + 1; j++) {
         printf("  ");
     }
-    // printf("%d - %s - maxlen %g val %g %s '%s'\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].max_value,
-    //        print_midinote(nodes[i].value.note), nodes[i].value.sound ? nodes[i].value.sound->name : "");
+    switch (nodes[i].value_type) {
+        case VT_SOUND: {
+            Sound *sound = get_sound_by_index((int)nodes[i].max_value);
+            printf("%d - %s - maxlen %g val %g %s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].max_value, sound ? sound->name : "");
+            break; }
+        default:
+            printf("%d - %s - maxlen %g val %g\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].max_value);
+            break;
+    }
     if (nodes[i].first_child >= 0) {
         pretty_print(src, nodes, nodes[i].first_child, depth + 1);
     }
@@ -314,11 +321,8 @@ static inline EValueType parse_number_or_note_or_sound(const char *s, const char
         return VT_NUMBER;
     }
     int sound_idx = get_sound_index(temp_cstring_from_span(s, e));
-    if (sound_idx >= 0) {
-        *out = sound_idx;
-        return VT_SOUND;
-    }
-    return VT_NONE;
+    *out = sound_idx;
+    return VT_SOUND;
 }
     
 
@@ -331,7 +335,7 @@ static inline EValueType parse_value(const char *s, const char *e, float *minval
     if (dash!=e) {
         EValueType type2 = parse_number_or_note_or_sound(dash+1, e, maxval);
         if (type2 != type1) return VT_NONE;
-    }
+    } else *maxval = *minval;
     return type1;
 }
 
@@ -759,7 +763,8 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
             } else { // leaf
                 float to = from + 1.f;
                 int inclusive_left = (flags & FLAG_INCLUSIVE) && to > t0;
-                if ((from >= t0 || inclusive_left) && from < t1) {
+                bool is_rest = p->nodes[nodeidx].max_value < 2;
+                if (!is_rest && (from >= t0 || inclusive_left) && from < t1) {
                     float output_t0 = from * tscale + tofs;
                     //if (note_prob >= 1.f || hasht_float(seed, output_t0) <= note_prob) 
                     {
@@ -802,7 +807,7 @@ void test_minipat(void) {
     //const char *s = "[bd | sd | rim]*8";
     //const char *s = "[[sd] [bd]]"; // test squeeze
     //const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "[hi lo/2]"; // test divide
+    const char *s = "[- bd sd]"; // test divide
     //const char *s = "<bd sd>";
     // const char *s = "{c eb g, c2 g2}%4";
     // const char *s = "[bd <hh oh>,rim*<4 8>]";
@@ -810,6 +815,9 @@ void test_minipat(void) {
     printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
     Pattern p={s,(int)strlen(s)};
     parse_pattern(&p);
+    printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
+    if (p.errmsg)
+        printf("error: %s\n", p.errmsg);
     pretty_print(s, p.nodes, p.root, 0);
     // char *chart = print_pattern_chart(&p);
     // printf("%s\n", chart);

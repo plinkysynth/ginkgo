@@ -1,8 +1,10 @@
 // this c file is linked into the dsp.c as well as the main program
 // it's essentially 'precompiled stuff' :)
-
+#define PFFFT_IMPLEMENTATION
+#include "3rdparty/pffft.h"
 #include "ginkgo.h"
 #include "utils.h"
+#include "wavfile.h"
 #define STB_DS_IMPLEMENTATION
 #include "3rdparty/stb_ds.h"
 basic_state_t dummy_state;
@@ -217,7 +219,50 @@ wave_t *request_wave_load(Sound *sound, int index) {
     return NULL;
 }
 
+// conv ir block sizes are 256, 512, 1024, 2048...
+#define CONV_IR_NUM_BLOCK_SIZES 5
+#define CONV_IR_MIN_BLOCK_SIZE 256 // fft sizes are double the block size (zero pad), and complex (*2 again)
+#define CONV_IR_MAX_BLOCK_SIZE (CONV_IR_MIN_BLOCK_SIZE<<(CONV_IR_NUM_BLOCK_SIZES-1))
 
-int test_lib_func(void) {
-    return 23;
+inline stereo complexmul(stereo a, stereo b, float scale) {
+    return STEREO((a.l * b.l - a.r * b.r) * scale, (a.l * b.r + a.r * b.l) * scale);
 }
+
+// building blocks for conv reverb
+void test_conv_reverb(void) {
+    PFFFT_Setup *fft_setup[CONV_IR_NUM_BLOCK_SIZES]={};
+    static float *fft_work=0;
+    if (!fft_setup[0]) {
+        fft_work = (float*)malloc(CONV_IR_MAX_BLOCK_SIZE * 4 * sizeof(float));
+        for (int i = 0; i < CONV_IR_NUM_BLOCK_SIZES; i++) {
+            fft_setup[i] = pffft_new_setup(CONV_IR_MIN_BLOCK_SIZE << (i+1), PFFFT_COMPLEX);
+        }
+    }
+    stereo *testblock = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    float e= 1.f;
+    for (int i=0; i <CONV_IR_MAX_BLOCK_SIZE; i++) { testblock[i] = STEREO(sinf(i*i*0.0001f)*e,rndn() * e * 0.25f); e*=0.999f; }
+
+    stereo *irblock = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    irblock[1000].l = 1.f;
+
+    stereo *irblock_fft = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    stereo *testblock_fft = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    stereo *convblock_fft = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)irblock, (float*)irblock_fft, fft_work, PFFFT_FORWARD);
+    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)testblock, (float*)testblock_fft, fft_work, PFFFT_FORWARD);
+    pffft_zconvolve_accumulate(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)irblock_fft, (float*)testblock_fft, (float*)convblock_fft, 1.f / (CONV_IR_MAX_BLOCK_SIZE*2.f));
+    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)convblock_fft, (float*)convblock_fft, fft_work, PFFFT_BACKWARD);
+
+
+
+
+    FILE *f=fopen("testblock.wav","wb");
+    write_wav_header(f, CONV_IR_MAX_BLOCK_SIZE * 2, 48000, 2);
+    fwrite(testblock, 2 * CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2, f);
+    fclose(f);
+    f=fopen("testblock2.wav","wb");
+    write_wav_header(f, CONV_IR_MAX_BLOCK_SIZE * 2, 48000, 2);
+    fwrite(convblock_fft, 2 * CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2, f);
+    fclose(f);
+}
+

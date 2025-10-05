@@ -235,10 +235,11 @@ int parse_midinote(const char *s, const char *e, int allow_p_prefix) {
         return -1;
     char notename = s[0];
     if (notename >='A' && notename <='Z') notename += 'a' - 'A';
-    if (s[0] < 'a' || s[0] > 'g')
+    if (notename < 'a' || notename > 'g')
         return -1;
     const static int note_indices[7] = {9, 11, 0, 2, 4, 5, 7};
     int note = note_indices[notename - 'a'];
+    s++;
     if (s >= e)
         return -1;
     if (s[0] == 's' || s[0]=='#') {

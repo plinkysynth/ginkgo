@@ -7,3 +7,5 @@ build/
 recording.wav
 webcache/
 samples/
+allsounds.json
+log.txt

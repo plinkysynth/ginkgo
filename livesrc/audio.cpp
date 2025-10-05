@@ -29,7 +29,7 @@ void init_state(void) {
 
 float rompler(const char *fname) {
 	wave_t *wave=get_wave_by_name(fname);
-	return (wave && wave->frames) ? wave->frames[(G->sampleidx/2) % (wave->num_frames)] : 0.f;
+	return (wave && wave->frames) ? wave->frames[((G->sampleidx/2) % (wave->num_frames))*wave->channels] : 0.f;
 }
 
 
@@ -41,13 +41,14 @@ stereo do_sample(stereo inp) {
         chord2 * vol(slew(S1(0.))) +
         chord3 * vol(slew(S0(0.)));
    //F bass = sclip(lpf_dp(sawo(P_C1)+sawo(P_C2*1.03324f)+sawo(P_C2*0.99532f), P_C3, 0.1f))*0.2; // growly bass    
-   F drums = 0.5f * sclip(5.*rompler("break_sesame")) * sclip(10.*S4(0)); 
+   F drums = sclip(rompler("break_sesame") * pow4(S4(0))*10.); 
+   F dc = S5(0) * 2.;
    F mixed = chord1;
     stereo dry=stereo{mixed*0.5f,mixed*0.5f};
     stereo wet=reverb(dry*0.5f);
     wet = wet+dry*0.2+drums*0.5f;
-    wet = sclip(wet);
-    return wet;
+    
+    return wet + dc;
 }
 
 /*                           :-:.                              

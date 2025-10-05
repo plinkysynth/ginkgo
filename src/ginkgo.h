@@ -132,6 +132,7 @@ typedef struct sound_request_key_t {
 typedef struct sound_request_t {
     sound_request_key_t key;
     int value;
+    int download_in_progress;
 } sound_request_t;
 
 struct reverb_state_t {
@@ -436,7 +437,6 @@ static inline float notchf(float x, float fc, float q) {
     return o.lp + o.hp;
 }
 
-int test_lib_func(void);
 void init_basic_state(void);
 stereo reverb(stereo inp);
 wave_t *request_wave_load(Sound *sound, int index);
@@ -503,7 +503,7 @@ static inline uint32_t rndint(uint32_t m) {
     return rnd_seed % m;
 }
 static inline float rndt(void) { return rnd01() + rnd01() - 1.f; }
-static inline float rdnn(void) {
+static inline float rndn(void) {
     float x = rnd01() + rnd01() + rnd01() + rnd01() + rnd01() + rnd01() - 3.f;
     return x * 1.4f;
 }

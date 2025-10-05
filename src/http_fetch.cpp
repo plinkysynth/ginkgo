@@ -69,8 +69,11 @@ static void write_small(const char *p, const char *s) {
     fclose(f);
 }
 
-const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the path to the cached file
+typedef void (*http_fetch_callback_t)(const char *url, const char *fname, void *userdata);
+
+const char*fetch_to_cache(const char *url, int prefer_offline, http_fetch_callback_t callback=0, void *userdata=0) { // returns the path to the cached file
     if (strncmp(url, "file://", 7) == 0) {
+        if (callback) callback(url, url + 7, userdata);
         return url + 7;
     }
     static char out_path[1024];
@@ -87,6 +90,7 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
 #ifdef DEBUG_FETCH
             printf("web cache hit (prefer offline): %s\n", url);
 #endif
+            if (callback) callback(url, out_path, userdata);
             return out_path;
         }
     }
@@ -110,9 +114,10 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
 
     
     if (!curl) curl = curl_easy_init();
-    if (!curl)
+    if (!curl) {
+        if (callback) callback(url, NULL, userdata);
         return NULL;
-
+    }
     struct curl_slist *hdrs = NULL;
     if (prev_etag[0]) {
         char h[300];
@@ -147,6 +152,7 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
     if (rc != CURLE_OK) {
         remove(tmp_path);
         fprintf(stderr,"curl error: %d fetching %s\n", rc, url);
+        if (callback) callback(url, NULL, userdata);
         return NULL;
     }
     if (code == 304) {
@@ -154,6 +160,7 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
 #ifdef DEBUG_FETCH
         printf("web cache hit: %s\n", url);
 #endif
+        if (callback) callback(url, out_path, userdata);
         return out_path; // cache hit, unchanged
     } else if (code == 200) {
         if (hdr.etag[0])
@@ -162,12 +169,15 @@ const char*fetch_to_cache(const char *url, int prefer_offline) { // returns the 
         if (rename(tmp_path, out_path) != 0) {
             remove(tmp_path);
             fprintf(stderr,"failed to rename %s to %s\n", tmp_path, out_path);
+            if (callback) callback(url, NULL, userdata);
             return NULL;
         }
+        if (callback) callback(url, out_path, userdata);
         return out_path;
     } else {
         remove(tmp_path);
         fprintf(stderr,"unexpected HTTP status: %d fetching %s\n", (int)code, url);
+        if (callback) callback(url, NULL, userdata);
         return NULL; // unexpected HTTP status
     }
 }

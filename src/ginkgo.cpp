@@ -5,7 +5,6 @@
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
 #define MINIAUDIO_IMPLEMENTATION
-#define PFFFT_IMPLEMENTATION
 #include <stdio.h>
 #include <stdatomic.h>
 #include <dlfcn.h>
@@ -125,16 +124,46 @@ const char *kFS2_suffix = SHADER_NO_VERSION(
         o_color = vec4(c(v_uv), 1.0);
     });
 
+const char *kFS_downsample = SHADER(
+    out vec4 o_color; 
+    in vec2 v_uv; 
+    uniform sampler2D uFP; 
+    uniform vec2 duv;
+    uniform float fade;
+    void main() {
+        
+        vec4 c0 = texture(uFP, v_uv + vec2(-duv.x, -duv.y));
+        c0     += texture(uFP, v_uv + vec2(     0, -duv.y)) * 2.;
+        c0     += texture(uFP, v_uv + vec2( duv.x, -duv.y));
+        c0     += texture(uFP, v_uv + vec2(-duv.x,      0)) * 2.;
+        c0     += texture(uFP, v_uv + vec2(     0,      0)) * 4.;
+        c0     += texture(uFP, v_uv + vec2( duv.x,      0)) * 2.;
+        c0     += texture(uFP, v_uv + vec2(-duv.x,  duv.y));
+        c0     += texture(uFP, v_uv + vec2(     0,  duv.y)) * 2.;
+        c0     += texture(uFP, v_uv + vec2( duv.x,  duv.y));
+        o_color = c0 * fade;
+    }
+); 
+
 const char *kFS = SHADER(
     float saturate(float x) { return clamp(x, 0.0, 1.0); }
     uniform ivec2 uScreenPx; uniform float iTime; uniform float scroll_y; uniform vec4 cursor; out vec4 o_color; in vec2 v_uv;
     uniform ivec2 uFontPx;
     uniform int status_bar_size;
-    uniform sampler2D uFP; uniform sampler2D uFont; uniform usampler2D uText; vec3 filmicToneMapping(vec3 color) {
-        color = max(vec3(0.), color - vec3(0.004));
-        color = (color * (6.2 * color + .5)) / (color * (6.2 * color + 1.7) + 0.06);
-        return color;
-    } vec2 wave_read(float x, int y_base) {
+    uniform sampler2D uFP; 
+    uniform sampler2D uFont; 
+    uniform usampler2D uText; 
+    uniform sampler2D uBloom;
+
+    vec3 aces(vec3 x) {
+        const float a=2.51;
+        const float b=0.03;
+        const float c=2.43;
+        const float d=0.59;
+        const float e=0.14;
+        return clamp((x*(a*x+b)) / (x*(c*x+d)+e), 0.0, 1.0);
+    }
+    vec2 wave_read(float x, int y_base) {
         int ix = int(x);
         vec2 s0 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
         ix++;
@@ -146,6 +175,8 @@ const char *kFS = SHADER(
 
     void main() {
         vec3 rendercol= texture(uFP, v_uv).rgb;
+        vec3 bloomcol= texture(uBloom, v_uv).rgb;
+        rendercol += bloomcol * 0.5;
         // float kernel_size = 0.25f; // the gap is about double this.
         // float dx = kernel_size * (16./9.) * (1./1280.);
         // float dy = kernel_size * (1./720.);
@@ -193,9 +224,9 @@ const char *kFS = SHADER(
             if (grey > 0.5) {
                 beamcol = -beamcol * 2.;
             }
-            rendercol += beamcol;
+            rendercol += max(vec3(0.),beamcol);
         }
-        rendercol.rgb = sqrt(rendercol.rgb); // filmicToneMapping(rendercol.rgb);
+        rendercol.rgb = sqrt(aces(rendercol.rgb));
 
         vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y);
         // status line doesnt scroll
@@ -257,12 +288,15 @@ const char *kFS = SHADER(
 EditorState audio_tab = {.fname = "livesrc/audio.cpp", .is_shader = false};
 EditorState shader_tab = {.fname = "livesrc/video.glsl", .is_shader = true};
 EditorState *curE = &audio_tab;
-GLuint prog = 0, prog2 = 0;
-GLuint vs = 0, fs = 0;
+GLuint prog = 0, prog2 = 0, prog_downsample = 0;
+GLuint vs = 0, fs = 0, fs_downsample = 0;
 GLuint loc_uScreenPx2 = 0;
 GLuint loc_iFrame2 = 0;
 GLuint loc_iTime2 = 0;
 GLuint loc_uFP2 = 0;
+GLuint loc_downsample_uFP = 0;
+GLuint loc_downsample_duv = 0;
+GLuint loc_downsample_fade = 0;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 GLuint pbos[3];
 int pbo_index = 0;
@@ -642,10 +676,16 @@ void on_midi_input(uint8_t data[3], void *user) {
 }
 
 int main(int argc, char **argv) {
-    printf("ginkgo - " __DATE__ " " __TIME__ "\n");
+    printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
 
+   
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
+
+
+    // void test_conv_reverb(void);
+    //  test_conv_reverb();
+    // return 0;
     // void test_minipat(void);
     // test_minipat();
     //  return 0;
@@ -691,16 +731,24 @@ int main(int argc, char **argv) {
 
     vs = compile_shader(NULL, GL_VERTEX_SHADER, kVS);
     fs = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS);
+    fs_downsample = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_downsample);
     prog = link_program(vs, fs);
+    prog_downsample = link_program(vs, fs_downsample);
     glDeleteShader(fs);
-
+    glDeleteShader(fs_downsample);
+    
     load_file_into_editor(&shader_tab, true);
     load_file_into_editor(&audio_tab, true);
     try_to_compile_shader(&shader_tab);
 
+    GLint loc_downsample_uFP = glGetUniformLocation(prog_downsample, "uFP");
+    GLint loc_downsample_duv = glGetUniformLocation(prog_downsample, "duv");
+    GLint loc_downsample_fade = glGetUniformLocation(prog_downsample, "fade");
+
     GLint loc_uText = glGetUniformLocation(prog, "uText");
     GLint loc_uFont = glGetUniformLocation(prog, "uFont");
     GLint loc_uFP = glGetUniformLocation(prog, "uFP");
+    GLint loc_uBloom = glGetUniformLocation(prog, "uBloom");
     GLint loc_iTime = glGetUniformLocation(prog, "iTime");
     GLint loc_scroll_y = glGetUniformLocation(prog, "scroll_y");
     GLint loc_cursor = glGetUniformLocation(prog, "cursor");
@@ -726,13 +774,16 @@ int main(int argc, char **argv) {
     check_gl("alloc text tex");
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    GLuint texFPRT[2];
-    GLuint fbo[2];
-    for (int i = 0; i < 2; ++i) {
+    #define NUM_BLOOM_MIPS 3
+    GLuint texFPRT[2+NUM_BLOOM_MIPS];
+    GLuint fbo[2+NUM_BLOOM_MIPS];
+    for (int i = 0; i < 2 + NUM_BLOOM_MIPS; ++i) {
         glGenFramebuffers(1, &fbo[i]);
         texFPRT[i] = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D, texFPRT[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, RESW, RESH, 0, GL_RGBA, GL_FLOAT, NULL);
+        int resw =(i<2) ? RESW : (RESW>>(i-1));
+        int resh =(i<2) ? RESH : (RESH>>(i-1));
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, resw, resh, 0, GL_RGBA, GL_FLOAT, NULL);
         check_gl("alloc fpRT");
         glBindTexture(GL_TEXTURE_2D, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo[i]);
@@ -788,11 +839,55 @@ int main(int argc, char **argv) {
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texFPRT[(iFrame + 1) % 2]);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glUniform1i(loc_uFP2, 0);
             glBindVertexArray(vao);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             check_gl("draw fpRT");
         }
+        // downsample the bloom mips
+        for (int i=0; i<NUM_BLOOM_MIPS; ++i) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo[i+2]);
+            int resw = RESW>>(i+1);
+            int resh = RESH>>(i+1);
+            glViewport(0, 0, resw, resh);
+            glUseProgram(prog_downsample);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texFPRT[i ? (i+1) : (iFrame % 2)]);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glUniform1i(loc_downsample_uFP, 0);
+            float kernel_size = 1.5f;
+            glUniform2f(loc_downsample_duv, kernel_size/resw, kernel_size/resh);
+            glUniform1f(loc_downsample_fade, 1.f/16.f);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            check_gl("draw bloom mip");
+        }
+        // upsample the bloom mips
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glBlendFunc(GL_DST_ALPHA, GL_ONE);
+        glBlendEquation(GL_FUNC_ADD);
+        for (int i=NUM_BLOOM_MIPS-2; i>=0; --i) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo[i+2]);
+            int resw = RESW>>(i+1);
+            int resh = RESH>>(i+1);
+            glViewport(0, 0, resw, resh);
+            glUseProgram(prog_downsample);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texFPRT[i+2+1]);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glUniform1i(loc_downsample_uFP, 0);
+            float kernel_size = 3.f;
+            glUniform2f(loc_downsample_duv, kernel_size/resw, kernel_size/resh);
+            float spikeyness = 0.5; // lower spikeyness here means we let thru more of the hires image -> sharper bloom kernel
+            glUniform1f(loc_downsample_fade, 1.f/16.f * spikeyness);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            check_gl("draw bloom mip");
+        }
+        glDisable(GL_BLEND);
+
 
         ///////////// render the main backbuffer
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -809,6 +904,11 @@ int main(int argc, char **argv) {
         glUniform1i(loc_uFP, 2);
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, texFPRT[iFrame % 2]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glUniform1i(loc_uBloom, 3);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, texFPRT[2]); // bloom
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         glUniform2i(loc_uScreenPx, fbw, fbh);
         glUniform2i(loc_uFontPx, curE->font_width, curE->font_height);
@@ -852,8 +952,8 @@ int main(int argc, char **argv) {
     glDeleteVertexArrays(1, &vao);
     glDeleteTextures(1, &texText);
     glDeleteTextures(1, &texFont);
-    glDeleteTextures(2, texFPRT);
-    glDeleteFramebuffers(2, fbo);
+    glDeleteTextures(2 + NUM_BLOOM_MIPS, texFPRT);
+    glDeleteFramebuffers(2 + NUM_BLOOM_MIPS, fbo);
     glDeleteProgram(prog);
     glDeleteBuffers(3, pbos);
 

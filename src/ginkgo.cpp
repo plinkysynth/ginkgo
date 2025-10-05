@@ -843,7 +843,8 @@ int main(int argc, char **argv) {
 
     int fw = 0, fh = 0, fc = 0;
     // stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
-    stbi_uc *fontPixels = stbi_load("assets/font_brutalita.png", &fw, &fh, &fc, 4);
+    // stbi_uc *fontPixels = stbi_load("assets/font_brutalita.png", &fw, &fh, &fc, 4);
+    stbi_uc *fontPixels = stbi_load("assets/font_sdf.png", &fw, &fh, &fc, 4);
     if (!fontPixels)
         die("Failed to load font");
     assert(fw == 32 * 16 && fh == 64 * 6);

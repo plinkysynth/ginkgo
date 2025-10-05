@@ -11,16 +11,16 @@ enum {
     P_LAST
 };
 
-enum EValueType : uint8_t { // for Node.value_type
-    VT_NONE,
-    VT_NUMBER,
-    VT_NOTE,
-    VT_SOUND,
+enum EValueType : int8_t { // for Node.value_type
+    VT_NONE = -1,
+    VT_NUMBER = P_NUMBER,
+    VT_NOTE = P_NOTE,
+    VT_SOUND = P_SOUND,
 };
 
 typedef struct Node {
     uint8_t type;
-    uint8_t value_type;  // note, number, sound
+    int8_t value_type;  // note, number, sound
     int32_t start, end;  // half-open [start,end) character range (for syntax hilighting)
     int32_t first_child; // index or -1
     int32_t next_sib;    // index or -1 - linked list of siblings

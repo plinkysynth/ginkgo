@@ -823,9 +823,9 @@ int main(int argc, char **argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
 
-    void test_minipat(void);
-    test_minipat();
-    return 0;
+    // void test_minipat(void);
+    // test_minipat();
+    // return 0;
 
     ma_device dev;
     init_audio_midi(&dev);

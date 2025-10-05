@@ -198,6 +198,7 @@ static inline float maxf(float a, float b) { return a > b ? a : b; }
 static inline float clampf(float a, float min, float max) { return a < min ? min : a > max ? max : a; }
 static inline float squaref(float x) { return x * x; }
 static inline float fracf(float x) { return x - floorf(x); }
+static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
 static inline float pow2(float x) { return x * x; }
 static inline float pow3(float x) { return x * x * x; }

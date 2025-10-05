@@ -15,8 +15,13 @@
 #include "ansicols.h"
 
 
-const static char *param_names[P_LAST] = {
+const static char *param_enum_names[P_LAST] = {
     #define X(x, ...) #x,
+    #include "params.h"
+};
+
+const static char *param_names[P_LAST] = {
+    #define X(x, shortname, ...) shortname,
     #include "params.h"
 };
 
@@ -115,29 +120,52 @@ const char *print_midinote(int note) {
     return buf;
 }
 
-void pretty_print(const char *src, Node *nodes, int i, int depth) {
+void pretty_print_haps(Hap *haps, int n) {
+    for (int i=0; i<n; i++) {
+        Hap *hap = haps + i;
+        printf(COLOR_GREY "n(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->node, hap->t0, hap->t1);
+        for (int i = 0; i < P_LAST; i++) {
+            if (hap->valid_params & (1<<i)) {
+                if (i==P_SOUND) {
+                    Sound *sound = get_sound_by_index((int)hap->params[i]);
+                    printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
+                } else if (i==P_NOTE) {
+                    printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
+                } else {
+                    printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
+                }
+            }
+        }
+        printf("\n");
+    }
+}
+
+void pretty_print_nodes(const char *src, Node *nodes, int i, int depth) {
     if (i < 0)
         return;
     int c0 = nodes[i].start;
     int c1 = nodes[i].end;
-    printf(COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%s" COLOR_RESET, c0, src, c1 - c0, src + c0, src + c1);
+    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%s" COLOR_RESET, i, c0, src, c1 - c0, src + c0, src + c1);
     for (int j = 0; j < depth + 1; j++) {
         printf("  ");
     }
     switch (nodes[i].value_type) {
         case VT_SOUND: {
             Sound *sound = get_sound_by_index((int)nodes[i].max_value);
-            printf("%d - %s - maxlen %g val %g %s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].max_value, sound ? sound->name : "");
+            printf("%d - %s - maxlen %g val %g-%g %s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value, nodes[i].max_value, sound ? sound->name : "");
+            break; }
+        case VT_NOTE: {
+            printf("%d - %s - maxlen %g val %g-%g %s-%s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value, nodes[i].max_value, print_midinote((int)nodes[i].min_value), print_midinote((int)nodes[i].max_value));
             break; }
         default:
-            printf("%d - %s - maxlen %g val %g\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].max_value);
+            printf("%d - %s - maxlen %g val %g-%g\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value, nodes[i].max_value);
             break;
     }
     if (nodes[i].first_child >= 0) {
-        pretty_print(src, nodes, nodes[i].first_child, depth + 1);
+        pretty_print_nodes(src, nodes, nodes[i].first_child, depth + 1);
     }
     if (nodes[i].next_sib >= 0) {
-        pretty_print(src, nodes, nodes[i].next_sib, depth);
+        pretty_print_nodes(src, nodes, nodes[i].next_sib, depth);
     }
 }
 
@@ -589,13 +617,6 @@ int parse_pattern(Pattern *p) {
     return p->err;
 }
 
-static inline void print_haps(Pattern *p, Hap *haps, int n) {
-    for (int i = 0; i < n; i++) {
-        Hap h = haps[i];
-        Node *n = p->nodes + h.node;
-        printf("%f %f - node %d \"%.*s\" v=%g\n", h.t0, h.t1, h.node, n->end - n->start, p->s + n->start, n->max_value);
-    }
-}
 #define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
 #define FLAG_INCLUSIVE 2 // if set, we include haps that overlap on the left side.
 
@@ -612,8 +633,11 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
         return *haps;
     uint32_t seed = hash2_pcg(p->rand_seed, nodeidx);
     Node *n = p->nodes + nodeidx;
-    if (n->type == N_LEAF && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
+    if (n->type == N_LEAF && n->value_type > VT_NONE && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
+        // fast path for simple value leaves
         Hap h = (Hap){.t0 = t0 * tscale + tofs, .t1 = t1 * tscale + tofs, .node = nodeidx};
+        h.valid_params = 1<<n->value_type;
+        h.params[n->value_type] = lerpf(n->min_value, n->max_value, hasht_float(seed, t0 * tscale + tofs));
         stbds_arrput(*haps, h);
         return *haps;
     }
@@ -667,52 +691,61 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
         stbds_arrfree(numsteps_haps);
         stbds_arrfree(rot_haps);
         break; }
-        /*
-    case N_OP_REPLICATE:
-    case N_OP_ELONGATE:
+        
     case N_OP_DEGRADE:
     case N_OP_IDX:
+    case N_OP_REPLICATE:
+    case N_OP_ELONGATE:
     case N_OP_DIVIDE:
     case N_OP_TIMES: {
         if (n->first_child < 0)
             return *haps;
         Node *nleft = p->nodes + n->first_child;
-        if (nleft->next_sib >= 0) {
-            // create new haps on the right side. then iterate over them, one at a time, and query haps for the left scaled
-            // appropriately.
-            Hap *right_haps = NULL;
+        float right_value;
+        Hap *right_haps = NULL;
+        int num_right_haps = 1;
+        if (nleft->next_sib >= 0) { 
+            // create new haps on the right side. 
             make_haps(p, nleft->next_sib, t0, t1, 1.f, 0.f, &right_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE);
-            // printf("queried right haps from %g to %g, got %d haps back\n", t0, t1, (int)stbds_arrlen(right_haps));
-            // print_haps(p, right_haps, stbds_arrlen(right_haps));
-            for (int i = 0; i < stbds_arrlen(right_haps); i++) {
-                Hap *right_hap = right_haps + i;
-                float speed_scale = 1.f;
-                float degrade_amount = 0.f;
-                float right_value = p->nodes[right_hap->node].value.number;
-                if (n->type == N_OP_TIMES)
-                    speed_scale = right_value;
-                else if (n->type == N_OP_DIVIDE || n->type == N_OP_ELONGATE)
-                    speed_scale = 1.f / (right_value ? right_value : 1.f);
-                else if (n->type == N_OP_IDX)
-                    sound_idx = (int)right_value;
-                else if (n->type == N_OP_DEGRADE)
-                    degrade_amount = right_value;
-                if (speed_scale <= 0.f)
-                    speed_scale = 1.f;
-                float child_t0 = right_hap->t0 * speed_scale; //  maxf(t0, right_hap->t0) * speed_scale;
-                float child_t1 = right_hap->t1 * speed_scale; // minf(t1, right_hap->t1) * speed_scale;
-                make_haps(p, n->first_child, child_t0, child_t1,
-                          tscale / speed_scale, tofs, haps, flags, sound_idx, note_prob * (1.f - degrade_amount));
-            }
-            stbds_arrfree(right_haps);
+            num_right_haps = stbds_arrlen(right_haps);
         } else {
-            // no value? proxy to the left. for degrade, if there is no right value, we assume 50% default.
-            make_haps(p, n->first_child, t0, t1, tscale, tofs, haps, flags, sound_idx,
-                      n->type == N_OP_DEGRADE ? note_prob * 0.5f : note_prob);
+            right_value = 0.5f;
+            num_right_haps = 1;
         }
+        for (int i = 0; i < num_right_haps; i++) {
+            if (right_haps) {
+                Hap *right_hap = right_haps + i;
+                if (!(right_hap->valid_params & (1<<P_NUMBER)))
+                    continue; // TODO  does it ever make sense for the right side to have non-number data?
+                right_value = right_hap->params[P_NUMBER];
+            }
+            float speed_scale = 1.f;
+            if (n->type == N_OP_TIMES)
+                speed_scale = right_value;
+            else if (n->type == N_OP_DIVIDE || n->type == N_OP_ELONGATE)
+                speed_scale = 1.f / (right_value ? right_value : 1.f);
+            if (speed_scale <= 0.f)
+                speed_scale = 1.f;
+            float child_t0 = right_haps ? right_haps[i].t0 * speed_scale : t0; //  maxf(t0, right_hap->t0) * speed_scale;
+            float child_t1 = right_haps ? right_haps[i].t1 * speed_scale : t1; // minf(t1, right_hap->t1) * speed_scale;
+            int old_num_haps = stbds_arrlen(*haps);
+            make_haps(p, n->first_child, child_t0, child_t1,
+                        tscale / speed_scale, tofs, haps, flags);
+            for (int i = old_num_haps; i < stbds_arrlen(*haps); i++) {
+                Hap *hap = *haps + i;
+                if (n->type == N_OP_IDX) {
+                    hap->params[P_VARIANT] = right_value;
+                    hap->valid_params |= 1<<P_VARIANT;
+                } else if (n->type == N_OP_DEGRADE) {
+                    hap->params[P_DEGRADE] = right_value;
+                    hap->valid_params |= 1<<P_DEGRADE;
+                }
+            }
+        }
+        stbds_arrfree(right_haps);
         return *haps;
         break;
-    }*/
+    }
     case N_RANDOM: {
         int num_children=0;
         for (int i=n->first_child; i>=0; i=p->nodes[i].next_sib) ++num_children;
@@ -768,10 +801,10 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
                     float output_t0 = from * tscale + tofs;
                     //if (note_prob >= 1.f || hasht_float(seed, output_t0) <= note_prob) 
                     {
-                        if (nodeidx >= 0/* && p->nodes[nodeidx].value.sound*/) {
+                        if (nodeidx >= 0 && p->nodes[nodeidx].value_type > VT_NONE) {
                             Hap h = (Hap){.t0 = output_t0, .t1 = to * tscale + tofs, .node = nodeidx};
-                            h.valid_params = 1<<P_SOUND;
-                            h.params[P_SOUND] = p->nodes[nodeidx].max_value; 
+                            h.valid_params = 1<<(p->nodes[nodeidx].value_type);
+                            h.params[p->nodes[nodeidx].value_type] = lerpf(p->nodes[nodeidx].min_value, p->nodes[nodeidx].max_value, hasht_float(seed, output_t0));
                             stbds_arrput(*haps, h);
                         }
                     }
@@ -807,7 +840,7 @@ void test_minipat(void) {
     //const char *s = "[bd | sd | rim]*8";
     //const char *s = "[[sd] [bd]]"; // test squeeze
     //const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "[- bd sd]"; // test divide
+    const char *s = "[- bd sd c4*4 23-25]"; // test divide
     //const char *s = "<bd sd>";
     // const char *s = "{c eb g, c2 g2}%4";
     // const char *s = "[bd <hh oh>,rim*<4 8>]";
@@ -818,7 +851,12 @@ void test_minipat(void) {
     printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
     if (p.errmsg)
         printf("error: %s\n", p.errmsg);
-    pretty_print(s, p.nodes, p.root, 0);
+    pretty_print_nodes(s, p.nodes, p.root, 0);
+    Hap *haps = NULL;
+    make_haps(&p, p.root, 0.f, 4.f, 1.f, 0.f, &haps, 0);
+    pretty_print_haps(haps, stbds_arrlen(haps));
+    stbds_arrfree(haps);
+
     // char *chart = print_pattern_chart(&p);
     // printf("%s\n", chart);
     // stbds_arrfree(chart);

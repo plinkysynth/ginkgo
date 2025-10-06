@@ -33,6 +33,8 @@
 #define RESW 1920
 #define RESH 1080
 
+
+
 // Named constants for magic numbers
 #define BLOOM_FADE_FACTOR (1.f / 16.f)
 #define BLOOM_SPIKEYNESS 0.5f
@@ -54,6 +56,24 @@ static void check_gl(const char *where) {
         exit(1);
     }
 }
+
+typedef struct line_t {
+    float     p0x,p0y;  
+    float     p1x,p1y;
+    uint32_t  col;  
+    float     width;
+} line_t; 
+
+#define  MAX_LINES (1<<15)
+uint32_t line_count = 0;
+line_t lines[MAX_LINES];
+
+void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width) {
+    if (line_count >= MAX_LINES) return;
+    lines[line_count] = (line_t){p0x,p0y,p1x,p1y,col,width};
+    line_count++;
+}
+
 
 static void bind_texture_to_slot(GLuint shader, int slot, const char *uniform_name, GLuint texture, GLenum mag_filter) {
     glUniform1i(glGetUniformLocation(shader, uniform_name), slot);
@@ -133,8 +153,59 @@ static GLuint link_program(GLuint vs, GLuint fs) {
 #define SHADER_NO_VERSION(...) #__VA_ARGS__
 
 // clang-format off
+
+const char *kVS_fat = SHADER(
+    layout(location=0) in vec2 in_p1;
+    layout(location=1) in vec2 in_p2;
+    layout(location=2) in float in_width;
+    layout(location=3) in vec4  in_col; // from normalized ubyte4
+    out vec2 v_uv;
+    out vec4 v_col;
+    out vec2 v_width_len;
+    uniform vec2 fScreenPx;
+    void main() {
+        vec2 p1 = in_p1, p2 = in_p2;
+        float hw = 0.5 * in_width;
+        vec2 dir = p2-p1;
+        float len = length(dir);
+        vec2 t = (len<1e-6) ? vec2(hw, 0.0) : dir * -(hw/len);
+        vec2 n = vec2(-t.y, t.x);
+        // 0    1/5
+        // 2/4    3
+        int corner = gl_VertexID % 6;
+        vec2 p = p1;
+        vec2 uv = vec2(-hw,-hw);
+        if ((corner&1)==1) { t=-t; p = p2; uv.y = len+hw;}
+        if (corner>=2 && corner<=4) { n=-n; uv.x=-uv.x;}
+        p=p+t+n;
+        v_uv  = uv;
+        v_col = in_col;
+        v_width_len = vec2(hw, len);
+        p*=2.f/fScreenPx;
+        p-=1.f;
+        p.y=-p.y;
+        gl_Position = vec4(p, 0.0, 1.0);
+        });
+
+const char *kFS_fat = SHADER(
+    float saturate(float x) { return clamp(x, 0.0, 1.0); }
+
+    out vec4 o_color; 
+    in vec2 v_uv; 
+    in vec4 v_col;
+    in vec2 v_width_len;
+    void main() {
+        o_color = v_col;
+        vec2 uv = v_uv;
+        if (uv.y>0.) uv.y = max(0., uv.y - v_width_len.y);
+        float sdf = v_width_len.x-length(uv);
+        o_color=v_col * saturate(sdf);
+    });
+
 const char *kVS = SHADER(
 out vec2 v_uv; 
+uniform ivec2 uScreenPx;
+
 void main() {
     vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
     v_uv = p;
@@ -375,21 +446,25 @@ static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
     glCompileShader(s);
     GLint ok = 0;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
-    if (E) {
-        stbds_arrfree(E->last_compile_log);
-        E->last_compile_log = NULL;
-        stbds_hmfree(E->error_msgs);
-        E->error_msgs = NULL;
-    }
-    if (!ok && E) {
+    char *compile_log = NULL;
+    if (!ok) {
         GLint len = 0;
         glGetShaderiv(s, GL_INFO_LOG_LENGTH, &len);
-        stbds_arrsetlen(E->last_compile_log, len > 1 ? len : 1);
-        char *last_compile_log = E->last_compile_log;
-        glGetShaderInfoLog(s, len, NULL, last_compile_log);
-        fprintf(stderr, "Shader compile failed:\n[%s]\n", last_compile_log);
-        parse_error_log(E);
-        set_status_bar(C_ERR, "Shader compile failed - %d errors", (int)hmlen(E->error_msgs));
+        stbds_arrsetlen(compile_log, len > 1 ? len : 1);
+        glGetShaderInfoLog(s, len, NULL, compile_log);
+        fprintf(stderr, "Shader compile failed:\n[%s]\n", compile_log);
+    }
+    if (E) {
+        stbds_arrfree(E->last_compile_log);
+        E->last_compile_log = compile_log;
+        stbds_hmfree(E->error_msgs);
+        E->error_msgs = NULL;
+        if (!ok) {
+            parse_error_log(E);
+            set_status_bar(C_ERR, "Shader compile failed - %d errors", (int)hmlen(E->error_msgs));
+        }
+    } else {
+        stbds_arrfree(compile_log);
     }
     if (!ok)
         return 0;
@@ -446,6 +521,7 @@ GLFWwindow *gl_init(int want_fullscreen) {
     // printf("retina: %f\n", retina);
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
+    glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     return win;
 }
@@ -864,6 +940,11 @@ int main(int argc, char **argv) {
     bloom_pass = link_program(vs, fs_bloom);
     glDeleteShader(fs_ui);
     glDeleteShader(fs_bloom);
+    GLuint vs_fat = compile_shader(NULL, GL_VERTEX_SHADER, kVS_fat);
+    GLuint fs_fat = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_fat);
+    GLuint fat_prog = link_program(vs_fat, fs_fat);
+    glDeleteShader(fs_fat);
+    glDeleteShader(vs_fat);
 
     load_file_into_editor(&shader_tab, true);
     load_file_into_editor(&audio_tab, true);
@@ -902,6 +983,35 @@ int main(int argc, char **argv) {
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
 
+    // fat line init
+    GLuint fatvao[2]={}, fatvbo[2]={};
+    glGenVertexArrays(2,fatvao);
+    glGenBuffers(2,fatvbo);
+
+    GLsizeiptr cap_bytes = (GLsizeiptr)MAX_LINES * sizeof(line_t);
+
+    for (int i=0;i<2;i++) {
+        glBindVertexArray(fatvao[i]);
+        glBindBuffer(GL_ARRAY_BUFFER, fatvbo[i]);
+        glBufferData(GL_ARRAY_BUFFER, cap_bytes, NULL, GL_DYNAMIC_DRAW); // pre-alloc
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_t), (void*)offsetof(line_t,p0x));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(line_t), (void*)offsetof(line_t,p1x));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(line_t), (void*)offsetof(line_t,width));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(line_t), (void*)offsetof(line_t,col));
+        glVertexAttribDivisor(0,1);
+        glVertexAttribDivisor(1,1);
+        glVertexAttribDivisor(2,1);
+        glVertexAttribDivisor(3,1);
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+
     double t0 = glfwGetTime();
     glfwSetKeyCallback(win, key_callback);
     glfwSetCharCallback(win, char_callback);
@@ -920,6 +1030,47 @@ int main(int argc, char **argv) {
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, vao);
         render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, iTime, vao, ui_alpha);
+
+        #define MOUSE_LEN 8
+        #define MOUSE_MASK (MOUSE_LEN-1)
+        static float mxhistory[MOUSE_LEN], myhistory[MOUSE_LEN];
+        int mpos = (iFrame % MOUSE_LEN);
+        mxhistory[mpos] = G->mx;
+        myhistory[mpos] = G->my;
+        int numlines = minu(iFrame, MOUSE_LEN-1u);
+        for (int i=0;i<numlines;i++) {
+            float p0x = mxhistory[(mpos-i)&MOUSE_MASK];
+            float p0y = myhistory[(mpos-i)&MOUSE_MASK];
+            float p1x = mxhistory[(mpos-i-1)&MOUSE_MASK];
+            float p1y = myhistory[(mpos-i-1)&MOUSE_MASK];
+            float len = 50.f + sqrtf(squaref(p0x-p1x) + squaref(p0y-p1y));
+            int alpha = (int)clampf(len,0.f,255.f);
+            // red is in the lsb. premultiplied alpha so alpha=0 == additive
+            uint32_t col = (alpha << 24) | ((alpha>>0)<<16) | ((alpha>>0)<<8) | (alpha>>0);
+            if (i==0) col=0;
+            add_line(p0x, p0y, p1x, p1y, col, 17.f-i);
+        }
+
+        // fat line draw
+        if (line_count > 0) {
+            //line_t lines[1] = {{300.f,100.f,G->mx,G->my,0xffff00ff,54.f}};
+            GLsizeiptr bytes = (GLsizeiptr)((line_count <= MAX_LINES ? line_count : MAX_LINES) * sizeof(line_t));
+
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glBlendFunc(GL_DST_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendEquation(GL_FUNC_ADD);
+            glBindVertexArray(fatvao[iFrame % 2]);
+            glBindBuffer(GL_ARRAY_BUFFER, fatvbo[iFrame % 2]);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
+            glUseProgram(fat_prog);
+            glUniform2f(glGetUniformLocation(fat_prog, "fScreenPx"), fbw, fbh);
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, line_count);
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glDisable(GL_BLEND);
+            line_count = 0;
+        }
 
         ui_alpha += (ui_alpha_target - ui_alpha) * 0.1;
 

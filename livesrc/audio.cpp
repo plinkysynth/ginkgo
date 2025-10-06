@@ -26,7 +26,7 @@ stereo do_sample(stereo inp) {
     //return stereo{sino(P_C5)};
     chord1 = chord1 * vol(slew(S0(0.))) + 
         chord2 * vol(slew(S1(0.))) +
-        chord3 * vol(slew(S0(0.)));
+        chord3 * vol(slew(S2(0.)));
    //F bass = sclip(lpf_dp(sawo(P_C1)+sawo(P_C2*1.03324f)+sawo(P_C2*0.99532f), P_C3, 0.1f))*0.2; // growly bass    
    F drums = sclip(rompler("break_sesame") * pow4(S4(0))*10.); 
    F dc = S5(0) * 2.;

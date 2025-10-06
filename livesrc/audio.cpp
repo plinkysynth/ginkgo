@@ -1,24 +1,10 @@
 
 #ifdef PATTERNS
-
-// any block comment beginning "#ifdef PATTERNS" will be considered pattern area.
-// this is the pattern area. it is parsed and 'compiled' by gingko, not the c compiler.
-// we create named mini-notation patterns and curves.
-
-// this is a graph - any string inside single quotes becomes a value you can edit as both text and visually.
-// the graph appears when you hover it.
-
-'.aWVVXdq67qdcef'     
-
-
 /fancy_pattern [[- rim], bd(3,8), hh*8]
 
 /kick44 [bd*4]
 
 /euclid sd(3,8) '.  a      z . ' 
-
-kicklinn
-Breaks_Let_There_Break
 #endif
 
 
@@ -37,7 +23,8 @@ stereo do_sample(stereo inp) {
     F chord1 = sawo(P_C3) + sawo(P_Ds4) + sawo(P_C4) + pwmo(P_C1,0.25) + sino(P_C5) + sino(P_C6);
     F chord2 = sawo(P_Gs2) + sawo(P_F4) + sawo(P_C4) + pwmo(P_F1,0.25) + sino(P_F5) + sino(P_Ds6);
     F chord3 = sawo(P_D3) + sawo(P_B3) + sawo(P_G2) + pwmo(P_G1,0.25) + sino(P_G5);
-    chord1 = chord1 * vol(slew(S0(0.5))) + 
+    //return stereo{sino(P_C5)};
+    chord1 = chord1 * vol(slew(S0(0.))) + 
         chord2 * vol(slew(S1(0.))) +
         chord3 * vol(slew(S0(0.)));
    //F bass = sclip(lpf_dp(sawo(P_C1)+sawo(P_C2*1.03324f)+sawo(P_C2*0.99532f), P_C3, 0.1f))*0.2; // growly bass    
@@ -50,35 +37,3 @@ stereo do_sample(stereo inp) {
     
     return wet + dc;
 }
-
-/*                           :-:.                              
-                     +%=:-+#*.  :#%*+#*:                       
-                    =+     .-     -.   +:                      
-                    ==     :-    --   -= :*==*-     ginkgo           
-                    :*     :-   :-   :+.-+    *-               
-                     =+    ::   -:  :+:==    --=*=             
-                     .*:   -.  --  .**+-   --    =+            
-                      -+  .=  :-   +#-  .-:      -*            
-                      :*  :- :=   ::  .=:     :=- =*.          
-                      .+: -..=.  -: :=:   .+=       #-         
-                       +::=.=. := -=   =*:          :*         
-                      .+---=. -==- .+=       .-+*+=-#=         
-                      .*-*=.:#*:-=-   -+=-..        %.         
-                      -#**:=+-====-::.              +=         
-                     .**+-+***-:..::----------:.     #:        
-                     +%=+#+==+++=:              .----%:        
-                    -#==+*#+=--:.:-===-:.           *-         
-                   -*:+%*=:..:=*#*=.     :==.       %:         
-                  +*#+             :#*.      .+-    %.         
-                .#**                  -#-        +*%:          
-               :#*=                     :*-      -+            
-              :#*-                        -*-   -*.            
-             :#+=                           :-==:              
-            .#=*                                               
-            *-*                                                
-           -*-+                                                
-           *:+:                                                
-          .# *                                                 
-          .%-%                                                 
-            :.                                                 */
-

@@ -34,7 +34,7 @@
 #define RESH 1080
 
 // Named constants for magic numbers
-#define BLOOM_FADE_FACTOR (1.f/16.f)
+#define BLOOM_FADE_FACTOR (1.f / 16.f)
 #define BLOOM_SPIKEYNESS 0.5f
 #define BLOOM_KERNEL_SIZE_DOWNSAMPLE 1.5f
 #define BLOOM_KERNEL_SIZE_UPSAMPLE 3.f
@@ -55,7 +55,7 @@ static void check_gl(const char *where) {
     }
 }
 
-static void bind_texture_to_slot(GLuint shader, int slot, const char* uniform_name, GLuint texture, GLenum mag_filter) {
+static void bind_texture_to_slot(GLuint shader, int slot, const char *uniform_name, GLuint texture, GLenum mag_filter) {
     glUniform1i(glGetUniformLocation(shader, uniform_name), slot);
     glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -99,28 +99,14 @@ static void setup_framebuffers_and_textures(GLuint *texFPRT, GLuint *fbo, int nu
 
 static void draw_fullscreen_pass(GLuint fbo, int viewport_w, int viewport_h, GLuint vao) {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glViewport(0, 0, viewport_w, viewport_h);    
+    glViewport(0, 0, viewport_w, viewport_h);
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     check_gl("draw fullscreen pass");
 }
 
-static void set_ui_uniforms(GLuint shader, EditorState *curE, int fbw, int fbh, double iTime) {
-    glUniform2i(glGetUniformLocation(shader, "uScreenPx"), fbw, fbh);
-    glUniform2i(glGetUniformLocation(shader, "uFontPx"), curE->font_width, curE->font_height);
-    glUniform1i(glGetUniformLocation(shader, "status_bar_size"), status_bar_color ? 1 : 0);
-    glUniform1f(glGetUniformLocation(shader, "iTime"), (float)iTime);
-    glUniform1f(glGetUniformLocation(shader, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
-    
-    float f_cursor_x = curE->cursor_x * curE->font_width;
-    float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
-    glUniform4f(glGetUniformLocation(shader, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
-    curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
-    curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
-}
-
 static void set_bloom_uniforms(GLuint shader, int resw, int resh, float kernel_size, float fade_factor) {
-    glUniform2f(glGetUniformLocation(shader, "duv"), kernel_size/resw, kernel_size/resh);
+    glUniform2f(glGetUniformLocation(shader, "duv"), kernel_size / resw, kernel_size / resh);
     glUniform1f(glGetUniformLocation(shader, "fade"), fade_factor);
 }
 
@@ -163,6 +149,17 @@ uniform float iTime;
 uint seed; 
 uniform sampler2D uFP; 
 uniform ivec2 uScreenPx;
+uniform sampler2D uFont; 
+uniform usampler2D uText; 
+float square(float x) { return x * x; }
+vec2 wave_read(float x, int y_base) {
+    int ix = int(x);
+    vec2 s0 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
+    ix++;
+    vec2 s1 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
+    return mix(s0, s1, fract(x));
+}
+vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * (1.f/128.f); }
 
 float saturate(float x) { return clamp(x, 0.0, 1.0); }
 uint pcg_next() { return seed = seed * 747796405u + 2891336453u; } 
@@ -210,7 +207,14 @@ const char *kFS_bloom = SHADER(
 
 const char *kFS_ui = SHADER(
     float saturate(float x) { return clamp(x, 0.0, 1.0); }
-    uniform ivec2 uScreenPx; uniform float iTime; uniform float scroll_y; uniform vec4 cursor; out vec4 o_color; in vec2 v_uv;
+    uniform ivec2 uScreenPx; 
+    uniform float iTime; 
+    uniform float scroll_y; 
+    uniform vec4 cursor; 
+    uniform float ui_alpha;
+    out vec4 o_color; 
+    in vec2 v_uv;
+
     uniform ivec2 uFontPx;
     uniform int status_bar_size;
     uniform sampler2D uFP; 
@@ -344,6 +348,7 @@ const char *kFS_ui = SHADER(
             float cursor_col = (grey > 0.5) ? 0. : 1.;    
             fontcol = mix(fontcol, vec4(vec3(cursor_col), 1.), cursor_alpha);
         }
+        fontcol*=ui_alpha;
         o_color = vec4(rendercol.xyz * (1.-fontcol.w) + fontcol.xyz, 1.0);
     });
 // clang-format on
@@ -351,6 +356,8 @@ const char *kFS_ui = SHADER(
 EditorState audio_tab = {.fname = "livesrc/audio.cpp", .is_shader = false};
 EditorState shader_tab = {.fname = "livesrc/video.glsl", .is_shader = true};
 EditorState *curE = &audio_tab;
+float ui_alpha = 0.f;
+float ui_alpha_target = 1.f;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 static float retina = 1.0f;
 
@@ -443,7 +450,10 @@ GLFWwindow *gl_init(int want_fullscreen) {
     return win;
 }
 
-
+static void set_tab(EditorState *newE) {
+    ui_alpha_target = (ui_alpha_target>0.5 && curE == newE) ? 0.f : 1.f;
+    curE = newE;
+}
 
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
     EditorState *E = curE;
@@ -452,10 +462,10 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     if (mods == 0) {
 
         if (key == GLFW_KEY_F1) {
-            E = curE = &shader_tab;
+            set_tab(&shader_tab);
         }
         if (key == GLFW_KEY_F2) {
-            E = curE = &audio_tab;
+            set_tab(&audio_tab);
         }
     }
     if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
@@ -545,8 +555,6 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         curE->need_scroll_update = true;
     }
 }
-
-
 
 void editor_update(EditorState *E, GLFWwindow *win) {
     double mx, my;
@@ -714,13 +722,12 @@ void on_midi_input(uint8_t data[3], void *user) {
     // printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
 }
 
-
 // Audio and MIDI initialization
 static void init_audio_midi(ma_device *dev) {
     int num_inputs = midi_get_num_inputs();
     int num_outputs = midi_get_num_outputs();
     printf("midi: " COLOR_GREEN "%d" COLOR_RESET " inputs, " COLOR_GREEN "%d" COLOR_RESET " outputs\n", num_inputs, num_outputs);
-    
+
     int midi_input_idx = 0;
     for (int i = 0; i < num_inputs; ++i) {
         const char *name = midi_get_input_name(i);
@@ -733,7 +740,7 @@ static void init_audio_midi(ma_device *dev) {
         const char *name = midi_get_input_name(i);
         printf("input %d: %c" COLOR_YELLOW "%s" COLOR_RESET "\n", i, (i == midi_input_idx) ? '*' : ' ', name);
     }
-    
+
     midi_init(on_midi_input, NULL);
     midi_open_input(midi_input_idx);
 
@@ -742,7 +749,7 @@ static void init_audio_midi(ma_device *dev) {
     cfg.capture.format = cfg.playback.format = ma_format_f32;
     cfg.capture.channels = cfg.playback.channels = 2;
     cfg.dataCallback = audio_cb;
-    
+
     if (ma_device_init(NULL, &cfg, dev) != MA_SUCCESS) {
         die("ma_device_init failed");
     }
@@ -754,7 +761,8 @@ static void init_audio_midi(ma_device *dev) {
 }
 
 // Render pass functions
-static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, double iTime, GLuint vao) {
+static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, double iTime, GLuint vao,
+                             GLuint texFont, GLuint texText) {
     if (!user_pass) {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo[iFrame % 2]);
         glViewport(0, 0, RESW, RESH);
@@ -764,13 +772,16 @@ static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, uin
         glUseProgram(user_pass);
         glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), RESW, RESH);
         glUniform1f(glGetUniformLocation(user_pass, "iTime"), (float)iTime);
-        glUniform1ui(glGetUniformLocation(user_pass, "iFrame"), iFrame);    
+        glUniform1ui(glGetUniformLocation(user_pass, "iFrame"), iFrame);
+        bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
+        bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
         bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
         draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
     }
 }
 
-static void render_bloom_downsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, int num_bloom_mips, GLuint vao) {
+static void render_bloom_downsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, int num_bloom_mips,
+                                    GLuint vao) {
     for (int i = 0; i < num_bloom_mips; ++i) {
         int resw = RESW >> (i + 1);
         int resh = RESH >> (i + 1);
@@ -786,7 +797,7 @@ static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPR
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glBlendFunc(GL_DST_ALPHA, GL_ONE);
     glBlendEquation(GL_FUNC_ADD);
-    
+
     for (int i = num_bloom_mips - 2; i >= 0; --i) {
         int resw = RESW >> (i + 1);
         int resh = RESH >> (i + 1);
@@ -798,14 +809,27 @@ static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPR
     glDisable(GL_BLEND);
 }
 
-static void render_ui_pass(GLuint ui_pass, GLuint *texFPRT, GLuint texFont, GLuint texText, 
-                          uint32_t iFrame, EditorState *curE, int fbw, int fbh, double iTime, GLuint vao) {
+static void render_ui_pass(GLuint ui_pass, GLuint *texFPRT, GLuint texFont, GLuint texText, uint32_t iFrame, EditorState *curE,
+                           int fbw, int fbh, double iTime, GLuint vao, float ui_alpha) {
     glUseProgram(ui_pass);
     bind_texture_to_slot(ui_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
     bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
     bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
     bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[2], GL_LINEAR);
-    set_ui_uniforms(ui_pass, curE, fbw, fbh, iTime);
+
+    glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
+    glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
+    glUniform1i(glGetUniformLocation(ui_pass, "status_bar_size"), status_bar_color ? 1 : 0);
+    glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
+    glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
+    glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
+
+    float f_cursor_x = curE->cursor_x * curE->font_width;
+    float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
+    glUniform4f(glGetUniformLocation(ui_pass, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
+    curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
+    curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
+
     draw_fullscreen_pass(0, fbw, fbh, vao);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -840,7 +864,7 @@ int main(int argc, char **argv) {
     bloom_pass = link_program(vs, fs_bloom);
     glDeleteShader(fs_ui);
     glDeleteShader(fs_bloom);
-    
+
     load_file_into_editor(&shader_tab, true);
     load_file_into_editor(&audio_tab, true);
     try_to_compile_shader(&shader_tab);
@@ -863,9 +887,9 @@ int main(int argc, char **argv) {
     check_gl("alloc text tex");
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    #define NUM_BLOOM_MIPS 3
-    GLuint texFPRT[2+NUM_BLOOM_MIPS];
-    GLuint fbo[2+NUM_BLOOM_MIPS];
+#define NUM_BLOOM_MIPS 3
+    GLuint texFPRT[2 + NUM_BLOOM_MIPS];
+    GLuint fbo[2 + NUM_BLOOM_MIPS];
     setup_framebuffers_and_textures(texFPRT, fbo, NUM_BLOOM_MIPS);
 
     glGenBuffers(3, pbos);
@@ -889,14 +913,15 @@ int main(int argc, char **argv) {
 
         double iTime = glfwGetTime() - t0;
         static uint32_t iFrame = 0;
-        
+
         glDisable(GL_DEPTH_TEST);
         editor_update(curE, win);
-        render_user_pass(user_pass, fbo, texFPRT, iFrame, iTime, vao);
+        render_user_pass(user_pass, fbo, texFPRT, iFrame, iTime, vao, texFont, texText);
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, vao);
-        render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, iTime, vao);
-        
+        render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, iTime, vao, ui_alpha);
+
+        ui_alpha += (ui_alpha_target - ui_alpha) * 0.1;
 
         glfwSwapBuffers(win);
         iFrame++;

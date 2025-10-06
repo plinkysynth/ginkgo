@@ -4,24 +4,28 @@
 // \__ \ | | | (_| | (_| |  __/ |   
 // |___/_| |_|\__,_|\__,_|\___|_|   
 //        
-// just set something into vec3 o, or return a color.
+uv-=0.5;
+uv.x*=16./9.;
+float vignette = 1./(1.+length(uv));
+uv*=1.+0.12*dot(uv,uv); // bendy
+vec2 reticulexy = abs(fract(uv*10.+0.5)-0.5);
+vec2 reticulexy2 = abs(fract(uv*100.+0.5)-0.5);
+float reticule=min(reticulexy.x,reticulexy.y);
+float reticule2=min(reticulexy2.x,reticulexy2.y);
+reticule2 += 100.*max(0.,min(abs(uv.x), abs(uv.y))-0.005);
+reticule=min(reticule,reticule2*0.1);
+reticule *= reticule;
+reticule = exp2(-reticule*3000.)*0.66+exp2(-reticule*300.)*0.125;
 
-vec2 xuv = v_uv - 0.5;
-xuv.x-=iTime*0.02;
-float d = 100000.*exp(-10000.*dot(xuv,xuv));
-d=smoothstep(0.00501,0.005,abs(fract(xuv.x*20.)*0.05+abs(xuv.y+0.4)-0.025));
-o=vec3(5.,2.,1.)*d*uv.x*uv.x*3.;
-o+=(1-uv.y)*vec3(0.1,0.2,0.3)*0.2;
-//o.x=1;
-//o=vec3(fract(v_uv*4),0.)*0.;
+vec2 sc = scope((uv.x+1.f)*256.f);
+float beam = exp(-10000.*square((uv.y*5+2.1)-sc.x));
+beam += exp(-10000.*square((uv.y*5+2.1)-sc.y));
 
-// o=vec3(uv*0.2,0.);
+beam *= 0.1; // beam brigtness
 
-// vec2 c = vec2(uv.x*3.5-2.5, uv.y*2.0-1.0), z = vec2(0.0);
-// float it = 200.0;
-// for (int i = 0; i < 200; i++) {
-//     z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
-//     if (dot(z,z) > 4.0) { it = float(i); break; }
-// }
-// float t = it/5.0+1.;
-// o=0.5+0.2*sin(vec3(1.,2.,3.)*t);
+beam*=exp(fract(uv.x*0.5-iTime*11.)-1.);
+beam+=0.01;
+beam*=vignette;
+beam*=1.-reticule;
+o.xyz=vec3(2,4,3) * beam;
+o=mix(o, texture(uFP,v_uv).xyz, 0.5);

@@ -1056,7 +1056,7 @@ int main(int argc, char **argv) {
             if (i==0) col=0;
             add_line(p0x, p0y, p1x, p1y, col, 17.f-i);
         }
-        test_svf_gain();
+        //test_svf_gain();
 
         // fat line draw
         if (line_count > 0) {

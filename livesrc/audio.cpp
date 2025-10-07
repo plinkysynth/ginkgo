@@ -20,10 +20,11 @@ float rompler(const char *fname) {
 
 
 stereo do_sample(stereo inp) {
-  F t = rndt();
-  t=peakf(t, 0.1f, 880.f, 1.f);
+  //F t = rndt();
+  //t=peakf(t, 0.1f, 880.f, 1.f);
+  //t=lpf(t, 880.f, 40.f);
   //t=sino(P_A4);
-  return probe=stereo{t,t};  
+  //return probe=stereo{t,t};  
   
   F chord1 = sawo(P_C3) + sawo(P_Ds4) + sawo(P_C4) + pwmo(P_C1,0.25) + sino(P_C5) + sino(P_C6);
     F chord2 = sawo(P_Gs2) + sawo(P_F4) + sawo(P_C4) + pwmo(P_F1,0.25) + sino(P_F5) + sino(P_Ds6);

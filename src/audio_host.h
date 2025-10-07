@@ -6,6 +6,8 @@
 #define FFT_SIZE 8192
 #define SCOPE_MASK (SCOPE_SIZE - 1)
 stereo scope[SCOPE_SIZE];
+stereo probe_scope[SCOPE_SIZE];
+float probe_db_smooth[FFT_SIZE/2];
 int xyscope[128][128];
 uint32_t scope_pos = 0;
 
@@ -22,7 +24,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     if (!dsp)
         return;
     dsp_fn_t old_dsp = atomic_load_explicit(&g_dsp_used, memory_order_acquire);
-    stereo audio[OVERSAMPLE*frames];
+    stereo audio[OVERSAMPLE*frames*2]; // *2 because of probe (4 channels iow)
     static stereo prev_input;
     static_assert(OVERSAMPLE == 2 || OVERSAMPLE == 1, "OVERSAMPLE must be 2 or 1");
     if (OVERSAMPLE == 2) {
@@ -68,8 +70,9 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     static uint32_t history_pos = 0;
     for (ma_uint32 k = 0; k < frames; ++k) {
         // saturation on output...
-        stereo acc;
+        stereo acc, probe;
         if (OVERSAMPLE == 2) {
+            probe = (audio[k*2+0+frames*2]+audio[k*2+1+frames*2]); // cheap downsample for probe ;)
             history[history_pos & 63] = sclip(ensure_finite(audio[k*2+0]));
             history[(history_pos + 1) & 63] = sclip(ensure_finite(audio[k*2+1]));
             history_pos += 2;
@@ -85,10 +88,12 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
                 acc.r += fir_kernel[tap] * (t0.r + t1.r);
             }
         } else {
+            probe = audio[k+frames];
             acc = sclip(ensure_finite(audio[k]));
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;
+        probe_scope[scope_pos & SCOPE_MASK] = probe;
         // vector scope
         static uint32_t wipe = 0;
         int *sc = &xyscope[(wipe >> 7) & 127][wipe & 127];

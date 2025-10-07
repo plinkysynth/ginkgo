@@ -14,7 +14,7 @@ struct cf {
     }
 };
 
-static inline float abs(const cf& z) { return sqrtf(z.re*z.re + z.im*z.im); }
+static inline float sqr(const cf& z) { return (z.re*z.re + z.im*z.im); }
 static cf expj(float w) { return {cosf(w), sinf(w)}; }
 typedef struct svf_gain_output_t {
     cf lp, bp, hp;
@@ -30,7 +30,7 @@ static inline svf_gain_output_t calculate_svf_gain_2pole(float f, float g, float
     const float b = 2.0f*g2 - 2.0f;
     const float c = 1.0f - g*R + g2;
     const cf den = a*z2 + b*z + c;
-    if (abs(den) < 1e-10f) return rv;
+    if (sqr(den) < 1e-10f) return rv;
 
     const cf zp1 = z + cf(1,0);
     const cf zm1 = z - cf(1,0);
@@ -60,62 +60,45 @@ void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float wi
 
 
 void test_svf_gain(void) {
-    static PFFFT_Setup *fft_setup = NULL;
-    static float *fft_work = NULL;
-    static float *fft_buf = NULL;
-    static float *fft_mags= NULL;
-    static float *fft_window = NULL;
-    float g = svf_g(880.f);
-    float R = 1.f/QBUTTER;
-    float R1 = R * SVF_24_R_MUL1;
-    float R2 = R * SVF_24_R_MUL2;
-if (!fft_setup) {
-        fft_setup = pffft_new_setup(FFT_SIZE, PFFFT_REAL);
-        fft_work = (float *)pffft_aligned_malloc(FFT_SIZE * 2 * sizeof(float));
-        fft_buf = (float *)pffft_aligned_malloc(FFT_SIZE * sizeof(float));
-        fft_mags = (float *)pffft_aligned_malloc(FFT_SIZE/2 * sizeof(float));
-        fft_window = (float *)pffft_aligned_malloc(FFT_SIZE * sizeof(float));
-        const float a0 = 0.42f, a1 = 0.5f, a2 = 0.08f;
-        const float scale = (float)(2.0 * M_PI) / (float)(FFT_SIZE - 1);
-        for (int i = 0; i < FFT_SIZE; ++i) {
-            float x = i * scale;
-            fft_window[i] = a0 - a1 * cosf(x) + a2 * cosf(2.0f * x);
-        }
-        memset(fft_mags, 0, FFT_SIZE/2 * sizeof(float));
-        float state[8]={};
-        int numiter = 256;
-        for (int iter=0;iter<numiter;iter++) {
-            for (int i=0;i<FFT_SIZE;i++) {
-                float y = rndt();
-                y=svf_process_2pole(state, y, g, R).hp;
-                y=svf_process_1pole(state+2, y, g).hp;
-                fft_buf[i] = y * fft_window[i];
-            }
-            pffft_transform_ordered(fft_setup, fft_buf, fft_buf, fft_work, PFFFT_FORWARD);
-            for (int i=0;i<FFT_SIZE/2;i++) {
-                fft_mags[i] += (fft_buf[i * 2] * fft_buf[i * 2] + fft_buf[i * 2 + 1] * fft_buf[i * 2 + 1]) / (FFT_SIZE*16);
-            }
-        }
-    }
-
-
-
+    float fhpf = 100.f;
+    float fmid = 880.f;
+    float qmid = 1.;
+    float gainmid = 0.1f;
+    float flpf = 5000.f;
+    float ghpf = svf_g(fhpf);
+    float Rhpf1 = 1.f/QBUTTER_24A;
+    float Rhpf2 = 1.f/QBUTTER_24B;
+    float glpf = svf_g(flpf);
+    float Rlpf = 1.f/QBUTTER;
+    float gmid = svf_g(fmid);
+    float Rmid = svf_R(qmid);
 
     float prevy=0.f;
     float prevx=0.f;
     float prevy2=0.f;
     int dx=16;
-    for (int bin = 4; bin < FFT_SIZE/4; bin++) {
-        float freq = bin * (float)SAMPLE_RATE / (float)FFT_SIZE;
+    float xhp = log2f(fhpf/48.f)*200.f;
+    float xmid = log2f(fmid/48.f)*200.f;
+    float xlp = log2f(flpf/48.f)*200.f;
+    add_line(xhp, 200.f, xhp, 1500.f, 0xffff0000, 4.f);
+    add_line(xmid, 200.f, xmid, 1500.f, 0xffff0000, 4.f);
+    add_line(xlp, 200.f, xlp, 1500.f, 0xffff0000, 4.f);
+    for (int bin = 4; bin < FFT_SIZE/2; bin++) {
+        float freq = bin * (float)SAMPLE_RATE_OUTPUT / (float)FFT_SIZE;
         float x = log2f(freq/48.f)*200.f;
-        float signal_mag = fft_mags[bin];
-        float signal_mag_db = squared2db(signal_mag);
-        svf_gain_output_t gain1 = calculate_svf_gain_2pole(freq, g, R);
-        svf_gain_output_t gain2 = calculate_svf_gain_1pole(freq, g);
-        float hp = abs(gain1.hp * gain2.hp);
-        float db = lin2db(hp);
-        float y = db * -5.f + 500.f;
-        float y2 = signal_mag_db * -5.f + 500.f;
+        float signal_mag_db = probe_db_smooth[bin];
+        svf_gain_output_t gain1 = calculate_svf_gain_2pole(freq, ghpf, Rhpf1);
+        svf_gain_output_t gain2 = calculate_svf_gain_2pole(freq, ghpf, Rhpf2);
+        svf_gain_output_t gain3 = calculate_svf_gain_2pole(freq, glpf, Rlpf);
+        svf_gain_output_t gain4 = calculate_svf_gain_2pole(freq, gmid, Rmid);
+        float gainsq = sqr(gain1.hp * gain2.hp * gain3.lp);
+        gainsq = sqr(gain4.bp * Rmid * (gainmid-1.f) + cf{1.f,0.f});
+        float db = squared2db(gainsq);
+        
+        if (db<-100.f) db=-100.f;
+        if (signal_mag_db<-100.f) signal_mag_db=-100.f;
+        float y = db * -10.f + 500.f;
+        float y2 = signal_mag_db * -10.f + 500.f;
         if (x) {
             add_line(x, y, prevx, prevy, 0xffffffff, 4.f);
             add_line(x, y2, prevx, prevy2, 0xff0000ff, 4.f);
@@ -124,7 +107,4 @@ if (!fft_setup) {
         prevy2 = y2;
         prevx = x;
     }
-    printf("%f ", squared2db(fft_mags[1]));
-    printf("%f\n", squared2db(fft_mags[FFT_SIZE/4]));
-
 }

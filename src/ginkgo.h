@@ -30,8 +30,8 @@ extern "C" {
 #define QBUTTER 0.70710678118654752440f
 #define QBUTTER_24A 0.541196f
 #define QBUTTER_24B 1.306563f
-#define SVF_24_R_MUL1 (1.f/(SQRT2 * QBUTTER_24A)) // when R=SQRT2, I want it to become 1/QBUFFER_24A
-#define SVF_24_R_MUL2 (1.f/(SQRT2 * QBUTTER_24B)) // when R=SQRT2, I want it to become 1/QBUFFER_24B
+#define SVF_24_R_MUL1 (1.f/(QBUTTER_24A)) 
+#define SVF_24_R_MUL2 (1.f/(QBUTTER_24B)) 
 // size of virtual textmode screen:
 #define TMW 512
 #define TMH 256
@@ -388,7 +388,7 @@ static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc consta
 //static inline float svf_g(float fc) { return fc/SAMPLE_RATE; }
 
 
-static inline float svf_R(float q) { return SQRT2 / q; } // scaled so that Q=1 is like butterworth
+static inline float svf_R(float q) { return 1.f / q; } 
 
 
 
@@ -427,8 +427,9 @@ static inline float hpf4(float x, float fc, float q) {
 
 static inline float peakf(float x, float gain, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
-    svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
-    return o.lp + o.hp + gain * o.bp;
+    float R = svf_R(q);
+    svf_output_t o = svf_process_2pole(state, x, svf_g(fc), R);
+    return x + (gain-1.f) * o.bp * R;
 }
 
 static inline float notchf(float x, float fc, float q) {
@@ -716,6 +717,7 @@ stereo do_sample(stereo inp);
 void init_state(void);
 size_t get_state_size(void);
 int get_state_version(void);
+stereo probe;
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
     G = (basic_state_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
     for (int i = 0; i < frames; i++) {
@@ -723,7 +725,9 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
             G->sliders[slider_idx].i = 0;
         G->audio_bump.i = 0;
+        probe = {};
         audio[i] = do_sample(audio[i]);
+        audio[i+frames] = probe;
         G->sampleidx++;
         G->reloaded = 0;
     }

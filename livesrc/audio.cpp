@@ -21,9 +21,9 @@ float rompler(const char *fname) {
 
 stereo do_sample(stereo inp) {
   F t = rndt();
-  t=bpf(t, 880.f, 1000.f);
+  t=peakf(t, 0.1f, 880.f, 1.f);
   //t=sino(P_A4);
-  return stereo{t,t};  
+  return probe=stereo{t,t};  
   
   F chord1 = sawo(P_C3) + sawo(P_Ds4) + sawo(P_C4) + pwmo(P_C1,0.25) + sino(P_C5) + sino(P_C6);
     F chord2 = sawo(P_Gs2) + sawo(P_F4) + sawo(P_C4) + pwmo(P_F1,0.25) + sino(P_F5) + sino(P_Ds6);
@@ -40,5 +40,5 @@ stereo do_sample(stereo inp) {
     stereo wet=reverb(dry*0.5f);
     wet = wet+dry*0.2+drums*0.5f;
     
-    return wet + dc;
+    return probe = wet + dc;
 }

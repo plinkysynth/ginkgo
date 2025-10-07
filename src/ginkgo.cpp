@@ -734,14 +734,17 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         }
 
         uint32_t fft_start = scope_pos - FFT_SIZE;
-        float fft_buf[2][FFT_SIZE];
+        float fft_buf[3][FFT_SIZE];
         for (int i = 0; i < FFT_SIZE; ++i) {
             stereo sc = scope[(fft_start + i) & SCOPE_MASK];
+            stereo pr = probe_scope[(fft_start + i) & SCOPE_MASK];
             fft_buf[0][i] = sc.l * fft_window[i];
             fft_buf[1][i] = sc.r * fft_window[i];
+            fft_buf[2][i] = (pr.l+pr.r) * fft_window[i];
         }
         pffft_transform_ordered(fft_setup, fft_buf[0], fft_buf[0], fft_work, PFFFT_FORWARD);
         pffft_transform_ordered(fft_setup, fft_buf[1], fft_buf[1], fft_work, PFFFT_FORWARD);
+        pffft_transform_ordered(fft_setup, fft_buf[2], fft_buf[2], fft_work, PFFFT_FORWARD);
         scope_dst = ptr + (TMH - 12) * TMW;
         float peak_mag = squared2db(squaref(0.25f * FFT_SIZE)); // assuming hann, coherent gain is 0.5
         // int mini=0, maxi=0;
@@ -751,10 +754,13 @@ void editor_update(EditorState *E, GLFWwindow *win) {
                 squared2db(fft_buf[0][i * 2] * fft_buf[0][i * 2] + fft_buf[0][i * 2 + 1] * fft_buf[0][i * 2 + 1]) - peak_mag;
             float magr_db =
                 squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) - peak_mag;
+            float probe_db =
+                squared2db(fft_buf[2][i * 2] * fft_buf[2][i * 2] + fft_buf[2][i * 2 + 1] * fft_buf[2][i * 2 + 1]) - peak_mag + 6.f;
+            probe_db_smooth[i] = probe_db_smooth[i] + (probe_db - probe_db_smooth[i]) * 0.05f;
             // if (magl_db < minv) {minv = magl_db;mini = i;}
             // if (magl_db > maxv) {maxv = magl_db;maxi = i;}
-            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 4.f, 0.f, 255.f));
-            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 4.f, 0.f, 255.f));
+            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 6.f, 0.f, 255.f));
+            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 6.f, 0.f, 255.f));
             scope_dst[i] = (l8 << 0) | (r8 << 8);
         }
         // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, mini, maxv, maxi);

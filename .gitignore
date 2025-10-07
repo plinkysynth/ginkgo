@@ -9,3 +9,4 @@ webcache/
 samples/
 allsounds.json
 log.txt
+.venv/

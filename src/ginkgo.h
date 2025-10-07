@@ -28,7 +28,10 @@ extern "C" {
 #define SQRT5 2.23606797749978969640f
 #define SIN45 0.70710678118654752440f
 #define QBUTTER 0.70710678118654752440f
-
+#define QBUTTER_24A 0.541196f
+#define QBUTTER_24B 1.306563f
+#define SVF_24_R_MUL1 (1.f/(SQRT2 * QBUTTER_24A)) // when R=SQRT2, I want it to become 1/QBUFFER_24A
+#define SVF_24_R_MUL2 (1.f/(SQRT2 * QBUTTER_24B)) // when R=SQRT2, I want it to become 1/QBUFFER_24B
 // size of virtual textmode screen:
 #define TMW 512
 #define TMH 256
@@ -353,88 +356,84 @@ typedef struct svf_output_t {
 } svf_output_t;
 
 // g = tanf(M_PI * fc / fs), R = 1/Q
-static inline svf_output_t svf_process(float *f, float x, float g, float R) {
+static inline svf_output_t svf_process_2pole(float *f, float v0, float g, float R) {
+    // https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf
     const float a1 = 1.f / (1.f + g * (g + R)); // precompute?
-    const float v3 = x - f[1];
-    const float v1 = a1 * (f[0] + g * v3);
-    const float v2 = f[1] + g * v1;
-    // state updates (trapezoidal integrators)
-    // v1 = soft(v1); v2=soft(v2); // nonlinearity anyone?
+    const float a2 = g * a1;
+    const float a3 = g * a2;
+    const float v3 = v0 - f[1];
+    const float v1 = a1 * f[0] + a2 * v3;
+    const float v2 = f[1] + a2*f[0] + a3*v3;
     f[0] = 2.f * v1 - f[0];
     f[1] = 2.f * v2 - f[1];
-    return (svf_output_t){.lp = v2, .bp = v1, .hp = x - R * v1 - v2};
+    return (svf_output_t){.lp = v2, .bp = v1, .hp = v0 - R * v1 - v2};
+}
+
+static inline svf_output_t svf_process_1pole(float *f, float x, float g){
+    const float a = g/(1.f+g);
+    float v  = x - f[0];
+    float lp = a*v + f[0];
+    *f     = lp + a*v;           // TPT integrator update
+    return (svf_output_t){ .lp = lp, .hp = x - lp, .bp = a * v };
 }
 
 // approximation to tanh for 0-0.25 nyquist.
-static inline float svf_g_approx(float fc) { // fc is like a dphase, ie P_C4 etc constants work
-    // return tanf(PI * fc / FS);
+static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc constants work
+    //return tanf(PI * fc / SAMPLE_RATE);
     //  https://www.desmos.com/calculator/qoy3dgydch
-    static const float A = 0.7715117872827156f * 4.f;
-    static const float B = 0.22026338589733901f * 4.f;
-    return fc * (A + B * fc * fc); // tan fit
+    static const float A=3.272433237e-05f, B = 1.181248215e-14f;
+    return fc * A; // * (A + B * fc * fc); // tan fit
 }
 
-static inline float svf_R(float q) { return 1.f / q; }
+//static inline float svf_g(float fc) { return fc/SAMPLE_RATE; }
 
-// these functions use a hand tuned curve for g and R that is 'nice to use', not mapped to freq
-static inline float svf_g_nice(float fc) { return pow2(fc); }
-static inline float svf_R_nice(float q) { return SQRT2 * (1.02f - minf(q, 1.f)); }
 
-static inline float lpf_dp(float x, float fc_dp, float q) { // takes fc as an osc style dphase
-    float *state = ba_get(&G->audio_bump, 2);
-    float y = svf_process(state, x, svf_g_approx(fc_dp), svf_R_nice(q)).lp;
-    return y;
-}
+static inline float svf_R(float q) { return SQRT2 / q; } // scaled so that Q=1 is like butterworth
+
+
 
 static inline float lpf(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
-    float y = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).lp;
+    float y = svf_process_2pole(state, x, svf_g(fc), svf_R(q)).lp;
     return y;
 }
 
 static inline float hpf(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
-    return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).hp;
+    return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).hp;
 }
 
 static inline float bpf(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
-    return svf_process(state, x, svf_g_nice(fc), svf_R_nice(q)).bp;
+    return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).bp;
 }
 
 // 4 pole lowpass
 static inline float lpf4(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 4);
-    float g = svf_g_nice(fc), r = svf_R_nice(q);
-    x = svf_process(state, x, g, r).lp;
-    return svf_process(state + 1, x, g, r).lp;
+    float g = svf_g(fc), r = svf_R(q);
+    x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).lp;
+    return svf_process_2pole(state + 1, x, g, r * SVF_24_R_MUL2).lp;
 }
 
 // 4 pole hipass
 static inline float hpf4(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 4);
-    float g = svf_g_nice(fc), r = svf_R_nice(q);
-    x = svf_process(state, x, g, r).hp;
-    return svf_process(state + 1, x, g, r).hp;
+    float g = svf_g(fc), r = svf_R(q);
+    x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).hp;
+    return svf_process_2pole(state + 1, x, g, r * SVF_24_R_MUL2).hp;
 }
 
-// 4 pole bandpass
-static inline float bpf4(float x, float fclo, float fchi, float q) {
-    float *state = ba_get(&G->audio_bump, 4);
-    float r = svf_R_nice(q);
-    x = svf_process(state, x, svf_g_nice(fchi), r).lp;
-    return svf_process(state + 1, x, svf_g_nice(fclo), r).hp;
-}
 
 static inline float peakf(float x, float gain, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
-    svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
+    svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
     return o.lp + o.hp + gain * o.bp;
 }
 
 static inline float notchf(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
-    svf_output_t o = svf_process(state, x, svf_g_nice(fc), svf_R_nice(q));
+    svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
     return o.lp + o.hp;
 }
 

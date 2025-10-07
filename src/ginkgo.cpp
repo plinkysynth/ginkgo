@@ -29,7 +29,7 @@
 #include "midi_mac.h"
 #include "sampler.h"
 #include "text_editor.h"
-
+#include "svf_gain.h"
 #define RESW 1920
 #define RESH 1080
 
@@ -1050,6 +1050,7 @@ int main(int argc, char **argv) {
             if (i==0) col=0;
             add_line(p0x, p0y, p1x, p1y, col, 17.f-i);
         }
+        test_svf_gain();
 
         // fat line draw
         if (line_count > 0) {

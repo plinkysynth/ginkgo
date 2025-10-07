@@ -171,8 +171,8 @@ stereo reverb(stereo inp) {
     stereo *state2 = (stereo *)(state + 8);
     ////////////////////////// 4x DOWNSAMPLE
     inp = (stereo){
-        svf_process(state, inp.l, 0.5f, SQRT2).lp,
-        svf_process(state + 2, inp.r, 0.5f, SQRT2).lp,
+        svf_process_2pole(state, inp.l, 0.5f, SQRT2).lp,
+        svf_process_2pole(state + 2, inp.r, 0.5f, SQRT2).lp,
     };
     int outslot = (G->sampleidx >> 2) & 3;
     if ((G->sampleidx & 3) == 0) {

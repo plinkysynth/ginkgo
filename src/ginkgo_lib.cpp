@@ -7,6 +7,7 @@
 #include "wavfile.h"
 #define STB_DS_IMPLEMENTATION
 #include "3rdparty/stb_ds.h"
+#include "miniparse.h"
 basic_state_t dummy_state;
 basic_state_t *_BG = &dummy_state;
 
@@ -269,3 +270,19 @@ void test_conv_reverb(void) {
     fclose(f);
 }
 
+float test_patterns(void) {
+    Pattern p = G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
+    if (!p.key) return 0.f;
+    Hap haps[8], tmp[8];
+    int smpl = G->sampleidx % 96000;
+    HapSpan hs=p.make_haps({haps,haps+8}, {tmp,tmp+8}, (smpl/96000.f), (smpl+1)/96000.f, FLAG_INCLUSIVE);
+    float rv=0.f;
+    static float phases[8]={};
+    //pretty_print_haps(hs);
+    for (Hap *h = hs.s; h < hs.e; h++) {
+        if (h->valid_params & (1 << P_NOTE)) {
+            rv += sino(midi2dphase(h->params[P_NOTE]));
+        }
+    }
+    return rv;
+}

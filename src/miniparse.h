@@ -34,27 +34,65 @@ typedef struct Hap {
     float t0, t1; 
     int node; // index of the node that generated this hap.
     uint32_t valid_params; // which params have been assigned for this hap.
+    int hapid;
     float params[P_LAST];
 } Hap;
 
+typedef struct HapSpan {
+    Hap *s, *e;
+    inline bool empty() const { return s>=e; }
+    inline bool hasatleast(int i) const { return s+i<e; }
+} HapSpan;
+
+#define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
+#define FLAG_INCLUSIVE 2 // if set, we include haps that overlap on the left side.
+
+
 typedef struct Pattern { // a parsed version of a mini notation string
-    const char *s; // ...the string.
-    int32_t n;   // length of string
-    int32_t i;   // current position in string during parsing.
+    const char *key;
     Node *nodes; // stb_ds
     float *curvedata; // stb_ds
     int root;    // index of root node
+    HapSpan _make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, float t0, float t1, float tscale, float tofs, int flags, int hapid);
+    HapSpan _append_hap(HapSpan &dst, int nodeidx, float t0, float t1, float tscale, float tofs, int hapid);
+    HapSpan make_haps(HapSpan dst, HapSpan tmp, float t0, float t1, int flags = 0) { 
+        return _make_haps(dst, tmp, root, t0, t1, 1.f, 0.f, flags, 1);
+    }
+    void unalloc() {
+        stbds_arrfree(nodes);
+        stbds_arrfree(curvedata);
+        root=-1;
+    }
+} Pattern;
+
+
+typedef struct PatternMaker {
+    Node *nodes; // stb_ds
+    float *curvedata; // stb_ds
+    const char *s; // ...the source string.
+    int root;    // index of root node
+    int32_t n;   // length of string
+    int32_t i;   // current position in string during parsing.
     int err;     // 0 ok, else position of first error
     const char *errmsg;
-    uint32_t rand_seed;
-} Pattern;
+    Pattern get_pattern(const char *key=NULL) { return {key, nodes, curvedata, root}; }
+    void unalloc() {
+        stbds_arrfree(nodes);
+        stbds_arrfree(curvedata);
+        root=-1;
+    }
+} PatternMaker;
 
 const char *print_midinote(int note);
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
-int parse_pattern(Pattern *p);
-char* print_pattern_chart(Pattern *p);
-Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags);
+Pattern parse_pattern(PatternMaker *pm);
 void fill_curve_data_from_string(float *data, const char *s, int n); // responsible for the interpolation of lines
+void parse_named_patterns_in_c_source(const char *s, const char *e);
+
+const char *skip_path(const char *s, const char *e);
+const char *find_end_of_pattern(const char *s, const char *e);
+
+void pretty_print_haps(HapSpan haps);
 
 // base64 with # being 64 :) so we can do full range 0-64
 extern const char btoa_tab[65];

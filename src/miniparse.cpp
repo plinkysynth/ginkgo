@@ -14,46 +14,36 @@
 #include "miniparse.h"
 #include "ansicols.h"
 
-
 const static char *param_enum_names[P_LAST] = {
-    #define X(x, ...) #x,
-    #include "params.h"
+#define X(x, ...) #x,
+#include "params.h"
 };
 
 const static char *param_names[P_LAST] = {
-    #define X(x, shortname, ...) shortname,
-    #include "params.h"
+#define X(x, shortname, ...) shortname,
+#include "params.h"
 };
 
 enum {
 #include "node_types.h"
-N_LAST
+    N_LAST
 };
 
 static const char *node_type_names[N_LAST] = {
 #define NODE(x, ...) #x,
-#include "node_types.h"     
+#include "node_types.h"
 };
-
 
 static inline uint32_t hash2_pcg(uint32_t a, uint32_t b) {
     const uint64_t MUL = 6364136223846793005ull;
-    uint64_t state = ((uint64_t)a << 32) | b;    // pack inputs
-    uint64_t inc   = ((uint64_t)b << 1) | 1ull;  // odd stream
-    
-    state = state * MUL + inc;                   // LCG step
-    
+    uint64_t state = ((uint64_t)a << 32) | b; // pack inputs
+    uint64_t inc = ((uint64_t)b << 1) | 1ull; // odd stream
+
+    state = state * MUL + inc; // LCG step
+
     uint32_t xorshifted = (uint32_t)(((state >> 18) ^ state) >> 27);
     uint32_t rot = (uint32_t)(state >> 59);
     return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
-}
-
-static inline uint32_t hasht_int(uint32_t seed, float time) {
-    return hash2_pcg(seed, *(uint32_t*)&time);
-}
-
-static inline float hasht_float(uint32_t seed, float time) {
-    return (hasht_int(seed, time)&0xffffff) * (1.f/16777216.f);
 }
 
 // kinda base64, but we depart to make some punctiation more 'useful'.
@@ -61,26 +51,21 @@ static inline float hasht_float(uint32_t seed, float time) {
 // ^ looks high, so we go 64. @ looks full, and # is hard to type on UK keyboards, but both are also 64
 // = looks middle-y so we make that 32.
 // thus you can interpolate key values with _ = ^
-const char btoa_tab[65] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
+const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
 
 //clang-format off
-const uint8_t atob_tab[256] = {
-    [' '] = 0,
-    ['_'] = 0,
-    ['.'] = 0,
-    ['='] = 32,
-    ['A'] = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-    ['a'] = 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-    ['0'] = 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-    ['!'] = 32,
-    ['+'] = 62, ['-'] = 62, ['*'] = 62,
-    ['/'] = 63, ['$'] = 63,
-    ['#'] = 64, ['@'] = 64, ['^'] = 64,
+const uint8_t atob_tab[256] =
+    {
+        [' '] = 0,  ['_'] = 0,  ['.'] = 0,  ['='] = 32, ['A'] = 0,  1,          2,          3,          4,          5,  6,
+        7,          8,          9,          10,         11,         12,         13,         14,         15,         16, 17,
+        18,         19,         20,         21,         22,         23,         24,         25,         ['a'] = 26, 27, 28,
+        29,         30,         31,         32,         33,         34,         35,         36,         37,         38, 39,
+        40,         41,         42,         43,         44,         45,         46,         47,         48,         49, 50,
+        51,         ['0'] = 52, 53,         54,         55,         56,         57,         58,         59,         60, 61,
+        ['!'] = 32, ['+'] = 62, ['-'] = 62, ['*'] = 62, ['/'] = 63, ['$'] = 63, ['#'] = 64, ['@'] = 64, ['^'] = 64,
 };
 
 //clang-format on
-
 
 Sound *get_sound_init_only(const char *name) { // ...by name.
     Sound *sound = shget(G->sounds, name);
@@ -104,13 +89,11 @@ Sound *add_alias_init_only(const char *alias, const char *name) {
     return alias_sound;
 }
 
-
-
 const char *print_midinote(int note) {
     static char buf[4];
     if (note < 0 || note >= 128)
         return "";
-    const static char notenames[12] = {'C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B'};
+    const static char notenames[12] = {'c', 'c', 'd', 'd', 'e', 'f', 'f', 'g', 'g', 'a', 'a', 'b'};
     const static char notesharps[12] = {' ', '#', ' ', '#', ' ', ' ', '#', ' ', '#', ' ', '#', ' '};
     buf[0] = notenames[note % 12];
     buf[1] = notesharps[note % 12];
@@ -120,16 +103,15 @@ const char *print_midinote(int note) {
     return buf;
 }
 
-void pretty_print_haps(Hap *haps, int n) {
-    for (int i=0; i<n; i++) {
-        Hap *hap = haps + i;
+void pretty_print_haps(HapSpan haps) {
+    for (Hap *hap=haps.s; hap<haps.e; hap++) {
         printf(COLOR_GREY "n(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->node, hap->t0, hap->t1);
         for (int i = 0; i < P_LAST; i++) {
-            if (hap->valid_params & (1<<i)) {
-                if (i==P_SOUND) {
+            if (hap->valid_params & (1 << i)) {
+                if (i == P_SOUND) {
                     Sound *sound = get_sound_by_index((int)hap->params[i]);
                     printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
-                } else if (i==P_NOTE) {
+                } else if (i == P_NOTE) {
                     printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
                 } else {
                     printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
@@ -145,21 +127,28 @@ void pretty_print_nodes(const char *src, Node *nodes, int i, int depth) {
         return;
     int c0 = nodes[i].start;
     int c1 = nodes[i].end;
-    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%s" COLOR_RESET, i, c0, src, c1 - c0, src + c0, src + c1);
+    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%s" COLOR_RESET, i, c0, src, c1 - c0, src + c0,
+           src + c1);
     for (int j = 0; j < depth + 1; j++) {
         printf("  ");
     }
     switch (nodes[i].value_type) {
-        case VT_SOUND: {
-            Sound *sound = get_sound_by_index((int)nodes[i].max_value);
-            printf("%d - %s - maxlen %g val %g-%g %s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value, nodes[i].max_value, sound ? sound->name : "");
-            break; }
-        case VT_NOTE: {
-            printf("%d - %s - maxlen %g val %g-%g %s-%s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value, nodes[i].max_value, print_midinote((int)nodes[i].min_value), print_midinote((int)nodes[i].max_value));
-            break; }
-        default:
-            printf("%d - %s - maxlen %g val %g-%g\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value, nodes[i].max_value);
-            break;
+    case VT_SOUND: {
+        Sound *sound = get_sound_by_index((int)nodes[i].max_value);
+        printf("%d - %s - maxlen %g val %g-%g %s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value,
+               nodes[i].max_value, sound ? sound->name : "");
+        break;
+    }
+    case VT_NOTE: {
+        printf("%d - %s - maxlen %g val %g-%g %s-%s\n", i, node_type_names[nodes[i].type], nodes[i].total_length,
+               nodes[i].min_value, nodes[i].max_value, print_midinote((int)nodes[i].min_value),
+               print_midinote((int)nodes[i].max_value));
+        break;
+    }
+    default:
+        printf("%d - %s - maxlen %g val %g-%g\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value,
+               nodes[i].max_value);
+        break;
     }
     if (nodes[i].first_child >= 0) {
         pretty_print_nodes(src, nodes, nodes[i].first_child, depth + 1);
@@ -169,23 +158,31 @@ void pretty_print_nodes(const char *src, Node *nodes, int i, int depth) {
     }
 }
 
-static void error(Pattern *p, const char *msg) {
+static void error(PatternMaker *p, const char *msg) {
     if (p->errmsg != NULL)
         return;
     p->err = p->i;
     p->errmsg = msg;
-    //fprintf(stderr, "ERROR: %s - %.*s" COLOR_BRIGHT_RED "%s" COLOR_RESET "\n", msg, p->err, p->s, p->s + p->err);
+    // fprintf(stderr, "ERROR: %s - %.*s" COLOR_BRIGHT_RED "%s" COLOR_RESET "\n", msg, p->err, p->s, p->s + p->err);
 }
 
-static void skipws(Pattern *p) {
-    while (p->i < p->n && isspace(p->s[p->i]))
-        p->i++;
+static void skipws(PatternMaker *p) {
+    while (1) {
+        while (p->i < p->n && isspace(p->s[p->i]))
+            p->i++;
+        if (p->i+2 > p->n || p->s[p->i] != '/' || p->s[p->i+1] != '/')
+            return;
+        // skip // comment
+        p->i += 2;
+        while (p->i < p->n && p->s[p->i] != '\n')
+            p->i++;
+    }
 }
 
-static int peek(Pattern *p) { return (p->i >= p->n) ? -1 : (unsigned char)p->s[p->i]; }
-static int peek_i(Pattern *p, int i) { return (i >= p->n) ? -1 : (unsigned char)p->s[i]; }
+static int peek(PatternMaker *p) { return (p->i >= p->n) ? -1 : (unsigned char)p->s[p->i]; }
+static int peek_i(PatternMaker *p, int i) { return (i >= p->n) ? -1 : (unsigned char)p->s[i]; }
 
-static int consume(Pattern *p, int c) {
+static int consume(PatternMaker *p, int c) {
     if (peek(p) == c) {
         p->i++;
         return 1;
@@ -193,20 +190,25 @@ static int consume(Pattern *p, int c) {
     return 0;
 }
 
-static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' || c == '>'; }
+static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' || c == '>' ; }
 static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
-static int make_node(Pattern *p, int node_type, int first_child, int next_sib, int start, int end) {
+static int make_node(PatternMaker *p, int node_type, int first_child, int next_sib, int start, int end) {
     int i = stbds_arrlen(p->nodes);
-    Node n = (Node){.type = (uint8_t)node_type, .start = start, .end = end, .first_child = first_child, .next_sib = next_sib, .total_length = 0};
+    Node n = (Node){.type = (uint8_t)node_type,
+                    .start = start,
+                    .end = end,
+                    .first_child = first_child,
+                    .next_sib = next_sib,
+                    .total_length = 0};
     stbds_arrput(p->nodes, n);
     return i;
 }
 
-static int parse_expr(Pattern *p);
+static int parse_expr(PatternMaker *p);
 
-static int parse_args(Pattern *p, int group_type, int start, int is_poly) {
+static int parse_args(PatternMaker *p, int group_type, int start, int is_poly) {
     int group_node = make_node(p, group_type, -1, -1, start, start);
     int group_link_idx = -1;
     int comma_node = -1;
@@ -273,7 +275,7 @@ static int parse_args(Pattern *p, int group_type, int start, int is_poly) {
     return group_node;
 }
 
-static int parse_group(Pattern *p, char open, char close, int node_type) {
+static int parse_group(PatternMaker *p, char open, char close, int node_type) {
     int start = p->i;
     if (!consume(p, open)) {
         error(p, "expected opening bracket");
@@ -296,44 +298,48 @@ int parse_midinote(const char *s, const char *e, const char **end, int allow_p_p
     if (s >= e)
         return -1;
     char notename = s[0];
-    if (notename >='A' && notename <='Z') notename += 'a' - 'A';
+    if (notename >= 'A' && notename <= 'Z')
+        notename += 'a' - 'A';
     if (notename < 'a' || notename > 'g')
         return -1;
     const static int note_indices[7] = {9, 11, 0, 2, 4, 5, 7};
     int note = note_indices[notename - 'a'];
+    int octave = 3;
     s++;
-    if (s >= e)
-        return -1;
-    if (s[0] == 's' || s[0]=='#') {
-        note++;
-        if (++s >= e)
-            return -1;
-    } else if (s[0] == 'b') {
-        note--;
-        if (++s >= e)
-            return -1;
+    if (s < e) {
+        if (s[0] == 's' || s[0] == '#') {
+            note++;
+            s++;
+        } else if (s[0] == 'b') {
+            note--;
+            s++;
+        }
     }
-    if (s[0] < '0' || s[0] > '9')
+    if (s < e && s[0] >= '0' && s[0] <= '9') {
+        octave = *s++ - '0';
+    }
+    if (!end && s != e)
         return -1;
-    int octave = *s++ - '0';
-    if (!end && s!=e)
-        return -1;
-    if (end) *end = s;
+    if (end)
+        *end = s;
     return note + octave * 12;
 }
 
 static int parse_number(const char *s, const char *e, const char **end, float *number) {
     if (e <= s)
         return 0;
-    const char *check=s;
-    if (*check == '-') check++;
-    if (check >= e || !isdigit(*check)) return 0;
-    char buf[e-s+1];
+    const char *check = s;
+    if (*check == '-')
+        check++;
+    if (check >= e || !isdigit(*check))
+        return 0;
+    char buf[e - s + 1];
     memcpy(buf, s, e - s);
     buf[e - s] = '\0';
     char *endptr = (char *)e;
     double d = strtod(buf, &endptr);
-    if (end) *end = s + (endptr - buf);
+    if (end)
+        *end = s + (endptr - buf);
     else if (endptr != buf + (e - s))
         return 0;
     *number = (float)d;
@@ -342,7 +348,7 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
 
 static inline EValueType parse_number_or_note_or_sound(const char *s, const char *e, float *out) {
     int note = parse_midinote(s, e, 0, 0);
-    if (note >=0) {
+    if (note >= 0) {
         *out = note;
         return VT_NOTE;
     } else if (parse_number(s, e, 0, out)) {
@@ -352,37 +358,40 @@ static inline EValueType parse_number_or_note_or_sound(const char *s, const char
     *out = sound_idx;
     return VT_SOUND;
 }
-    
 
 static inline EValueType parse_value(const char *s, const char *e, float *minval, float *maxval) {
-    if (s==e) return VT_NONE;
-    const char *dash = s+1;
-    while (dash<e && *dash!='-') dash++;
+    if (s == e)
+        return VT_NONE;
+    const char *dash = s + 1;
+    while (dash < e && *dash != '-')
+        dash++;
     EValueType type1 = parse_number_or_note_or_sound(s, dash, minval);
-    if (type1 == VT_NONE) return VT_NONE;
-    if (dash!=e) {
-        EValueType type2 = parse_number_or_note_or_sound(dash+1, e, maxval);
-        if (type2 != type1) return VT_NONE;
-    } else *maxval = *minval;
+    if (type1 == VT_NONE)
+        return VT_NONE;
+    if (dash != e) {
+        EValueType type2 = parse_number_or_note_or_sound(dash + 1, e, maxval);
+        if (type2 != type1)
+            return VT_NONE;
+    } else
+        *maxval = *minval;
     return type1;
 }
-
 
 void fill_curve_data_from_string(float *data, const char *s, int n) {
     float last_val = 0.f;
     float dlast_val = 0.f;
-    for (int i = 0; i<n; i++) {
+    for (int i = 0; i < n; i++) {
         last_val += dlast_val;
         data[i] = last_val;
         if (s[i] != ' ') {
             data[i] = atob_tab[s[i]] / 64.f;
             last_val = dlast_val = 0.f;
             // look for a next datapoint to interpolate towards
-            for (int j = i+1; j<n; j++) {
+            for (int j = i + 1; j < n; j++) {
                 if (s[j] != ' ') {
                     last_val = data[i];
                     float next_val = atob_tab[s[j]] / 64.f;
-                    dlast_val = (next_val-last_val) / (j - i);
+                    dlast_val = (next_val - last_val) / (j - i);
                     break;
                 }
             }
@@ -390,10 +399,11 @@ void fill_curve_data_from_string(float *data, const char *s, int n) {
     }
 }
 
-static int parse_curve(Pattern *p) {
+static int parse_curve(PatternMaker *p) {
     int start = p->i;
     consume(p, '\'');
-    while (p->i < p->n && p->s[p->i] != '\'') ++p->i;
+    while (p->i < p->n && p->s[p->i] != '\'')
+        ++p->i;
     if (!consume(p, '\'')) {
         error(p, "expected closing single quote in curve");
         return -1;
@@ -408,8 +418,7 @@ static int parse_curve(Pattern *p) {
     return node;
 }
 
-
-static int parse_leaf(Pattern *p) {
+static int parse_leaf(PatternMaker *p) {
     int start = p->i;
     while (isleaf(peek(p)))
         p->i++;
@@ -427,7 +436,7 @@ static int parse_leaf(Pattern *p) {
     return node;
 }
 
-static int parse_expr_inner(Pattern *p) {
+static int parse_expr_inner(PatternMaker *p) {
     skipws(p);
     switch (peek(p)) {
     case '[':
@@ -446,7 +455,7 @@ static int parse_expr_inner(Pattern *p) {
     return -1;
 }
 
-static int parse_euclid(Pattern *p, int node) {
+static int parse_euclid(PatternMaker *p, int node) {
     int euclid_node0 = parse_expr(p);
     if (euclid_node0 < 0)
         return -1;
@@ -474,12 +483,13 @@ static int parse_euclid(Pattern *p, int node) {
     return euclid_node;
 }
 
-static int parse_op(Pattern *p, int left_node, int node_type, int num_params, int optional_right) {
+static int parse_op(PatternMaker *p, int left_node, int node_type, int num_params, int optional_right) {
     if (left_node < 0)
         return -1;
     skipws(p);
     if (node_type == N_OP_EUCLID) {
-        return parse_euclid(p, left_node); // euclid node is different - it has a closing ) and comma separated args. because, idk. history.
+        return parse_euclid(
+            p, left_node); // euclid node is different - it has a closing ) and comma separated args. because, idk. history.
     }
     int right_node;
     int ch = peek(p);
@@ -494,8 +504,7 @@ static int parse_op(Pattern *p, int left_node, int node_type, int num_params, in
     return parent_node;
 }
 
-
-static int parse_expr(Pattern *p) {
+static int parse_expr(PatternMaker *p) {
     int node = parse_expr_inner(p);
     skipws(p);
     if (node < 0)
@@ -517,8 +526,7 @@ static int parse_expr(Pattern *p) {
                 node = elongate_node;
                 break;
             }
-        }
-        else if (peek(p) == '%') {
+        } else if (peek(p) == '%') {
             if (p->nodes[node].type == N_POLY) {
                 consume(p, '%');
                 int modulo_node = parse_leaf(p);
@@ -530,17 +538,22 @@ static int parse_expr(Pattern *p) {
                 p->nodes[node].max_value = p->nodes[modulo_node].max_value;
             }
         } else if (peek(p) == '(') {
-            consume(p,'(');
+            consume(p, '(');
             node = parse_euclid(p, node);
         } else {
             int i = p->i;
-            while (!isdelimiter(p->s[i]) && !isopening(p->s[i]) && !isdigit(p->s[i])) ++i;
+            while (!isdelimiter(p->s[i]) && !isopening(p->s[i]) && !isdigit(p->s[i]))
+                ++i;
             if (i > p->i) {
                 uint32_t name_hash = literal_hash_span(p->s + p->i, p->s + i);
                 switch (name_hash) {
-                    #define NODE(x, ...) 
-                    #define OP(op_type, srcname, numparams, optional_right) case HASH(srcname): p->i = i; node = parse_op(p, node, op_type, numparams, optional_right); break;
-                    #include "node_types.h"
+#define NODE(x, ...)
+#define OP(op_type, srcname, numparams, optional_right)                                                                            \
+    case HASH(srcname):                                                                                                            \
+        p->i = i;                                                                                                                  \
+        node = parse_op(p, node, op_type, numparams, optional_right);                                                              \
+        break;
+#include "node_types.h"
                 }
             }
         }
@@ -556,7 +569,7 @@ everything report length 1 except replicate and elongate that report their right
 fastcat needs to know sum of children's lengths to compute its fast ratio.
 poly uses its first child's children's sum as its speedup, else its value
 */
-static float get_length(Pattern *p, int node) {
+template<typename T> float get_length(T *p, int node) {
     if (node < 0)
         return 1.f;
     Node *n = &p->nodes[node];
@@ -566,7 +579,7 @@ static float get_length(Pattern *p, int node) {
     return 1.f;
 }
 
-static void update_lengths(Pattern *p, int node) {
+static void update_lengths(PatternMaker *p, int node) {
     if (node < 0)
         return;
     Node *n = &p->nodes[node];
@@ -583,8 +596,8 @@ static void update_lengths(Pattern *p, int node) {
     }
 }
 
-static inline void squeeze(Pattern *p, int *parent) {
-    // remove all 
+static inline void squeeze(PatternMaker *p, int *parent) {
+    // remove all
     //  CAT nodes with 1 child;
     //  FASTCAT nodes with 1 child and a total child length of 1;
     //  PARALLEL nodes with 1 child;
@@ -604,118 +617,135 @@ static inline void squeeze(Pattern *p, int *parent) {
     }
 }
 
-int parse_pattern(Pattern *p) {
+Pattern parse_pattern(PatternMaker *p) {
     p->i = 0;
-    if (p->nodes) stbds_arrsetlen(p->nodes, 0);
-    if (p->curvedata) stbds_arrsetlen(p->curvedata, 0);
+    if (p->nodes)
+        stbds_arrsetlen(p->nodes, 0);
+    if (p->curvedata)
+        stbds_arrsetlen(p->curvedata, 0);
     p->root = -1;
     p->err = 0;
     p->errmsg = NULL;
     p->root = parse_args(p, N_FASTCAT, 0, 0);
     update_lengths(p, p->root);
     squeeze(p, &p->root);
-    return p->err;
+    return p->get_pattern();
 }
 
-#define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
-#define FLAG_INCLUSIVE 2 // if set, we include haps that overlap on the left side.
 
-static inline int cmp_haps_by_t0(const Hap *a, const Hap *b) {
-    return a->t0 < b->t0 ? -1 : a->t0 > b->t0 ? 1 : 0;
+static inline int cmp_haps_by_t0(const Hap *a, const Hap *b) { return a->t0 < b->t0 ? -1 : a->t0 > b->t0 ? 1 : 0; }
+
+static inline void sort_haps_by_t0(HapSpan haps) {
+    qsort(haps.s, haps.e - haps.s, sizeof(Hap), (int (*)(const void *, const void *))cmp_haps_by_t0);
 }
 
-static inline void sort_haps_by_t0(Hap *haps, int count) {
-    qsort(haps, count, sizeof(Hap), (int(*)(const void*,const void*))cmp_haps_by_t0);
+static inline void init_hap_in_place(Hap *dst, float t0, float t1, int nodeidx, int hapid, int value_type, float value) {
+    dst->t0 = t0;
+    dst->t1 = t1;
+    dst->node = nodeidx;
+    dst->valid_params = 1 << value_type;
+    dst->hapid = hapid;
+    dst->params[value_type] = value;
 }
 
-Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float tofs, Hap **haps, int flags) {
+HapSpan Pattern::_append_hap(HapSpan &dst, int nodeidx, float t0, float t1, float tscale, float tofs, int hapid) {
+    if (dst.s >= dst.e)
+        return {};
+    Node *n = nodes + nodeidx;
+    int value_type = n->value_type;
+    if (value_type <= VT_NONE)
+        return {};
+    bool is_rest = value_type == VT_SOUND && n->max_value < 2;
+    if (is_rest)
+        return {};
+    float v = lerpf(n->min_value, n->max_value, (pcg_mix(hapid) & 0xffffff) * (1.f / 0xffffff));
+    init_hap_in_place(dst.s++, t0 * tscale + tofs, t1 * tscale + tofs, nodeidx, hapid, value_type, v);
+    return {dst.s - 1, dst.s};
+}
+
+// consumes dst; returns a new span of added haps, either with dst or empty.
+HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, float t0, float t1, float tscale, float tofs, int flags, int hapid) {
     if (nodeidx < 0 || t0 >= t1)
-        return *haps;
-    uint32_t seed = hash2_pcg(p->rand_seed, nodeidx);
-    Node *n = p->nodes + nodeidx;
-    if (n->type == N_LEAF && n->value_type > VT_NONE && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
-        // fast path for simple value leaves
-        Hap h = (Hap){.t0 = t0 * tscale + tofs, .t1 = t1 * tscale + tofs, .node = nodeidx};
-        h.valid_params = 1<<n->value_type;
-        h.params[n->value_type] = lerpf(n->min_value, n->max_value, hasht_float(seed, t0 * tscale + tofs));
-        stbds_arrput(*haps, h);
-        return *haps;
+        return {};
+    Node *n = nodes + nodeidx;
+    if (n->type == N_LEAF && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
+        return _append_hap(dst, nodeidx, t0, t1, tscale, tofs, hapid);
     }
+    hapid = pcg_next(hapid); // go deeper in the tree...
+    HapSpan rv = {dst.s, dst.s};
+    Node *first_child = (n->first_child < 0) ? NULL : nodes + n->first_child;
     switch (n->type) {
     case N_OP_EUCLID: {
-        int child = n->first_child;
-        if (child <0) return *haps;
-        int setsteps_nodeidx = p->nodes[child].next_sib;
-        if (setsteps_nodeidx <0) return *haps;
-        int numsteps_nodeidx = p->nodes[setsteps_nodeidx].next_sib;
-        if (numsteps_nodeidx <0) return *haps;
-        int rot_nodeidx = p->nodes[numsteps_nodeidx].next_sib;
-        Hap *setsteps_haps = NULL, *numsteps_haps = NULL, *rot_haps = NULL;
-        make_haps(p, setsteps_nodeidx, t0, t1, 1.f, 0.f, &setsteps_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE);
-        make_haps(p, numsteps_nodeidx, t0, t1, 1.f, 0.f, &numsteps_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE);
-        make_haps(p, rot_nodeidx, t0, t1, 1.f, 0.f, &rot_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE);
-        int setsteps_hap_count = stbds_arrlen(setsteps_haps);
-        int numsteps_hap_count = stbds_arrlen(numsteps_haps);
-        int rot_hap_count = stbds_arrlen(rot_haps);
-        sort_haps_by_t0(setsteps_haps, setsteps_hap_count);
-        sort_haps_by_t0(numsteps_haps, numsteps_hap_count);
-        sort_haps_by_t0(rot_haps, rot_hap_count);
-        int setsteps_hapidx = 0, numsteps_hapidx = 0, rot_hapidx = 0;
+        if (!first_child)
+            return {};
+        int setsteps_nodeidx = first_child->next_sib;
+        if (setsteps_nodeidx < 0)
+            return {};
+        int numsteps_nodeidx = nodes[setsteps_nodeidx].next_sib;
+        if (numsteps_nodeidx < 0)
+            return {};
+        int rot_nodeidx = nodes[numsteps_nodeidx].next_sib;
+        HapSpan setsteps_haps = _make_haps(tmp, tmp, setsteps_nodeidx, t0, t1, 1.f, 0.f,
+                                          FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE, hapid + 1);
+        HapSpan numsteps_haps = _make_haps(tmp, tmp, numsteps_nodeidx, t0, t1, 1.f, 0.f,
+                                          FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE, hapid + 2);
+        HapSpan rot_haps = _make_haps(tmp, tmp, rot_nodeidx, t0, t1, 1.f, 0.f,
+                                     FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE, hapid + 3);
+        sort_haps_by_t0(setsteps_haps);
+        sort_haps_by_t0(numsteps_haps);
+        sort_haps_by_t0(rot_haps);
         float from = t0;
         while (from < t1) {
             float to = t1;
-            to = minf(to, setsteps_hapidx+1 < setsteps_hap_count ? setsteps_haps[setsteps_hapidx+1].t0 : t1);
-            to = minf(to, numsteps_hapidx+1 < numsteps_hap_count ? numsteps_haps[numsteps_hapidx+1].t0 : t1);
-            to = minf(to, rot_hapidx+1 < rot_hap_count ? rot_haps[rot_hapidx+1].t0 : t1);
-            if (to <= from) break;
-            int setsteps = setsteps_hapidx < setsteps_hap_count ? p->nodes[setsteps_haps[setsteps_hapidx].node].max_value : 0;
-            int numsteps = numsteps_hapidx < numsteps_hap_count ? p->nodes[numsteps_haps[numsteps_hapidx].node].max_value : 0;
-            int rot = rot_hapidx < rot_hap_count ? p->nodes[rot_haps[rot_hapidx].node].max_value : 0;
+            to = minf(to, setsteps_haps.hasatleast(2) ? setsteps_haps.s[1].t0 : t1);
+            to = minf(to, numsteps_haps.hasatleast(2) ? numsteps_haps.s[1].t0 : t1);
+            to = minf(to, rot_haps.hasatleast(2) ? rot_haps.s[1].t0 : t1);
+            if (to <= from)
+                break;
+            int setsteps = setsteps_haps.empty() ? 0 : nodes[setsteps_haps.s[0].node].max_value;
+            int numsteps = numsteps_haps.empty() ? 1 : nodes[numsteps_haps.s[0].node].max_value;
+            int rot = rot_haps.empty() ? 0 : nodes[rot_haps.s[0].node].max_value;
             float speed_scale = numsteps;
             float child_t0 = from * speed_scale;
             float child_t1 = to * speed_scale;
-            for (int stepidx = (int)child_t0; stepidx < (int)child_t1; stepidx++) {
-                if (stepidx>=child_t0 && stepidx<child_t1 && euclid_rhythm(stepidx, setsteps, numsteps, rot)) {                    
-                    make_haps(p, child, stepidx, stepidx+1, tscale / speed_scale, tofs, haps, flags);
+            int stepidx = (int)child_t0;
+            while (child_t0 < child_t1) {
+                int inclusive_left = (flags & FLAG_INCLUSIVE) && child_t1 > stepidx;
+                if ((stepidx >= child_t0 || inclusive_left) && euclid_rhythm(stepidx, setsteps, numsteps, rot)) {
+                    _make_haps(dst, tmp, n->first_child, stepidx, stepidx + 1, tscale / speed_scale, tofs, flags, hapid + stepidx);
                 }
+                stepidx++;
+                child_t0 += 1.f;
             }
             from = to;
-            while (setsteps_hapidx+1 < setsteps_hap_count && setsteps_haps[setsteps_hapidx+1].t0 <= from) 
-                setsteps_hapidx++;
-            while (numsteps_hapidx+1 < numsteps_hap_count && numsteps_haps[numsteps_hapidx+1].t0 <= from)
-                numsteps_hapidx++;
-            while (rot_hapidx+1 < rot_hap_count && rot_haps[rot_hapidx+1].t0 <= from)
-                rot_hapidx++;
+            while (setsteps_haps.hasatleast(2) && setsteps_haps.s[1].t0 <= from)
+                setsteps_haps.s++;
+            while (numsteps_haps.hasatleast(2) && numsteps_haps.s[1].t0 <= from)
+                numsteps_haps.s++;
+            while (rot_haps.hasatleast(2) && rot_haps.s[1].t0 <= from)
+                rot_haps.s++;
         }
-        stbds_arrfree(setsteps_haps);
-        stbds_arrfree(numsteps_haps);
-        stbds_arrfree(rot_haps);
-        break; }
-        
+        break;
+    }
     case N_OP_DEGRADE:
     case N_OP_IDX:
     case N_OP_REPLICATE:
     case N_OP_ELONGATE:
     case N_OP_DIVIDE:
     case N_OP_TIMES: {
-        if (n->first_child < 0)
-            return *haps;
-        Node *nleft = p->nodes + n->first_child;
-        float right_value;
-        Hap *right_haps = NULL;
+        float right_value = 0.5f;
+        HapSpan right_haps = {};
         int num_right_haps = 1;
-        if (nleft->next_sib >= 0) { 
-            // create new haps on the right side. 
-            make_haps(p, nleft->next_sib, t0, t1, 1.f, 0.f, &right_haps, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE);
-            num_right_haps = stbds_arrlen(right_haps);
-        } else {
-            right_value = 0.5f;
-            num_right_haps = 1;
+        if (first_child->next_sib >= 0) {
+            right_haps = _make_haps(tmp, tmp, first_child->next_sib, t0, t1, 1.f, 0.f,
+                                   FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES | FLAG_INCLUSIVE, hapid + 1);
+            num_right_haps = right_haps.e - right_haps.s;
         }
+        int target_type = (n->type == N_OP_IDX) ? P_NUMBER : (n->type == N_OP_DEGRADE) ? P_DEGRADE : -1;
         for (int i = 0; i < num_right_haps; i++) {
-            if (right_haps) {
-                Hap *right_hap = right_haps + i;
-                if (!(right_hap->valid_params & (1<<P_NUMBER)))
+            if (!right_haps.empty()) {
+                Hap *right_hap = right_haps.s + i;
+                if (!(right_hap->valid_params & (1 << P_NUMBER)))
                     continue; // TODO  does it ever make sense for the right side to have non-number data?
                 right_value = right_hap->params[P_NUMBER];
             }
@@ -726,40 +756,34 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
                 speed_scale = 1.f / (right_value ? right_value : 1.f);
             if (speed_scale <= 0.f)
                 speed_scale = 1.f;
-            float child_t0 = right_haps ? right_haps[i].t0 * speed_scale : t0; //  maxf(t0, right_hap->t0) * speed_scale;
-            float child_t1 = right_haps ? right_haps[i].t1 * speed_scale : t1; // minf(t1, right_hap->t1) * speed_scale;
-            int old_num_haps = stbds_arrlen(*haps);
-            make_haps(p, n->first_child, child_t0, child_t1,
-                        tscale / speed_scale, tofs, haps, flags);
-            for (int i = old_num_haps; i < stbds_arrlen(*haps); i++) {
-                Hap *hap = *haps + i;
-                if (n->type == N_OP_IDX) {
-                    hap->params[P_VARIANT] = right_value;
-                    hap->valid_params |= 1<<P_VARIANT;
-                } else if (n->type == N_OP_DEGRADE) {
-                    hap->params[P_DEGRADE] = right_value;
-                    hap->valid_params |= 1<<P_DEGRADE;
+            float child_t0 = !right_haps.empty() ? right_haps.s[i].t0 * speed_scale : t0;
+            float child_t1 = !right_haps.empty() ? right_haps.s[i].t1 * speed_scale : t1;
+            HapSpan child_haps = _make_haps(dst, tmp, n->first_child, child_t0, child_t1, tscale / speed_scale, tofs, flags, hapid + i);
+            if (target_type >= 0) {
+                for (Hap *hap = child_haps.s; hap < child_haps.e; hap++) {
+                    hap->params[target_type] = right_value;
+                    hap->valid_params |= 1 << target_type;
                 }
             }
         }
-        stbds_arrfree(right_haps);
-        return *haps;
         break;
     }
     case N_RANDOM: {
-        int num_children=0;
-        for (int i=n->first_child; i>=0; i=p->nodes[i].next_sib) ++num_children;
+        int num_children = 0;
+        for (int i = n->first_child; i >= 0; i = nodes[i].next_sib)
+            ++num_children;
         if (!num_children)
-            return *haps;
+            return {};
         int kids[num_children];
-        num_children=0;
-        for (int i=n->first_child; i>=0; i=p->nodes[i].next_sib) kids[num_children++]=i;
-        for (int t=(int)t0; t<t1; ++t) {
-            float from = t, to=t+1.f;
-            int kid = kids[hasht_int(seed,from)%num_children];
+        num_children = 0;
+        for (int i = n->first_child; i >= 0; i = nodes[i].next_sib)
+            kids[num_children++] = i;
+        for (int t = (int)t0; t < t1; ++t) {
+            float from = t, to = t + 1.f;
+            int kid = kids[pcg_mix(hapid + t) % num_children];
             int inclusive_left = (flags & FLAG_INCLUSIVE) && to > t0;
             if ((from >= t0 || inclusive_left) && from < t1) {
-                make_haps(p, kid, from, to, tscale, tofs, haps, flags);
+                _make_haps(dst, tmp, kid, from, to, tscale, tofs, flags, hapid + kid);
             }
         }
         break;
@@ -775,8 +799,8 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
         float from = loop_index * n->total_length;
         while (from < t1) {
             if (child >= 0) {
-                Node *child_n = p->nodes + child;
-                float child_length = get_length(p, child);
+                Node *child_n = nodes + child;
+                float child_length = get_length(this, child);
                 if (child_length <= 0.f)
                     child_length = 1.f;
                 float to = from + child_length;
@@ -785,7 +809,8 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
                     // this child overlaps the query range
                     float child_from = loop_index * child_length;
                     float child_to = child_from + child_length;
-                    make_haps(p, child, child_from, child_to, tscale, tofs + (from - child_from) * tscale, haps, flags);
+                    _make_haps(dst, tmp, child, child_from, child_to, tscale, tofs + (from - child_from) * tscale, flags,
+                              hapid + (int)(from * 99));
                 }
                 from = to;
                 child = child_n->next_sib;
@@ -796,17 +821,9 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
             } else { // leaf
                 float to = from + 1.f;
                 int inclusive_left = (flags & FLAG_INCLUSIVE) && to > t0;
-                bool is_rest = p->nodes[nodeidx].max_value < 2;
-                if (!is_rest && (from >= t0 || inclusive_left) && from < t1) {
-                    float output_t0 = from * tscale + tofs;
-                    //if (note_prob >= 1.f || hasht_float(seed, output_t0) <= note_prob) 
-                    {
-                        if (nodeidx >= 0 && p->nodes[nodeidx].value_type > VT_NONE) {
-                            Hap h = (Hap){.t0 = output_t0, .t1 = to * tscale + tofs, .node = nodeidx};
-                            h.valid_params = 1<<(p->nodes[nodeidx].value_type);
-                            h.params[p->nodes[nodeidx].value_type] = lerpf(p->nodes[nodeidx].min_value, p->nodes[nodeidx].max_value, hasht_float(seed, output_t0));
-                            stbds_arrput(*haps, h);
-                        }
+                if ((from >= t0 || inclusive_left) && from < t1) {
+                    if (nodeidx >= 0 && nodes[nodeidx].value_type > VT_NONE) {
+                        _append_hap(dst, nodeidx, from, to, tscale, tofs, hapid + (int)(from * 99));
                     }
                 }
                 from = to;
@@ -820,45 +837,131 @@ Hap *make_haps(Pattern *p, int nodeidx, float t0, float t1, float tscale, float 
         int child = n->first_child;
         float speed_scale = 1.f;
         if (n->type == N_POLY) {
-            speed_scale = (n->max_value > 0) ? n->max_value : (child >= 0) ? p->nodes[child].total_length : 1.f;
+            speed_scale = (n->max_value > 0) ? n->max_value : (child >= 0) ? nodes[child].total_length : 1.f;
         }
+        int childidx = 0;
         while (child >= 0) {
-            make_haps(p, child, t0 * speed_scale, t1 * speed_scale, tscale / speed_scale, tofs, haps, flags);
-            child = p->nodes[child].next_sib;
+            _make_haps(dst, tmp, child, t0 * speed_scale, t1 * speed_scale, tscale / speed_scale, tofs, flags, hapid + childidx);
+            child = nodes[child].next_sib;
+            ++childidx;
         }
         break;
     }
     }
-    return *haps;
+    rv.e = dst.s;
+    return rv;
 }
-    
-
 
 void test_minipat(void) {
     // const char *s = "sd,<oh hh>,[[bd bd:1 -] rim]";
-    //const char *s = "{bd sd, rim hh oh}%4";
-    //const char *s = "[bd | sd | rim]*8";
-    //const char *s = "[[sd] [bd]]"; // test squeeze
-    //const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
+    // const char *s = "{bd sd, rim hh oh}%4";
+    // const char *s = "[bd | sd | rim]*8";
+    // const char *s = "[[sd] [bd]]"; // test squeeze
+    // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
     const char *s = "[- bd sd c4*4 23-25]"; // test divide
-    //const char *s = "<bd sd>";
-    // const char *s = "{c eb g, c2 g2}%4";
-    // const char *s = "[bd <hh oh>,rim*<4 8>]";
-    // const char *s = "[bd,sd*1.1]";
+    // const char *s = "<bd sd>";
+    //  const char *s = "{c eb g, c2 g2}%4";
+    //  const char *s = "[bd <hh oh>,rim*<4 8>]";
+    //  const char *s = "[bd,sd*1.1]";
     printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
-    Pattern p={s,(int)strlen(s)};
-    parse_pattern(&p);
+    PatternMaker pm = {.s=s, .n=(int)strlen(s)};
+    parse_pattern(&pm);
+    Pattern p = pm.get_pattern();
     printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
-    if (p.errmsg)
-        printf("error: %s\n", p.errmsg);
+    if (pm.errmsg)
+        printf("error: %s\n", pm.errmsg);
     pretty_print_nodes(s, p.nodes, p.root, 0);
-    Hap *haps = NULL;
-    make_haps(&p, p.root, 0.f, 4.f, 1.f, 0.f, &haps, 0);
-    pretty_print_haps(haps, stbds_arrlen(haps));
-    stbds_arrfree(haps);
+    Hap tmp[64], dst[64];
+    HapSpan haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
+    pretty_print_haps(haps);
 
     // char *chart = print_pattern_chart(&p);
     // printf("%s\n", chart);
     // stbds_arrfree(chart);
 }
 
+int ispathchar(char c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
+
+const char *skip_path(const char *s, const char *e) {
+    while (s < e) {
+        if (*s != '/')
+            return s;
+        ++s; // skip /
+        while (s < e && (ispathchar(*s)))
+            ++s;
+    }
+    return s;
+}
+
+const char *find_end_of_pattern(const char *s, const char *e) {
+    // look for a blank line, or a line that starts with / or #
+    while (s<e) {
+        while (s<e && *s!='\n') ++s; // find new line
+        if (s<e) ++s; // skip \n
+        if (s+2<e && *s=='/' && s[1]!='/') return s; // its a new path
+        while (s<e && isspace(*s)) {  // skip leading white space
+            if (*s=='\n') return s; // its a blank line
+            ++s; // skip white space
+        }
+        if (*s=='#') return s; // its a macro at the start of a line
+    }
+    return s;
+}
+
+const char *spanstr(const char *s, const char *e, const char *substr) {
+    int n = strlen(substr);
+    while (s<e) {
+        while (s<e && *s!=*substr) ++s;
+        if (s+n>e) return NULL;
+        if (strncmp(s, substr, n) == 0) return s;
+        ++s;
+    }
+    return NULL;
+}
+
+void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
+    Pattern *patterns_map = NULL; // stbds_hm
+    while (s<real_e) {
+        s = spanstr(s, real_e, "#ifdef PATTERNS");
+        if (!s)
+            break;
+        s+=15;
+        const char *e = spanstr(s, real_e, "#endif");
+        if (!e)
+            break;
+        while (s<e) {
+            while (s<e && *s!='\n') ++s; // find end of line
+            if (s<e) ++s; // skip \n
+            const char *pathstart = s;
+            if (s>=e || *s!='/' || (s+1<e && s[1]=='/' )) continue; // not a path
+            s = skip_path(s, e);
+            const char *pathend = s;
+            if (pathend==pathstart) continue; // not a path
+            const char *pattern_start = s;
+            s = find_end_of_pattern(s, e);
+            if (s==pattern_start) continue; // not a pattern
+            //printf("found pattern: %.*s - %.*s\n", (int)(pathend-pathstart), pathstart, (int)(s-pattern_start), pattern_start);
+            PatternMaker p={.s=pattern_start, .n=(int)(s-pattern_start)};
+            Pattern pat = parse_pattern(&p);
+            if (p.err<=0) {
+                printf("found pattern: %.*s\n", (int)(pathend-pathstart), pathstart);
+                pat.key = make_cstring_from_span(pathstart, pathend, 0);
+                stbds_hmputs(patterns_map, pat);
+                
+                //HapSpan haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
+                // pretty_print_haps(haps);
+                // HapSpan hapspan = p.make_haps(p.haps, p.root, 0.f, 4.f, 1.f, 0.f, 0, 1);
+                // Hap *haps = NULL;
+                // stbds_arrsetlen(haps, p.haps.e - p.haps.s);
+                // memcpy(haps, p.haps.s, (p.haps.e - p.haps.s) * sizeof(Hap));
+                // pretty_print_haps(haps);
+                // stbds_arrfree(haps);
+            } else {
+                printf("error: %.*s: %s\n", (int)(pathend-pathstart), pathstart, p.errmsg);
+                pat.unalloc();
+            }
+        }
+    }
+    // TODO - let the old pattern table leak because concurrency etc
+    G->patterns_map = patterns_map;
+}

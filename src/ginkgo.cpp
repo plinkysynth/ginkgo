@@ -561,7 +561,9 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     fwrite(E->str, 1, stbds_arrlen(E->str), f);
                     fclose(f);
                     if (rename("editor.tmp", E->fname) == 0) {
-                        set_status_bar(C_OK, "saved shader");
+                        set_status_bar(C_OK, E->is_shader ? "saved shader" : "saved audio");
+                        if (!E->is_shader)
+                            parse_named_patterns_in_c_source(E->str, E->str + stbds_arrlen(E->str));
                     } else {
                         f = 0;
                     }
@@ -574,6 +576,8 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key == GLFW_KEY_ENTER || key == '\n') {
             if (E->is_shader)
                 try_to_compile_shader(E);
+            else
+                parse_named_patterns_in_c_source(E->str, E->str + stbds_arrlen(E->str));
         }
     }
 
@@ -955,6 +959,7 @@ int main(int argc, char **argv) {
     load_file_into_editor(&shader_tab, true);
     load_file_into_editor(&audio_tab, true);
     try_to_compile_shader(&shader_tab);
+    parse_named_patterns_in_c_source(audio_tab.str, audio_tab.str + stbds_arrlen(audio_tab.str));
 
     int fw = 0, fh = 0, fc = 0;
     // stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);

@@ -1,11 +1,10 @@
 // enum, shortname, default, min, max
 // the first 3 must be number, note, sound to match the value type enum
-X(P_NUMBER, "n",0, -1000000, 1000000) // a number not yet assigned a meaning :)
+X(P_NUMBER, ":",0, -1000000, 1000000) // a number not yet assigned a meaning :)
 X(P_NOTE, "note", 0, 0, 127)
 X(P_SOUND,"s", 0,0, 1000000) // an index into the sound map
 
 X(P_DEGRADE, "?", 0, 0, 1) // 
-X(P_VARIANT,":", 0,0, 1000000) // the : part of the sound
 X(P_GLIDE, "gli", 0, 0, 1)
 X(P_CUTOFF, "cut", 0, 0, 1)
 X(P_RESONANCE, "res", 0, 0, 1)

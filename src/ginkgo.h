@@ -153,6 +153,7 @@ struct reverb_state_t {
 };
 
 
+typedef struct Pattern Pattern;
 
 typedef struct basic_state_t {
     int _ver;
@@ -168,6 +169,7 @@ typedef struct basic_state_t {
     uint32_t sampleidx;
     atomic_flag load_request_cs;
     sound_pair_t *sounds;
+    Pattern *patterns_map;
     sound_request_t *load_requests;
     bump_array_t sliders[16];
     int sliders_hwm[16];

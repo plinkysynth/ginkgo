@@ -1114,20 +1114,6 @@ int horizontal_tick(int x) { // x=0 (4 pixel tick starting from left edge) to x=
     return 128 + 16 + clampi(x + 4, 0, 15);
 }
 
-static inline int ispathchar(char c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
-
-const char *skip_path(const char *s, const char *e) {
-    while (s < e && isspace(*s))
-        ++s;
-    while (s < e) {
-        if (*s != '/')
-            return s;
-        ++s; // skip /
-        while (s < e && (ispathchar(*s)))
-            ++s;
-    }
-    return s;
-}
 
 const char *find_line_end_or_comment(const char *s, const char *e) {
     while (s < e) {
@@ -1500,52 +1486,71 @@ int code_color(EditorState *E, uint32_t *ptr) {
         int basex = left;
         int chartx = basex + 13;
         int code_start_idx = xy_to_idx(E, 0, E->cursor_y);
-        const char *line_start = t.str + code_start_idx;
-        const char *line_end = find_line_end_or_comment(line_start, t.str + t.n);
-        line_start = skip_path(line_start, line_end);
-        code_start_idx = line_start - t.str;
-        int code_end_idx = line_end - t.str;
+        const char *pat_start = t.str + code_start_idx;
+        pat_start = skip_path(pat_start, t.str + t.n);
+        const char *pat_end = find_end_of_pattern(pat_start, t.str + t.n);
+        code_start_idx = pat_start - t.str;
+        int code_end_idx = pat_end - t.str;
         static uint32_t cached_compiled_string_hash = 0;
-        static Pattern cached_parser;
-        static Hap *cached_haps;
+        static PatternMaker cached_parser = {};
+        static Hap cached_hap_mem[1024];
+        static Hap temp_hap_mem[1024];
+        static HapSpan cached_haps = {};
         const char *codes = t.str + code_start_idx;
         const char *codee = t.str + code_end_idx;
         uint32_t hash = fnv1_hash(codes, codee);
         if (hash != cached_compiled_string_hash) {
             cached_compiled_string_hash = hash;
-            cached_parser.s = codes;
-            cached_parser.n = codee - codes;
-            parse_pattern(&cached_parser);
+            cached_parser.unalloc();
+            cached_parser = {.s=codes, .n=(int)(codee-codes)};
+            Pattern pat = parse_pattern(&cached_parser);
             if (cached_parser.err <= 0) {
-                stbds_arrsetlen(cached_haps, 0);
-                make_haps(&cached_parser, cached_parser.root, 0.f, 4.f, 1.f, 0.f, &cached_haps, 0);
+                cached_haps = pat.make_haps({cached_hap_mem,cached_hap_mem+1024}, {temp_hap_mem,temp_hap_mem+1024}, 0.f, 4.f);
             }
         }
-        int nhaps = cached_haps ? stbds_arrlen(cached_haps) : 0;
-        if (nhaps) {
+        if (!cached_haps.empty()) {
+            struct row_key {
+                int sound_idx;
+                int variant;
+                int midinote;
+            };
             struct {
-                Sound *key;
+                row_key key;
                 int value;
             } *rows = NULL;
             int numrows = 0;
             const Node *nodes = cached_parser.nodes;
             int ss = get_select_start(E);
             int se = get_select_end(E);
-            for (int i = 0; i < nhaps; i++) {
-                const Hap *h = &cached_haps[i];
-                Sound *sound = get_sound_by_index((int)h->params[P_SOUND]);
-                int row_plus_one = stbds_hmget(rows, sound);
+            for (Hap *h = cached_haps.s; h < cached_haps.e; h++) {
+                row_key key = { 
+                    (h->valid_params & (1 << P_SOUND)) ? (int)h->params[P_SOUND] : -1, 
+                    (h->valid_params & (1 << P_NUMBER)) ? (int)h->params[P_NUMBER] : -1, 
+                    (h->valid_params & (1 << P_NOTE)) ? (int)h->params[P_NOTE] : -1 };
+                int row_plus_one = stbds_hmget(rows, key);
                 if (!row_plus_one) {
                     row_plus_one = ++numrows;
                     if (numrows > 16)
                         break;
-                    stbds_hmput(rows, sound, row_plus_one);
+                    stbds_hmput(rows, key, row_plus_one);
                     int y = E->cursor_y - E->intscroll + row_plus_one;
                     if (y >= 0 && y < TMH) {
-                        int variant_idx = (int)h->params[P_VARIANT];
+                        Sound *sound = h->valid_params & (1 << P_SOUND) ? get_sound_by_index(key.sound_idx) : NULL;
                         const char *sound_name = sound ? sound->name : "";
-                        print_to_screen(t.ptr, basex, y, 0x11188800, false, "%10s:%d ", sound_name, variant_idx);
-                        print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s:%d", sound_name, variant_idx);
+                        char hapstr[64];
+                        char *s=hapstr;
+                        char *e=s+sizeof(hapstr)-1;
+                        s+=snprintf(s, e-s, "%s", sound_name);
+                        if (h->valid_params & (1 << P_NUMBER)) {
+                            s+=snprintf(s, e-s, ":%d", key.variant);
+                        }
+                        if (h->valid_params & (1 << P_NOTE)) {
+                            if (s!=hapstr && s!=e) *s++=' ';
+                            s+=snprintf(s, e-s, "%s", print_midinote(key.midinote));
+                        }
+                        if (s!=e) *s++=' ';
+                        print_to_screen(t.ptr, chartx - (s-hapstr), y, 0x11188800, false, "%s", hapstr);
+                        print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s", hapstr);
                         for (int x = 0; x < 128; ++x) {
                             uint32_t col = ((x & 31) == 0) ? C_CHART_HILITE : (x & 8) ? C_CHART : C_CHART_HOVER;
                             t.ptr[y * TMW + x + chartx] = col | (unsigned char)(' ');

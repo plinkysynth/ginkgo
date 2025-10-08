@@ -126,7 +126,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ build/ginkgo_lib.o "
+    #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ build/ginkgo_lib.a "
     snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
@@ -143,22 +143,6 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
         int n = strlen(buf);
         char* errbuf = stbds_arraddnptr(*errorlog, n);
         memcpy(errbuf, buf, n);
-        // char *errmsg = buf;
-        // if (errmsg[0] == '.' && errmsg[1] == '/') errmsg+=2;
-        // if (strncmp(errmsg, fname, n) == 0 && errmsg[n] == ':') {
-        //     char *colend = errmsg+n+1;
-        //     int col = strtol(colend, &colend, 10);
-        //     int line = 0;
-        //     if (*colend != ':') {
-        //         line = col;
-        //     } else line = strtol(colend+1, &colend, 10);
-        //     if (line) {
-        //         if (*colend==':') ++colend;
-        //         while (isspace(*colend)) ++colend;
-        //         //printf("compile error on line %d, column %d, [%s]\n", line, col, colend);
-        //         hmput(*error_msgs, line - 1, colend);
-        //     }
-        // }
     }
     stbds_arrput(*errorlog, 0);
     int rc = pclose(fp);
@@ -177,6 +161,8 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
         dlclose(h);
         return false;
     }
+    //////////////////////////////////
+    // SUCCESS!
     atomic_store_explicit(&g_dsp_req, f, memory_order_release);
     while (g_handle != 0 && atomic_load_explicit(&g_dsp_used, memory_order_acquire) != f) {
         usleep(1000);

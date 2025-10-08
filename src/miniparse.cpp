@@ -976,8 +976,8 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
                 stbds_hmputs(patterns_map, pat);
                 Hap dst[64], tmp[64];
-                HapSpan haps = pat.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 1.f * hap_cycle_time);
-                pretty_print_haps(haps, 0.f, 1.f * hap_cycle_time);
+                HapSpan haps = pat.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f * hap_cycle_time);
+                pretty_print_haps(haps, 0.f, 4.f * hap_cycle_time);
 
                 // HapSpan haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
                 //  pretty_print_haps(haps);

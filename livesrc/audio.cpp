@@ -1,6 +1,6 @@
 
 #ifdef PATTERNS
-/fancy_pattern [c4 ! 3 d]
+/fancy_pattern [c4 @ 3 d]
 #endif
 
 

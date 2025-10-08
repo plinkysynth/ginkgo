@@ -271,17 +271,27 @@ void test_conv_reverb(void) {
 }
 
 float test_patterns(void) {
-    Pattern p = G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
-    if (!p.key) return 0.f;
-    Hap haps[8], tmp[8];
-    int smpl = G->sampleidx % 96000;
-    HapSpan hs=p.make_haps({haps,haps+8}, {tmp,tmp+8}, (smpl/96000.f), (smpl+1)/96000.f, FLAG_INCLUSIVE);
+    static Hap haps[8], tmp[8];
+    static HapSpan hs;
+    static hap_time from,to;
+    if ((G->sampleidx % 96)==0) {
+        Pattern p = G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
+        if (!p.key) return 0.f;
+        int smpl = G->sampleidx + 60*96000*4;
+        from = sample_idx2hap_time(smpl, 140.f);
+        to = sample_idx2hap_time(smpl+96, 140.f);
+        hs=p.make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
+        pretty_print_haps(hs, from, to);
+    }
     float rv=0.f;
-    static float phases[8]={};
-    //pretty_print_haps(hs);
+    static float phases[8]={};    
     for (Hap *h = hs.s; h < hs.e; h++) {
         if (h->valid_params & (1 << P_NOTE)) {
-            rv += sino(midi2dphase(h->params[P_NOTE]));
+            float age = (from - h->t0) / float(hap_cycle_time);
+            if (age>=0.f) 
+            {
+                rv += sawo(midi2dphase(h->params[P_NOTE])) * exp2f(-age*8.f);
+            }
         }
     }
     return rv;

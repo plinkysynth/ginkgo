@@ -28,10 +28,42 @@ typedef struct Node {
     float min_value, max_value; // parsed value of the node
 } Node;
 
-
+#define INTEGER_HAP_TIME 
+#ifdef INTEGER_HAP_TIME
+typedef int hap_time; // 16 bit fixed point :)
+static const int cycle_shift = 16;
+static const hap_time hap_cycle_time = 1<<cycle_shift;
+static inline hap_time scale_time(hap_time t, float scale) {
+    return (int64_t(t) * int64_t(scale*65536.f)) >> 16;
+}
+static inline hap_time floor2cycle(hap_time t) {
+    return t & ~(hap_cycle_time - 1);
+}
+static inline int haptime2cycleidx(hap_time t) {
+    return t >> cycle_shift;
+}
+static inline hap_time sample_idx2hap_time(int sample_idx, float bpm) {
+    return (sample_idx*double(bpm*hap_cycle_time/(SAMPLE_RATE*240.f)));
+}
+#else
+typedef float hap_time;
+static const hap_time hap_cycle_time = 1.f;
+static inline hap_time scale_time(hap_time t, float scale) {
+    return t * scale;
+}
+static inline hap_time floor2cycle(hap_time t) {
+    return floor(t);
+}
+static inline int haptime2cycleidx(hap_time t) {
+    return (int)t;
+}
+static inline hap_time sample_idx2hap_time(int sample_idx, float bpm) {
+    return sample_idx*(bpm/(SAMPLE_RATE*240.f));
+}
+#endif 
 
 typedef struct Hap { 
-    float t0, t1; 
+    hap_time t0, t1; 
     int node; // index of the node that generated this hap.
     uint32_t valid_params; // which params have been assigned for this hap.
     int hapid;
@@ -45,18 +77,17 @@ typedef struct HapSpan {
 } HapSpan;
 
 #define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
-#define FLAG_INCLUSIVE 2 // if set, we include haps that overlap on the left side.
 
 
-typedef struct Pattern { // a parsed version of a mini notation string
+typedef struct Pattern { // a parsed version of a min notation string
     const char *key;
     Node *nodes; // stb_ds
     float *curvedata; // stb_ds
     int root;    // index of root node
-    HapSpan _make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, float t0, float t1, float tscale, float tofs, int flags, int hapid);
-    HapSpan _append_hap(HapSpan &dst, int nodeidx, float t0, float t1, float tscale, float tofs, int hapid);
-    HapSpan make_haps(HapSpan dst, HapSpan tmp, float t0, float t1, int flags = 0) { 
-        return _make_haps(dst, tmp, root, t0, t1, 1.f, 0.f, flags, 1);
+    HapSpan _make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0, hap_time t1, float tscale, hap_time tofs, int flags, int hapid);
+    HapSpan _append_hap(HapSpan &dst, int nodeidx, hap_time t0, hap_time t1, float tscale, hap_time tofs, int hapid);
+    HapSpan make_haps(HapSpan dst, HapSpan tmp, hap_time t0, hap_time t1, int flags = 0) { 
+        return _make_haps(dst, tmp, root, t0, t1, 1., 0., flags, 1);
     }
     void unalloc() {
         stbds_arrfree(nodes);
@@ -92,7 +123,7 @@ void parse_named_patterns_in_c_source(const char *s, const char *e);
 const char *skip_path(const char *s, const char *e);
 const char *find_end_of_pattern(const char *s, const char *e);
 
-void pretty_print_haps(HapSpan haps);
+void pretty_print_haps(HapSpan haps, hap_time from, hap_time to);
 
 // base64 with # being 64 :) so we can do full range 0-64
 extern const char btoa_tab[65];

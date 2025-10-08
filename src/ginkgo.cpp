@@ -687,7 +687,7 @@ void editor_update(EditorState *E, GLFWwindow *win) {
                 E->scroll_y_target = (E->cursor_y - 4) * E->font_height;
             }
         }
-        E->scroll_y_target = clampf(E->scroll_y_target, 0, (E->num_lines - tmh + 4) * E->font_height);
+        E->scroll_y_target = clamp(E->scroll_y_target, 0.f, float((E->num_lines - tmh + 4) * E->font_height));
         // now find a zero crossing in the scope, and copy the relevant section
         // scope cant be more than 2048 as that's how many slots we have in the texture.
         uint32_t scope_start = scope_pos - 1024;
@@ -697,8 +697,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         for (int i = 1; i < scan_max; ++i) {
             float mono = stmid(scope[(scope_start - i) & SCOPE_MASK]);
             float mono_next = stmid(scope[(scope_start - i + 1) & SCOPE_MASK]);
-            float delta = mono_next - mono;
-            if (mono < 0.f && mono_next > 0.f && delta > bestscan) {
+            float delta = mono - mono_next;
+            if (mono > 0.f && mono_next < 0.f && delta > bestscan) {
                 bestscan = delta;
                 bestscani = i;
                 break;
@@ -708,8 +708,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         uint32_t *scope_dst = ptr + (TMH - 4) * TMW;
         for (int i = 0; i < 2048; ++i) {
             stereo sc = scope[(scope_start + i) & SCOPE_MASK];
-            uint16_t l16 = (uint16_t)(clampf(sc.l, -1.f, 1.f) * 32767.f + 32768.f);
-            uint16_t r16 = (uint16_t)(clampf(sc.r, -1.f, 1.f) * 32767.f + 32768.f);
+            uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * 32767.f + 32768.f);
+            uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * 32767.f + 32768.f);
             scope_dst[i] = (l16 >> 8) | (r16 & 0xff00);
         }
         scope_dst = ptr + (TMH - 20) * TMW;
@@ -750,8 +750,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         pffft_transform_ordered(fft_setup, fft_buf[1], fft_buf[1], fft_work, PFFFT_FORWARD);
         pffft_transform_ordered(fft_setup, fft_buf[2], fft_buf[2], fft_work, PFFFT_FORWARD);
         scope_dst = ptr + (TMH - 12) * TMW;
-        float peak_mag = squared2db(squaref(0.25f * FFT_SIZE)); // assuming hann, coherent gain is 0.5
-        // int mini=0, maxi=0;
+        float peak_mag = squared2db(square(0.25f * FFT_SIZE)); // assuming hann, coherent gain is 0.5
+        // int min=0, max=0;
         // float minv=1000.f, maxv=-1000.f;
         for (int i = 0; i < 4096; ++i) {
             float magl_db =
@@ -761,13 +761,13 @@ void editor_update(EditorState *E, GLFWwindow *win) {
             float probe_db =
                 squared2db(fft_buf[2][i * 2] * fft_buf[2][i * 2] + fft_buf[2][i * 2 + 1] * fft_buf[2][i * 2 + 1]) - peak_mag + 6.f;
             probe_db_smooth[i] = probe_db_smooth[i] + (probe_db - probe_db_smooth[i]) * 0.05f;
-            // if (magl_db < minv) {minv = magl_db;mini = i;}
-            // if (magl_db > maxv) {maxv = magl_db;maxi = i;}
-            uint8_t l8 = (uint8_t)(clampf(255.f + magl_db * 6.f, 0.f, 255.f));
-            uint8_t r8 = (uint8_t)(clampf(255.f + magr_db * 6.f, 0.f, 255.f));
+            // if (magl_db < minv) {minv = magl_db;min = i;}
+            // if (magl_db > maxv) {maxv = magl_db;max = i;}
+            uint8_t l8 = (uint8_t)(clamp(255.f + magl_db * 6.f, 0.f, 255.f));
+            uint8_t r8 = (uint8_t)(clamp(255.f + magr_db * 6.f, 0.f, 255.f));
             scope_dst[i] = (l8 << 0) | (r8 << 8);
         }
-        // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, mini, maxv, maxi);
+        // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, min, maxv, max);
 
         glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
     }
@@ -792,9 +792,9 @@ void on_midi_input(uint8_t data[3], void *user) {
             oldccdata = newccdata;
         if (newccdata != oldccdata && cc >= 16 && cc < 32 && closest_slider[cc - 16] != NULL) {
             // 'pickup': if we are increasing and bigger, or decreasing and smaller, then pick up the value, or closer than 2
-            int sliderval = (int)clampf(closest_slider[cc - 16][0] * 127.f, 0.f, 127.f);
-            int mindata = mini(oldccdata, newccdata);
-            int maxdata = maxi(oldccdata, newccdata);
+            int sliderval = (int)clamp(closest_slider[cc - 16][0] * 127.f, 0.f, 127.f);
+            int mindata = min(oldccdata, newccdata);
+            int maxdata = max(oldccdata, newccdata);
             int vel = newccdata - oldccdata;
             if (vel < 0)
                 maxdata += (-vel) + 16;
@@ -1048,14 +1048,14 @@ int main(int argc, char **argv) {
         int mpos = (iFrame % MOUSE_LEN);
         mxhistory[mpos] = G->mx;
         myhistory[mpos] = G->my;
-        int numlines = minu(iFrame, MOUSE_LEN-1u);
+        int numlines = min(iFrame, MOUSE_LEN-1u);
         for (int i=0;i<numlines;i++) {
             float p0x = mxhistory[(mpos-i)&MOUSE_MASK];
             float p0y = myhistory[(mpos-i)&MOUSE_MASK];
             float p1x = mxhistory[(mpos-i-1)&MOUSE_MASK];
             float p1y = myhistory[(mpos-i-1)&MOUSE_MASK];
-            float len = 50.f + sqrtf(squaref(p0x-p1x) + squaref(p0y-p1y));
-            int alpha = (int)clampf(len,0.f,255.f);
+            float len = 50.f + sqrtf(square(p0x-p1x) + square(p0y-p1y));
+            int alpha = (int)clamp(len,0.f,255.f);
             // red is in the lsb. premultiplied alpha so alpha=0 == additive
             uint32_t col = (alpha << 24) | ((alpha>>0)<<16) | ((alpha>>0)<<8) | (alpha>>0);
             if (i==0) col=0;

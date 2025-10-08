@@ -30,8 +30,8 @@ extern "C" {
 #define QBUTTER 0.70710678118654752440f
 #define QBUTTER_24A 0.541196f
 #define QBUTTER_24B 1.306563f
-#define SVF_24_R_MUL1 (1.f/(QBUTTER_24A)) 
-#define SVF_24_R_MUL2 (1.f/(QBUTTER_24B)) 
+#define SVF_24_R_MUL1 (1.f / (QBUTTER_24A))
+#define SVF_24_R_MUL2 (1.f / (QBUTTER_24B))
 // size of virtual textmode screen:
 #define TMW 512
 #define TMH 256
@@ -144,14 +144,13 @@ struct reverb_state_t {
     int shimmerpos1 = 2000;
     int shimmerpos2 = 1000;
     int shimmerfade = 0;
-    int dshimmerfade = 32768/4096;
-    float aplfo[2]={1.f,0.f};
-    float aplfo2[2]={1.f,0.f};
+    int dshimmerfade = 32768 / 4096;
+    float aplfo[2] = {1.f, 0.f};
+    float aplfo2[2] = {1.f, 0.f};
     float fb1 = 0;
     float lpf = 0.f, dc = 0.f;
     float lpf2 = 0.f;
 };
-
 
 typedef struct Pattern Pattern;
 
@@ -190,20 +189,23 @@ extern basic_state_t *_BG;
 static inline uint32_t pcg_mix(uint32_t word) { return (word >> 22u) ^ word; }
 static inline uint32_t pcg_next(uint32_t seed) { return seed * 747796405u + 2891336453u; }
 
-static inline int mini(int a, int b) { return a < b ? a : b; }
-static inline int maxi(int a, int b) { return a > b ? a : b; }
-static inline int clampi(int a, int min, int max) { return a < min ? min : a > max ? max : a; }
+static inline int min(int a, int b) { return a < b ? a : b; }
+static inline int max(int a, int b) { return a > b ? a : b; }
+static inline int clamp(int a, int min, int max) { return a < min ? min : a > max ? max : a; }
 
-static inline uint32_t minu(uint32_t a, uint32_t b) { return a < b ? a : b; }
-static inline uint32_t maxu(uint32_t a, uint32_t b) { return a > b ? a : b; }
-static inline uint32_t clampu(uint32_t a, uint32_t min, uint32_t max) { return a < min ? min : a > max ? max : a; }
+static inline uint32_t min(uint32_t a, uint32_t b) { return a < b ? a : b; }
+static inline uint32_t max(uint32_t a, uint32_t b) { return a > b ? a : b; }
+static inline uint32_t clamp(uint32_t a, uint32_t min, uint32_t max) { return a < min ? min : a > max ? max : a; }
 
-static inline float minf(float a, float b) { return a < b ? a : b; }
-static inline float maxf(float a, float b) { return a > b ? a : b; }
-static inline float clampf(float a, float min, float max) { return a < min ? min : a > max ? max : a; }
-static inline float squaref(float x) { return x * x; }
-static inline float fracf(float x) { return x - floorf(x); }
-static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+static inline double min(double a, double b) { return a < b ? a : b; }
+static inline double max(double a, double b) { return a > b ? a : b; }
+
+static inline float min(float a, float b) { return a < b ? a : b; }
+static inline float max(float a, float b) { return a > b ? a : b; }
+static inline float clamp(float a, float min, float max) { return a < min ? min : a > max ? max : a; }
+static inline float square(float x) { return x * x; }
+static inline float frac(float x) { return x - floorf(x); }
+static inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
 static inline float pow2(float x) { return x * x; }
 static inline float pow3(float x) { return x * x * x; }
@@ -213,11 +215,11 @@ static inline float pow4(float x) {
 }
 static inline float vol(float x) { return pow3(x); } // a nice volume curve thats kinda db-like but goes to exactly 0 and 1.
 
-static inline float saturate(float x) { return clampf(x, 0.f, 1.f); }
+static inline float saturate(float x) { return clamp(x, 0.f, 1.f); }
 
-static inline float lin2db(float x) { return 8.6858896381f * logf(maxf(1e-20f, x)); }
+static inline float lin2db(float x) { return 8.6858896381f * logf(max(1e-20f, x)); }
 static inline float db2lin(float x) { return expf(x / 8.6858896381f); }
-static inline float squared2db(float x) { return 4.342944819f * logf(maxf(1e-20f, x)); }
+static inline float squared2db(float x) { return 4.342944819f * logf(max(1e-20f, x)); }
 static inline float db2squared(float x) { return expf(x / 4.342944819f); }
 
 static inline float update_lfo(float state[2], float sin_dphase) { // quadrature oscillator magic
@@ -339,19 +341,15 @@ static inline float ladder(float inp, float s[5], float f, float r) {
 
 static inline float ssclip(float x) { return atanf(x) * (2.f / PI); }
 static inline float sclip(float x) { return tanhf(x); }
-static inline float clip(float x) { return clampf(x, -1.f, 1.f); }
+static inline float clip(float x) { return clamp(x, -1.f, 1.f); }
 
-static inline float ensure_finite(float s) {
-    return isfinite(s) ? s : 0.f;
-}
+static inline float ensure_finite(float s) { return isfinite(s) ? s : 0.f; }
 
-static inline stereo ensure_finite(stereo s) {
-    return (stereo){.l = ensure_finite(s.l), .r = ensure_finite(s.r)};
-}
+static inline stereo ensure_finite(stereo s) { return (stereo){.l = ensure_finite(s.l), .r = ensure_finite(s.r)}; }
 
 static inline stereo ssclip(stereo s) { return (stereo){.l = atanf(s.l) * (2.f / PI), .r = atanf(s.r) * (2.f / PI)}; }
 static inline stereo sclip(stereo s) { return (stereo){.l = tanhf(s.l), .r = tanhf(s.r)}; }
-static inline stereo clip(stereo s) { return (stereo){.l = clampf(s.l, -1.f, 1.f), .r = clampf(s.r, -1.f, 1.f)}; }
+static inline stereo clip(stereo s) { return (stereo){.l = clamp(s.l, -1.f, 1.f), .r = clamp(s.r, -1.f, 1.f)}; }
 
 typedef struct svf_output_t {
     float lp, bp, hp;
@@ -365,34 +363,31 @@ static inline svf_output_t svf_process_2pole(float *f, float v0, float g, float 
     const float a3 = g * a2;
     const float v3 = v0 - f[1];
     const float v1 = a1 * f[0] + a2 * v3;
-    const float v2 = f[1] + a2*f[0] + a3*v3;
+    const float v2 = f[1] + a2 * f[0] + a3 * v3;
     f[0] = 2.f * v1 - f[0];
     f[1] = 2.f * v2 - f[1];
     return (svf_output_t){.lp = v2, .bp = v1, .hp = v0 - R * v1 - v2};
 }
 
-static inline svf_output_t svf_process_1pole(float *f, float x, float g){
-    const float a = g/(1.f+g);
-    float v  = x - f[0];
-    float lp = a*v + f[0];
-    *f     = lp + a*v;           // TPT integrator update
-    return (svf_output_t){ .lp = lp, .hp = x - lp, .bp = a * v };
+static inline svf_output_t svf_process_1pole(float *f, float x, float g) {
+    const float a = g / (1.f + g);
+    float v = x - f[0];
+    float lp = a * v + f[0];
+    *f = lp + a * v; // TPT integrator update
+    return (svf_output_t){.lp = lp, .hp = x - lp, .bp = a * v};
 }
 
 // approximation to tanh for 0-0.25 nyquist.
 static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc constants work
-    //return tanf(PI * fc / SAMPLE_RATE);
-    //  https://www.desmos.com/calculator/qoy3dgydch
-    static const float A=3.272433237e-05f, B = 1.181248215e-14f;
+    // return tanf(PI * fc / SAMPLE_RATE);
+    //   https://www.desmos.com/calculator/qoy3dgydch
+    static const float A = 3.272433237e-05f, B = 1.181248215e-14f;
     return fc * A; // * (A + B * fc * fc); // tan fit
 }
 
-//static inline float svf_g(float fc) { return fc/SAMPLE_RATE; }
+// static inline float svf_g(float fc) { return fc/SAMPLE_RATE; }
 
-
-static inline float svf_R(float q) { return 1.f / q; } 
-
-
+static inline float svf_R(float q) { return 1.f / q; }
 
 static inline float lpf(float x, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
@@ -426,12 +421,11 @@ static inline float hpf4(float x, float fc, float q) {
     return svf_process_2pole(state + 1, x, g, r * SVF_24_R_MUL2).hp;
 }
 
-
 static inline float peakf(float x, float gain, float fc, float q) {
     float *state = ba_get(&G->audio_bump, 2);
     float R = svf_R(q);
     svf_output_t o = svf_process_2pole(state, x, svf_g(fc), R);
-    return x + (gain-1.f) * o.bp * R;
+    return x + (gain - 1.f) * o.bp * R;
 }
 
 static inline float notchf(float x, float fc, float q) {
@@ -448,8 +442,8 @@ wave_t *request_wave_load(Sound *sound, int index);
 // however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
 static inline Sound *get_sound(const char *name) { return shget(G->sounds, name); }
 static inline int get_sound_index(const char *name) { return shgeti(G->sounds, name); }
-static inline Sound * get_sound_by_index(int i) {
-    if (i<0 || i>=stbds_hmlen(G->sounds)) 
+static inline Sound *get_sound_by_index(int i) {
+    if (i < 0 || i >= stbds_hmlen(G->sounds))
         return NULL;
     return G->sounds[i].value;
 }
@@ -539,7 +533,7 @@ static const float minblep_table[129] = { // minBLEP correction for a unit step 
 
 static inline float sino(float dphase) {
     float *phase = ba_get(&G->audio_bump, 1);
-    *phase = fracf(*phase + dphase);
+    *phase = frac(*phase + dphase);
     return sinf(TAU * *phase);
 }
 
@@ -569,7 +563,7 @@ static inline float rndsmooth(float dphase) {
 
 static inline float sawo(float dphase) {
     float *phase = ba_get(&G->audio_bump, 1);
-    float ph = fracf(*phase);
+    float ph = frac(*phase);
     float saw = ph * 2.f - 1.f;
     saw -= 2.f * minblep(ph, dphase);
     *phase = ph + dphase;
@@ -578,11 +572,11 @@ static inline float sawo(float dphase) {
 
 static inline float pwmo(float dphase, float duty) {
     float *phase = ba_get(&G->audio_bump, 1);
-    float ph = fracf(*phase);
+    float ph = frac(*phase);
     float saw = ph * 2.f - 1.f;
     saw -= 2.f * minblep(ph, dphase);
     *phase = ph + dphase;
-    ph = fracf(ph + duty);
+    ph = frac(ph + duty);
     saw -= ph * 2.f - 1.f;
     saw += 2.f * minblep(ph, dphase);
     return saw;
@@ -592,7 +586,7 @@ static inline float squareo(float dphase) { return pwmo(dphase, 0.5f); }
 
 static inline float trio(float dphase) {
     float *phase = ba_get(&G->audio_bump, 2);
-    float ph = *phase = fracf(*phase + dphase);
+    float ph = *phase = frac(*phase + dphase);
     float tri = ph * 4.f - 1.f;
     if (tri > 1.f)
         tri = 2.f - tri;
@@ -601,7 +595,7 @@ static inline float trio(float dphase) {
 
 static inline float sawo_aliased(float dphase) {
     float *phase = ba_get(&G->audio_bump, 1);
-    float ph = *phase = fracf(*phase + dphase);
+    float ph = *phase = frac(*phase + dphase);
     return 2.f * ph - 1.f;
 }
 
@@ -729,7 +723,7 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
         G->audio_bump.i = 0;
         probe = {};
         audio[i] = do_sample(audio[i]);
-        audio[i+frames] = probe;
+        audio[i + frames] = probe;
         G->sampleidx++;
         G->reloaded = 0;
     }

@@ -17,7 +17,7 @@ reticule=min(reticule,reticule2*0.1);
 reticule *= reticule;
 reticule = exp2(-reticule*3000.)*0.66+exp2(-reticule*300.)*0.125;
 
-vec2 sc = scope((uv.x+1.f)*256.f);
+vec2 sc = scope((uv.x+2.f)*512.f);
 float beam = exp(-10000.*square((uv.y*5+2.1)-sc.x));
 beam += exp(-10000.*square((uv.y*5+2.1)-sc.y));
 

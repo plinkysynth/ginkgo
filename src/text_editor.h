@@ -163,7 +163,7 @@ edit_op_t apply_edit_op(EditorState *E, edit_op_t op, int update_cursor_idx) {
 }
 
 void push_edit_op(EditorState *E, int remove_start, int remove_end, const char *insert_str, int update_cursor_idx) {
-    edit_op_t op = {mini(remove_start, remove_end), maxi(remove_start, remove_end), (char *)insert_str};
+    edit_op_t op = {min(remove_start, remove_end), max(remove_start, remove_end), (char *)insert_str};
     edit_op_t undo_op = apply_edit_op(E, op, update_cursor_idx);
     // delete any undo state after the current point...
     int num_undos = stbds_arrlen(E->edit_ops);
@@ -197,14 +197,14 @@ void undo(EditorState *E) { undo_redo(E, 0); }
 
 void redo(EditorState *E) { undo_redo(E, 1); }
 
-static inline int get_select_start(EditorState *obj) { return mini(obj->cursor_idx, obj->select_idx); }
-static inline int get_select_end(EditorState *obj) { return maxi(obj->cursor_idx, obj->select_idx); }
+static inline int get_select_start(EditorState *obj) { return min(obj->cursor_idx, obj->select_idx); }
+static inline int get_select_end(EditorState *obj) { return max(obj->cursor_idx, obj->select_idx); }
 
 static inline int next_tab(int x) { return (x + 4) & ~3; }
 
 int xy_to_idx(EditorState *E, int tx, int ty) {
-    tx = maxi(0, tx);
-    ty = maxi(0, ty);
+    tx = max(0, tx);
+    ty = max(0, ty);
     int n = stbds_arrlen(E->str);
     int x = 0, y = 0;
     for (int i = 0; i < n; i++) {
@@ -269,7 +269,7 @@ static void adjust_font_size(EditorState *E, int delta) {
     float yzoom = E->cursor_y;
     E->scroll_y_target = E->scroll_y_target / E->font_height - yzoom;
     E->scroll_y = E->scroll_y / E->font_height - yzoom;
-    E->font_width = clampi(E->font_width + delta, 8, 256);
+    E->font_width = clamp(E->font_width + delta, 8, 256);
     E->font_height = E->font_width * 2;
     E->scroll_y_target = (E->scroll_y_target + yzoom) * E->font_height;
     E->scroll_y = (E->scroll_y + yzoom) * E->font_height;
@@ -323,7 +323,7 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                         if (!is_drag) {
                             E->click_slider_value = G->sliders[slideridx].data[i];
                         } else {
-                            float newvalue = clampf(E->click_slider_value + (fx - E->click_fx) / 16.f, 0.f, 1.f);
+                            float newvalue = clamp(E->click_slider_value + (fx - E->click_fx) / 16.f, 0.f, 1.f);
                             G->sliders[slideridx].data[i] = newvalue;
                         }
                         //printf("dragging slider on line %d\n", line);
@@ -354,11 +354,11 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
             }
             float dv = fx - E->click_fx;
             float v = E->click_slider_value + (slider_spec.maxval - slider_spec.minval) * (dv / (slider_x2 - slider_x1));
-            v = clampf(v, slider_spec.minval, slider_spec.maxval);
+            v = clamp(v, slider_spec.minval, slider_spec.maxval);
             // printf("slider value: %f\n", v);
             if (v != slider_spec.curval) {
                 char buf[32];
-                int numdecimals = clampi(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0, 5);
+                int numdecimals = clamp(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0.f, 5.f);
                 char fmtbuf[32];
                 snprintf(fmtbuf, sizeof(fmtbuf), "%%0.%df", numdecimals);
                 snprintf(buf, sizeof(buf), fmtbuf, v);
@@ -529,7 +529,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                         ++idx;
                         continue;
                     } // skip blank lines
-                    minx = mini(x, minx);
+                    minx = min(x, minx);
                     if (idx + 2 >= n || str[idx] != '/' || str[idx + 1] != '/')
                         all_commented = false;
                     while (idx < n) {
@@ -617,7 +617,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             int ss = get_select_start(E);
             int se = get_select_end(E);
             E->select_idx = ss;
-            E->cursor_idx = maxi(ss, se - 1);
+            E->cursor_idx = max(ss, se - 1);
             break;
         } else if (has_selection) {
             push_edit_op(E, get_select_start(E), get_select_end(E), NULL, 1);
@@ -699,7 +699,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         } else if (has_selection && !shift) {
             E->cursor_idx = get_select_start(E);
         } else
-            E->cursor_idx = maxi(0, E->cursor_idx - 1);
+            E->cursor_idx = max(0, E->cursor_idx - 1);
         reset_selection = !shift;
         break;
     case GLFW_KEY_RIGHT:
@@ -710,7 +710,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         } else if (has_selection && !shift) {
             E->cursor_idx = get_select_end(E);
         } else
-            E->cursor_idx = mini(E->cursor_idx + 1, n);
+            E->cursor_idx = min(E->cursor_idx + 1, n);
         reset_selection = !shift;
         break;
 
@@ -801,7 +801,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 #define C_ERR 0xf00fff00u
 #define C_OK 0x080fff00u
 #define C_WARNING 0xfa400000u
-#define C_CHART 0x1312a400u // mini notation chart
+#define C_CHART 0x1312a400u // min notation chart
 #define C_CHART_HOVER 0x2422a400u
 #define C_CHART_DRAG C_CHART_HOVER
 #define C_CHART_HILITE 0x4643b500u
@@ -1105,13 +1105,13 @@ void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_lin
 int vertical_bar(int y) { // y=0 (empty) to y=16 (full)
     if (y <= 0)
         return ' ';
-    return 128 + clampi(y - 1, 0, 15);
+    return 128 + clamp(y - 1, 0, 15);
 }
 
 int horizontal_tick(int x) { // x=0 (4 pixel tick starting from left edge) to x=8 (off the right edge)
     if (x >= 8 || x < -4)
         return 128 + 16;
-    return 128 + 16 + clampi(x + 4, 0, 15);
+    return 128 + 16 + clamp(x + 4, 0, 15);
 }
 
 
@@ -1460,7 +1460,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 if (t.y >= 0 && t.y < TMH && sliders[t.y]) {
                     int slider_idx = sliderindices[t.y];
                     float value = *sliders[t.y];
-                    int x1 = maxi(0, tmw - 16);
+                    int x1 = max(0, tmw - 16);
                     int x2 = tmw;
                     uint32_t col = slidercols[slider_idx];
                     if (closest_slider[slider_idx] == NULL || closest_slider[slider_idx][1] != t.y + E->intscroll)
@@ -1505,7 +1505,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             cached_parser = {.s=codes, .n=(int)(codee-codes)};
             Pattern pat = parse_pattern(&cached_parser);
             if (cached_parser.err <= 0) {
-                cached_haps = pat.make_haps({cached_hap_mem,cached_hap_mem+1024}, {temp_hap_mem,temp_hap_mem+1024}, 0.f, 4.f);
+                cached_haps = pat.make_haps({cached_hap_mem,cached_hap_mem+1024}, {temp_hap_mem,temp_hap_mem+1024}, 0.f, 4.f * hap_cycle_time);
             }
         }
         if (!cached_haps.empty()) {
@@ -1566,8 +1566,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     hapcol = C_SELECTION;
                 else if (hapstart_idx <= E->cursor_idx && hapend_idx >= E->cursor_idx)
                     hapcol = C_CHART_HILITE;
-                int hapx1 = (int)(h->t0 * 32.f);
-                int hapx2 = (int)(h->t1 * 32.f);
+                int hapx1 = (int)((h->t0 * 32.f) / hap_cycle_time);
+                int hapx2 = (int)((h->t1 * 32.f) / hap_cycle_time);
                 for (int x = hapx1; x < hapx2; ++x) {
                     if (x >= 0 && x < 128) {
                         uint32_t charcol = hapcol ? hapcol : t.ptr[y * TMW + x + chartx] & 0xffffff00u;
@@ -1689,7 +1689,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
         int x, y;
         idx_to_xy(E, cursor_in_curve_start_idx, &x, &y);
         x += left;
-        int datalen = maxi(0, cursor_in_curve_end_idx - cursor_in_curve_start_idx);
+        int datalen = max(0, cursor_in_curve_end_idx - cursor_in_curve_start_idx);
         // work out bounding box also
         float x1 = x * E->font_width;
         float x2 = x1 + datalen * E->font_width;
@@ -1711,7 +1711,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 E->mouse_click_original_char_x = mx;
             }
             float value = ((y2 - G->my) / E->font_height) * 16.f;
-            value = clampf(value, 0.f, 64.f);
+            value = clamp(value, 0.f, 64.f);
             if (mx >= 0 && mx < datalen) {
                 // TODO: edit op
                 char *ch = &E->str[cursor_in_curve_start_idx + mx];

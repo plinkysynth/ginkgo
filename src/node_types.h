@@ -1,4 +1,4 @@
-// effectively a list of all the nodes and infix operators we support in the mini language
+// effectively a list of all the nodes and infix operators we support in the min language
 // for now that's enough :)
 
 /* TODO more functions we might want

@@ -126,12 +126,12 @@ void pretty_print_haps(HapSpan haps, hap_time from, hap_time to) {
     }
 }
 
-void pretty_print_nodes(const char *src, Node *nodes, int i, int depth) {
+void pretty_print_nodes(const char *src, const char *srcend, Node *nodes, int i, int depth) {
     if (i < 0)
         return;
     int c0 = nodes[i].start;
     int c1 = nodes[i].end;
-    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%s" COLOR_RESET, i, c0, src, c1 - c0, src + c0,
+    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%.*s" COLOR_RESET, i, c0, src, c1 - c0, src + c0, (int)(srcend-src-c1),
            src + c1);
     for (int j = 0; j < depth + 1; j++) {
         printf("  ");
@@ -155,10 +155,10 @@ void pretty_print_nodes(const char *src, Node *nodes, int i, int depth) {
         break;
     }
     if (nodes[i].first_child >= 0) {
-        pretty_print_nodes(src, nodes, nodes[i].first_child, depth + 1);
+        pretty_print_nodes(src, srcend, nodes, nodes[i].first_child, depth + 1);
     }
     if (nodes[i].next_sib >= 0) {
-        pretty_print_nodes(src, nodes, nodes[i].next_sib, depth);
+        pretty_print_nodes(src, srcend, nodes, nodes[i].next_sib, depth);
     }
 }
 
@@ -592,7 +592,7 @@ static void update_lengths(PatternMaker *p, int node) {
     if (n->first_child < 0) total_length = 1.f;
     for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
         update_lengths(p, i);
-        max_value = max(max_value, p->nodes[i].max_value);
+        if (i!=n->first_child)max_value = max(max_value, p->nodes[i].max_value);
         total_length += get_length(p, i);
     }
     n->total_length = total_length;
@@ -884,7 +884,7 @@ void test_minipat(void) {
     printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
     if (pm.errmsg)
         printf("error: %s\n", pm.errmsg);
-    pretty_print_nodes(s, p.nodes, p.root, 0);
+    pretty_print_nodes(s, s+pm.n, p.nodes, p.root, 0);
     Hap tmp[64], dst[64];
     HapSpan haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
     pretty_print_haps(haps, 0.f, 4.f);
@@ -972,8 +972,12 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             Pattern pat = parse_pattern(&p);
             if (p.err <= 0) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
+                pretty_print_nodes(pattern_start, s-1, pat.nodes, pat.root, 0);
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
                 stbds_hmputs(patterns_map, pat);
+                Hap dst[64], tmp[64];
+                HapSpan haps = pat.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 1.f * hap_cycle_time);
+                pretty_print_haps(haps, 0.f, 1.f * hap_cycle_time);
 
                 // HapSpan haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
                 //  pretty_print_haps(haps);

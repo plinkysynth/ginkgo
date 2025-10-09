@@ -13,7 +13,7 @@
             "args": [],
             "env": {},
             "terminal": "integrated",
-            "preLaunchTask": "make"
+            "preLaunchTask": "make",
         }
     ]
 }

@@ -1523,6 +1523,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
             int ss = get_select_start(E);
             int se = get_select_end(E);
             for (Hap *h = cached_haps.s; h < cached_haps.e; h++) {
+                if (h->valid_params == 0)
+                    continue;
                 row_key key = { 
                     (h->valid_params & (1 << P_SOUND)) ? (int)h->params[P_SOUND] : -1, 
                     (h->valid_params & (1 << P_NUMBER)) ? (int)h->params[P_NUMBER] : -1, 

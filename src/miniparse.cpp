@@ -131,8 +131,8 @@ void pretty_print_nodes(const char *src, const char *srcend, Node *nodes, int i,
         return;
     int c0 = nodes[i].start;
     int c1 = nodes[i].end;
-    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%.*s" COLOR_RESET, i, c0, src, c1 - c0, src + c0, (int)(srcend-src-c1),
-           src + c1);
+    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%.*s" COLOR_RESET, i, c0, src, c1 - c0,
+           src + c0, (int)(srcend - src - c1), src + c1);
     for (int j = 0; j < depth + 1; j++) {
         printf("  ");
     }
@@ -490,11 +490,12 @@ static int parse_euclid(PatternMaker *p, int node) {
 static int parse_op(PatternMaker *p, int left_node, int node_type, int num_params, int optional_right) {
     if (left_node < 0)
         return -1;
-    skipws(p);
     if (node_type == N_OP_EUCLID) {
         return parse_euclid(
             p, left_node); // euclid node is different - it has a closing ) and comma separated args. because, idk. history.
     }
+    if (!optional_right)
+        skipws(p);
     int right_node;
     int ch = peek(p);
     if (optional_right && !isleaf(ch) && !isopening(ch)) {
@@ -589,10 +590,12 @@ static void update_lengths(PatternMaker *p, int node) {
     Node *n = &p->nodes[node];
     float max_value = 0.f;
     float total_length = 0.f;
-    if (n->first_child < 0) total_length = 1.f;
+    if (n->first_child < 0)
+        total_length = 1.f;
     for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
         update_lengths(p, i);
-        if (i!=n->first_child)max_value = max(max_value, p->nodes[i].max_value);
+        if (i != n->first_child)
+            max_value = max(max_value, p->nodes[i].max_value);
         total_length += get_length(p, i);
     }
     n->total_length = total_length;
@@ -652,8 +655,7 @@ static inline void init_hap_in_place(Hap *dst, hap_time t0, hap_time t1, int nod
     dst->params[value_type] = value;
 }
 
-
-HapSpan Pattern::_append_hap(HapSpan &dst, int nodeidx, hap_time t0, hap_time t1, float tscale, hap_time tofs, int hapid) {
+HapSpan Pattern::_append_hap(HapSpan &dst, int nodeidx, hap_time t0, hap_time t1, int hapid) {
     if (dst.s >= dst.e)
         return {};
     Node *n = nodes + nodeidx;
@@ -663,21 +665,33 @@ HapSpan Pattern::_append_hap(HapSpan &dst, int nodeidx, hap_time t0, hap_time t1
     bool is_rest = value_type == VT_SOUND && n->max_value < 2;
     if (is_rest)
         return {};
-    float v = lerp(n->min_value, n->max_value, (pcg_mix(hapid) & 0xffffff) * (1.f / 0xffffff));
-    init_hap_in_place(dst.s++, scale_time(t0 , tscale) + tofs, scale_time(t1 , tscale) + tofs, nodeidx, hapid, value_type, v);
+    float v = n->max_value;
+    if (n->min_value != n->max_value) { // randomize in range
+        float t = (pcg_mix(pcg_next(hapid)) & 0xffffff) * (1.f / 0xffffff);
+        v = lerp(n->min_value, n->max_value, t);
+        if (value_type == VT_NOTE && n->max_value - n->min_value >= 1.f) // if it's a range of at least two semitone, quantize to
+                                                                         // nearest semitone
+            v = roundf(v);
+    }
+    init_hap_in_place(dst.s++, t0, t1, nodeidx, hapid, value_type, v);
     return {dst.s - 1, dst.s};
 }
 
+static inline hap_time global_to_local(hap_time t, fraction_t tscale, hap_time tofs) {
+    return scale_time(t - tofs, tscale.inverse());
+}
+static inline hap_time local_to_global(hap_time t, fraction_t tscale, hap_time tofs) { return scale_time(t, tscale) + tofs; }
+
 // consumes dst; returns a new span of added haps, either with dst or empty.
-HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0, hap_time t1, float tscale, hap_time tofs,
-                            int flags, int hapid) {
-    if (nodeidx < 0 || t0 > t1)
+HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time global_t0, hap_time global_t1, fraction_t tscale,
+                            hap_time tofs, int flags, int hapid) {
+    if (nodeidx < 0 || global_t0 > global_t1)
         return {};
     Node *n = nodes + nodeidx;
     if (n->type == N_LEAF && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
-        return _append_hap(dst, nodeidx, t0, t1, tscale, tofs, hapid);
+        return _append_hap(dst, nodeidx, global_t0, global_t1, hapid);
     }
-    hapid = pcg_next(hapid) + nodeidx; // go deeper in the tree...
+    hapid = hash2_pcg(hapid, nodeidx); // go deeper in the tree...
     HapSpan rv = {dst.s, dst.s};
     Node *first_child = (n->first_child < 0) ? NULL : nodes + n->first_child;
     switch (n->type) {
@@ -691,41 +705,43 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0
         if (numsteps_nodeidx < 0)
             return {};
         int rot_nodeidx = nodes[numsteps_nodeidx].next_sib;
-        HapSpan setsteps_haps =
-            _make_haps(tmp, tmp, setsteps_nodeidx, t0, t1, 1., 0, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 1);
-        HapSpan numsteps_haps =
-            _make_haps(tmp, tmp, numsteps_nodeidx, t0, t1, 1., 0, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 2);
-        HapSpan rot_haps = _make_haps(tmp, tmp, rot_nodeidx, t0, t1, 1., 0, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 3);
+        HapSpan setsteps_haps = _make_haps(tmp, tmp, setsteps_nodeidx, global_t0, global_t1, tscale, tofs,
+                                           FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 1);
+        HapSpan numsteps_haps = _make_haps(tmp, tmp, numsteps_nodeidx, global_t0, global_t1, tscale, tofs,
+                                           FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 2);
+        HapSpan rot_haps = _make_haps(tmp, tmp, rot_nodeidx, global_t0, global_t1, tscale, tofs,
+                                      FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 3);
         sort_haps_by_t0(setsteps_haps);
         sort_haps_by_t0(numsteps_haps);
         sort_haps_by_t0(rot_haps);
-        hap_time from = t0;
-        while (from < t1) {
+        hap_time from = global_t0;
+        while (from < global_t1) {
             while (setsteps_haps.hasatleast(2) && setsteps_haps.s[1].t0 <= from)
                 setsteps_haps.s++;
             while (numsteps_haps.hasatleast(2) && numsteps_haps.s[1].t0 <= from)
                 numsteps_haps.s++;
             while (rot_haps.hasatleast(2) && rot_haps.s[1].t0 <= from)
                 rot_haps.s++;
-            hap_time to = t1;
-            to = min(to, setsteps_haps.hasatleast(2) ? setsteps_haps.s[1].t0 : t1);
-            to = min(to, numsteps_haps.hasatleast(2) ? numsteps_haps.s[1].t0 : t1);
-            to = min(to, rot_haps.hasatleast(2) ? rot_haps.s[1].t0 : t1);
+            hap_time to = global_t1;
+            to = min(to, setsteps_haps.hasatleast(2) ? setsteps_haps.s[1].t0 : global_t1);
+            to = min(to, numsteps_haps.hasatleast(2) ? numsteps_haps.s[1].t0 : global_t1);
+            to = min(to, rot_haps.hasatleast(2) ? rot_haps.s[1].t0 : global_t1);
             if (to <= from)
                 break;
             int setsteps = setsteps_haps.empty() ? 0 : nodes[setsteps_haps.s[0].node].max_value;
             int numsteps = numsteps_haps.empty() ? 1 : nodes[numsteps_haps.s[0].node].max_value;
             int rot = rot_haps.empty() ? 0 : nodes[rot_haps.s[0].node].max_value;
-            float speed_scale = numsteps;
-            hap_time child_t0 = scale_time(from, speed_scale);
-            hap_time child_t1 = scale_time(to, speed_scale);
+            if (numsteps <= 0)
+                break;
+            tscale /= numsteps;
+            hap_time child_t0 = global_to_local(from, tscale, tofs);
+            hap_time child_t1 = global_to_local(to, tscale, tofs);
             int stepidx = floor2cycle(child_t0);
             while (child_t0 < child_t1) {
                 if (euclid_rhythm(haptime2cycleidx(stepidx), setsteps, numsteps, rot)) {
-                    hap_time step_from = stepidx;
-                    hap_time step_to = stepidx + hap_cycle_time;
-                    _make_haps(dst, tmp, n->first_child, max(scale_time(t0, speed_scale), step_from),
-                               min(scale_time(t1, speed_scale), step_to), tscale / speed_scale, tofs, flags,
+                    hap_time step_from = local_to_global(stepidx, tscale, tofs);
+                    hap_time step_to = local_to_global(stepidx + hap_cycle_time, tscale, tofs);
+                    _make_haps(dst, tmp, n->first_child, max(global_t0, step_from), min(global_t1, step_to), tscale, tofs, flags,
                                hapid + haptime2cycleidx(stepidx));
                 }
                 child_t0 = (stepidx += hap_cycle_time);
@@ -744,11 +760,11 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0
         HapSpan right_haps = {};
         int num_right_haps = 1;
         if (first_child->next_sib >= 0) {
-            right_haps =
-                _make_haps(tmp, tmp, first_child->next_sib, t0, t1, 1.f, 0, FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 1);
+            right_haps = _make_haps(tmp, tmp, first_child->next_sib, global_t0, global_t1, tscale, tofs,
+                                    FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 1);
             num_right_haps = right_haps.e - right_haps.s;
         }
-        int target_type = (n->type == N_OP_IDX) ? P_NUMBER : (n->type == N_OP_DEGRADE) ? P_DEGRADE : -1;
+        int target_type = (n->type == N_OP_IDX) ? P_NUMBER : -1;
         for (int i = 0; i < num_right_haps; i++) {
             if (!right_haps.empty()) {
                 Hap *right_hap = right_haps.s + i;
@@ -756,21 +772,32 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0
                     continue; // TODO  does it ever make sense for the right side to have non-number data?
                 right_value = right_hap->params[P_NUMBER];
             }
-            float speed_scale = 1.f;
-            if (n->type == N_OP_TIMES)
-                speed_scale = right_value;
-            else if (n->type == N_OP_DIVIDE || n->type == N_OP_ELONGATE)
-                speed_scale = 1.f / (right_value ? right_value : 1.f);
-            if (speed_scale <= 0.f)
-                speed_scale = 1.f;
-            hap_time child_t0 = !right_haps.empty() ? right_haps.s[i].t0 : t0;
-            hap_time child_t1 = !right_haps.empty() ? right_haps.s[i].t1 : t1;
-            // clip to the original requested range, but in the child's sped up local time.
-            child_t0 = scale_time(max(t0, child_t0) , speed_scale);
-            child_t1 = scale_time(min(t1, child_t1) , speed_scale);
-            HapSpan child_haps =
-                _make_haps(dst, tmp, n->first_child, child_t0, child_t1, tscale / speed_scale, tofs, flags, hapid + i);
-            if (target_type >= 0) {
+            if (n->type == N_OP_TIMES) {
+                if (right_value <= 0.f)
+                    continue;
+                tscale /= right_value;
+            } else if (n->type == N_OP_DIVIDE || n->type == N_OP_ELONGATE) {
+                if (right_value <= 0.f)
+                    continue;
+                tscale *= (right_value ? right_value : 1.f);
+            }
+            hap_time child_t0 = !right_haps.empty() ? right_haps.s[i].t0 : global_t0;
+            hap_time child_t1 = !right_haps.empty() ? right_haps.s[i].t1 : global_t1;
+            child_t0 = max(global_t0, child_t0);
+            child_t1 = min(global_t1, child_t1);
+            HapSpan child_haps = _make_haps(dst, tmp, n->first_child, child_t0, child_t1, tscale, tofs, flags, hapid + i);
+            if (n->type == N_OP_DEGRADE) {
+                // blank out degraded haps
+                if (right_value >= 1.f)
+                    dst.e = rv.e; // delete all outputs!
+                else if (right_value > 0.f)
+                    for (Hap *hap = child_haps.s; hap < child_haps.e; hap++) {
+                        float t = (pcg_mix(pcg_next(23124 - hap->hapid)) & 0xffffff) * (1.f / 0xffffff);
+                        if (right_value >= t) {
+                            hap->valid_params = 0; // mark it as invalid basically
+                        }
+                    }
+            } else if (target_type >= 0) {
                 for (Hap *hap = child_haps.s; hap < child_haps.e; hap++) {
                     hap->params[target_type] = right_value;
                     hap->valid_params |= 1 << target_type;
@@ -790,23 +817,29 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0
         num_children = 0;
         for (int i = n->first_child; i >= 0; i = nodes[i].next_sib)
             kids[num_children++] = i;
+        hap_time t0 = global_to_local(global_t0, tscale, tofs);
+        hap_time t1 = global_to_local(global_t1, tscale, tofs);
         int stepidx = floor2cycle(t0);
         hap_time from = t0;
         while (from < t1) {
-            int kid = kids[pcg_mix(hapid + haptime2cycleidx(stepidx)) % num_children];
-            _make_haps(dst, tmp, kid, max(from, t0), min(t1, stepidx + hap_cycle_time), tscale, tofs, flags, hapid + kid);
+            int kid = kids[hash2_pcg(hapid, haptime2cycleidx(stepidx)) % num_children];
+            hap_time child_t0 = max(global_t0, local_to_global(stepidx, tscale, tofs));
+            hap_time child_t1 = min(global_t1, local_to_global(stepidx + hap_cycle_time, tscale, tofs));
+            _make_haps(dst, tmp, kid, child_t0, child_t1, tscale, tofs, flags, hapid + kid);
             from = (stepidx += hap_cycle_time);
         }
         break;
     }
     case N_FASTCAT:
-        t0 = scale_time(t0, n->total_length);
-        t1 = scale_time(t1, n->total_length);
+        if (n->total_length <= 0.f)
+            break;
         tscale /= n->total_length;
     case N_LEAF:
     case N_CAT: {
         hap_time total_length = hap_time(n->total_length * hap_cycle_time);
-        int loop_index = total_length>0 ? t0/total_length : 0;
+        hap_time t0 = global_to_local(global_t0, tscale, tofs);
+        hap_time t1 = global_to_local(global_t1, tscale, tofs);
+        int loop_index = total_length > 0 ? t0 / total_length : 0;
         int child = n->first_child;
         hap_time from = loop_index * total_length;
         while (from < t1) {
@@ -819,11 +852,9 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0
                 if (to > t0 && from < t1) {
                     // this child overlaps the query range
                     hap_time child_from = loop_index * child_length;
-                    hap_time child_to = (loop_index+1) * child_length;
-                    // this child overlaps the query range, but we need to clip it to the query range
-                    hap_time cropleft = max(hap_time(0), t0 - from);
-                    hap_time cropright = max(hap_time(0), to - t1);
-                    _make_haps(dst, tmp, child, child_from + cropleft, child_to - cropright, tscale,
+                    hap_time child_to = (loop_index + 1) * child_length;
+                    _make_haps(dst, tmp, child, max(global_t0, local_to_global(from, tscale, tofs)),
+                               min(global_t1, local_to_global(to, tscale, tofs)), tscale,
                                tofs + scale_time(from - child_from, tscale), flags, hapid + (int)(loop_index * 999) + child);
                 }
                 from = to;
@@ -837,7 +868,12 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0
                 if (to > t0 && from < t1) {
                     if (nodeidx >= 0 && nodes[nodeidx].value_type > VT_NONE) {
                         // we do NOT clip this one, so that we know when the notedown was!
-                        _append_hap(dst, nodeidx, from, to, tscale, tofs, hapid + (int)(loop_index * 999) + nodeidx);
+                        // but we do skip it entirely if its outside the query range,
+                        // and we check with an epsilon in *global* time.
+                        hap_time t0g = local_to_global(from, tscale, tofs);
+                        hap_time t1g = local_to_global(to, tscale, tofs);
+                        if (t1g > global_t0 + epsilon && t0g < global_t1 - epsilon)
+                            _append_hap(dst, nodeidx, t0g, t1g, hapid + (int)(loop_index * 999) + nodeidx);
                     }
                 }
                 from = to;
@@ -854,8 +890,11 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0
             speed_scale = (n->max_value > 0) ? n->max_value : (child >= 0) ? nodes[child].total_length : 1.;
         }
         int childidx = 0;
+        if (speed_scale < 0.f)
+            break;
+        tscale /= speed_scale;
         while (child >= 0) {
-            _make_haps(dst, tmp, child, scale_time(t0 , speed_scale), scale_time(t1 , speed_scale), tscale / speed_scale, tofs, flags, hapid + childidx);
+            _make_haps(dst, tmp, child, global_t0, global_t1, tscale, tofs, flags, hapid + childidx);
             child = nodes[child].next_sib;
             ++childidx;
         }
@@ -884,7 +923,7 @@ void test_minipat(void) {
     printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
     if (pm.errmsg)
         printf("error: %s\n", pm.errmsg);
-    pretty_print_nodes(s, s+pm.n, p.nodes, p.root, 0);
+    pretty_print_nodes(s, s + pm.n, p.nodes, p.root, 0);
     Hap tmp[64], dst[64];
     HapSpan haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
     pretty_print_haps(haps, 0.f, 4.f);
@@ -972,11 +1011,11 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             Pattern pat = parse_pattern(&p);
             if (p.err <= 0) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
-                pretty_print_nodes(pattern_start, s-1, pat.nodes, pat.root, 0);
+                pretty_print_nodes(pattern_start, s - 1, pat.nodes, pat.root, 0);
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
                 stbds_hmputs(patterns_map, pat);
                 Hap dst[64], tmp[64];
-                HapSpan haps = pat.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f * hap_cycle_time);
+                HapSpan haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f * hap_cycle_time);
                 pretty_print_haps(haps, 0.f, 4.f * hap_cycle_time);
 
                 // HapSpan haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);

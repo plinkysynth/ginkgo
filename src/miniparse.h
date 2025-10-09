@@ -18,6 +18,14 @@ enum EValueType : int8_t { // for Node.value_type
     VT_SOUND = P_SOUND,
 };
 
+typedef struct fraction_t { // helps with rounding a bit... didn't go full rational yet :)
+    float num, denom;
+    void operator*=(float f) { if (f>=1.f) num*=f; else denom/=f; }
+    void operator/=(float f) { if (f>=1.f) denom*=f; else num/=f; }
+    fraction_t inverse() const { return {denom, num}; }
+} fraction_t;
+
+
 typedef struct Node {
     uint8_t type;
     int8_t value_type;  // note, number, sound
@@ -28,13 +36,14 @@ typedef struct Node {
     float min_value, max_value; // parsed value of the node
 } Node;
 
-#define INTEGER_HAP_TIME 
+//#define INTEGER_HAP_TIME 
 #ifdef INTEGER_HAP_TIME
 typedef int hap_time; // 16 bit fixed point :)
 static const int cycle_shift = 16;
 static const hap_time hap_cycle_time = 1<<cycle_shift;
-static inline hap_time scale_time(hap_time t, float scale) {
-    return (int64_t(t) * int64_t(scale*65536.f)) >> 16;
+static const hap_time epsilon = 2;
+static inline hap_time scale_time(hap_time t, fraction_t f) {
+    return (int64_t(t) * int64_t(f.num*65536.f)) / (f.denom*65536.f);
 }
 static inline hap_time floor2cycle(hap_time t) {
     return t & ~(hap_cycle_time - 1);
@@ -48,8 +57,9 @@ static inline hap_time sample_idx2hap_time(int sample_idx, float bpm) {
 #else
 typedef float hap_time;
 static const hap_time hap_cycle_time = 1.f;
-static inline hap_time scale_time(hap_time t, float scale) {
-    return t * scale;
+static const hap_time epsilon = 2.f/SAMPLE_RATE;
+static inline hap_time scale_time(hap_time t, fraction_t f) {
+    return (t * f.num) / f.denom;
 }
 static inline hap_time floor2cycle(hap_time t) {
     return floor(t);
@@ -84,10 +94,10 @@ typedef struct Pattern { // a parsed version of a min notation string
     Node *nodes; // stb_ds
     float *curvedata; // stb_ds
     int root;    // index of root node
-    HapSpan _make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0, hap_time t1, float tscale, hap_time tofs, int flags, int hapid);
-    HapSpan _append_hap(HapSpan &dst, int nodeidx, hap_time t0, hap_time t1, float tscale, hap_time tofs, int hapid);
+    HapSpan _make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time t0, hap_time t1, fraction_t tscale, hap_time tofs, int flags, int hapid);
+    HapSpan _append_hap(HapSpan &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
     HapSpan make_haps(HapSpan dst, HapSpan tmp, hap_time t0, hap_time t1, int flags = 0) { 
-        return _make_haps(dst, tmp, root, t0, t1, 1., 0., flags, 1);
+        return _make_haps(dst, tmp, root, t0, t1, {1.f, 1.f}, 0., flags, 1);
     }
     void unalloc() {
         stbds_arrfree(nodes);

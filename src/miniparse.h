@@ -20,8 +20,8 @@ enum EValueType : int8_t { // for Node.value_type
 
 typedef struct fraction_t { // helps with rounding a bit... didn't go full rational yet :)
     float num, denom;
-    void operator*=(float f) { if (f>=1.f) num*=f; else denom/=f; }
-    void operator/=(float f) { if (f>=1.f) denom*=f; else num/=f; }
+    fraction_t operator*(float f) { return (f>=1) ? fraction_t{num*f, denom} : fraction_t{num, denom/f}; }
+    fraction_t operator/(float f) { return (f>=1) ? fraction_t{num, denom*f} : fraction_t{num/f, denom}; }
     fraction_t inverse() const { return {denom, num}; }
 } fraction_t;
 

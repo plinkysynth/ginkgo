@@ -34,6 +34,7 @@ static const char *node_type_names[N_LAST] = {
 #include "node_types.h"
 };
 
+
 static inline uint32_t hash2_pcg(uint32_t a, uint32_t b) {
     const uint64_t MUL = 6364136223846793005ull;
     uint64_t state = ((uint64_t)a << 32) | b; // pack inputs
@@ -689,7 +690,8 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time gl
         return {};
     Node *n = nodes + nodeidx;
     if (n->type == N_LEAF && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
-        return _append_hap(dst, nodeidx, global_t0, global_t1, hapid);
+        int loop_idx = haptime2cycleidx(global_to_local(global_t0, tscale, tofs));
+        return _append_hap(dst, nodeidx, global_t0, global_t1, hash2_pcg(hapid, loop_idx));
     }
     hapid = hash2_pcg(hapid, nodeidx); // go deeper in the tree...
     HapSpan rv = {dst.s, dst.s};
@@ -733,15 +735,15 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time gl
             int rot = rot_haps.empty() ? 0 : nodes[rot_haps.s[0].node].max_value;
             if (numsteps <= 0)
                 break;
-            tscale /= numsteps;
-            hap_time child_t0 = global_to_local(from, tscale, tofs);
-            hap_time child_t1 = global_to_local(to, tscale, tofs);
+            fraction_t child_tscale = tscale / numsteps;
+            hap_time child_t0 = global_to_local(from, child_tscale, tofs);
+            hap_time child_t1 = global_to_local(to, child_tscale, tofs);
             int stepidx = floor2cycle(child_t0);
             while (child_t0 < child_t1) {
                 if (euclid_rhythm(haptime2cycleidx(stepidx), setsteps, numsteps, rot)) {
-                    hap_time step_from = local_to_global(stepidx, tscale, tofs);
-                    hap_time step_to = local_to_global(stepidx + hap_cycle_time, tscale, tofs);
-                    _make_haps(dst, tmp, n->first_child, max(global_t0, step_from), min(global_t1, step_to), tscale, tofs, flags,
+                    hap_time step_from = local_to_global(stepidx, child_tscale, tofs);
+                    hap_time step_to = local_to_global(stepidx + hap_cycle_time, child_tscale, tofs);
+                    _make_haps(dst, tmp, n->first_child, max(global_t0, step_from), min(global_t1, step_to), child_tscale, tofs, flags,
                                hapid + haptime2cycleidx(stepidx));
                 }
                 child_t0 = (stepidx += hap_cycle_time);
@@ -772,20 +774,22 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time gl
                     continue; // TODO  does it ever make sense for the right side to have non-number data?
                 right_value = right_hap->params[P_NUMBER];
             }
+            fraction_t child_tscale;
             if (n->type == N_OP_TIMES) {
                 if (right_value <= 0.f)
                     continue;
-                tscale /= right_value;
+                child_tscale = tscale / right_value;
             } else if (n->type == N_OP_DIVIDE || n->type == N_OP_ELONGATE) {
                 if (right_value <= 0.f)
                     continue;
-                tscale *= (right_value ? right_value : 1.f);
-            }
+                child_tscale = tscale * (right_value ? right_value : 1.f);
+            } else 
+                child_tscale = tscale;
             hap_time child_t0 = !right_haps.empty() ? right_haps.s[i].t0 : global_t0;
             hap_time child_t1 = !right_haps.empty() ? right_haps.s[i].t1 : global_t1;
             child_t0 = max(global_t0, child_t0);
             child_t1 = min(global_t1, child_t1);
-            HapSpan child_haps = _make_haps(dst, tmp, n->first_child, child_t0, child_t1, tscale, tofs, flags, hapid + i);
+            HapSpan child_haps = _make_haps(dst, tmp, n->first_child, child_t0, child_t1, child_tscale, tofs, flags, hapid + i);
             if (n->type == N_OP_DEGRADE) {
                 // blank out degraded haps
                 if (right_value >= 1.f)
@@ -833,7 +837,7 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time gl
     case N_FASTCAT:
         if (n->total_length <= 0.f)
             break;
-        tscale /= n->total_length;
+        tscale = tscale / n->total_length;
     case N_LEAF:
     case N_CAT: {
         hap_time total_length = hap_time(n->total_length * hap_cycle_time);
@@ -855,7 +859,7 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time gl
                     hap_time child_to = (loop_index + 1) * child_length;
                     _make_haps(dst, tmp, child, max(global_t0, local_to_global(from, tscale, tofs)),
                                min(global_t1, local_to_global(to, tscale, tofs)), tscale,
-                               tofs + scale_time(from - child_from, tscale), flags, hapid + (int)(loop_index * 999) + child);
+                               tofs + scale_time(from - child_from, tscale), flags, hash2_pcg(hash2_pcg(hapid, loop_index), child));
                 }
                 from = to;
                 child = child_n->next_sib;
@@ -873,7 +877,7 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time gl
                         hap_time t0g = local_to_global(from, tscale, tofs);
                         hap_time t1g = local_to_global(to, tscale, tofs);
                         if (t1g > global_t0 + epsilon && t0g < global_t1 - epsilon)
-                            _append_hap(dst, nodeidx, t0g, t1g, hapid + (int)(loop_index * 999) + nodeidx);
+                            _append_hap(dst, nodeidx, t0g, t1g, hash2_pcg(hapid, loop_index));
                     }
                 }
                 from = to;
@@ -892,7 +896,7 @@ HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time gl
         int childidx = 0;
         if (speed_scale < 0.f)
             break;
-        tscale /= speed_scale;
+        tscale = tscale / speed_scale;
         while (child >= 0) {
             _make_haps(dst, tmp, child, global_t0, global_t1, tscale, tofs, flags, hapid + childidx);
             child = nodes[child].next_sib;

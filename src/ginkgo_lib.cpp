@@ -279,7 +279,7 @@ float test_patterns(void) {
         if (!p.key) return 0.f;
         int smpl = G->sampleidx + 60*96000*4;
         from = smpl/96000.f/2.f;
-        to = (smpl+1)/96000.f/2.f;
+        to = (smpl+96)/96000.f/2.f;
         hs=p.make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
         pretty_print_haps(hs, from, to);
     }

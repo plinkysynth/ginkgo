@@ -166,9 +166,9 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
 
 hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, hap_time a, hap_time b, int hapid,
                                  bool merge_repeated_leaves) {
-    hap_span_t rv = {dst.s, dst.s};
     if (nodeidx < 0 || a > b)
-        return rv;
+        return {};
+    hap_span_t rv = {dst.s, dst.s};
     bfs_node_t *n = bfs_nodes + nodeidx;
     hap_time speed_scale = 1.f;
     hap_time total_length = bfs_nodes_total_length[nodeidx];
@@ -203,9 +203,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
             break;
         hap_span_t right_haps = _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, nodeidx), true);
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
-            if ((right_hap->valid_params & (1 << P_NUMBER)) == 0)
-                continue;
-            hap_time speed_scale = right_hap->params[P_NUMBER];
+            hap_time speed_scale = right_hap->get_param(P_NUMBER, 0.f);
             if (speed_scale <= 0.f)
                 continue;
             if (n->type == N_OP_REPLICATE)
@@ -231,34 +229,25 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
     }
     case N_OP_DEGRADE: {
         hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
-        hap_t dummy_hap;
-        dummy_hap.valid_params = 1 << P_NUMBER;
-        dummy_hap.params[P_NUMBER] = 0.5f;
-        hap_span_t dummy_hap_span = {&dummy_hap, &dummy_hap + 1};
-        hap_span_t right_haps = n->num_children > 1
-                                    ? _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true)
-                                    : dummy_hap_span;
-        // for each left hap (already output), find right haps that overlap it and apply change. if >1, make more haps
+        hap_span_t right_haps = _make_haps(tmp, tmp, (n->num_children > 1) ? n->first_child + 1 : -1, a, b, hash2_pcg(hapid, n->first_child + 1), true);
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
             float t0 = left_hap->t0;
             int count = 0;
-            if (right_haps.s == &dummy_hap) {
-                dummy_hap.t0 = left_hap->t0;
-                dummy_hap.t1 = left_hap->t1;
-            }
-            for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
-                if (!(right_hap->valid_params & (1 << P_NUMBER)))
-                    continue;
-                if (right_hap->t0 > t0 || right_hap->t1 <= t0)
-                    continue;
-                bool skipped = (pcg_mix(hash2_pcg(left_hap->hapid, right_hap->hapid)) & 0xffffff) < (right_hap->params[P_NUMBER] * 0xffffff);
-                if (skipped)
-                    continue;
-                if (count++) {
-                    if (dst.s >= dst.e)
-                        break;
-                    hap_t *target = dst.s++;
-                    *target = *left_hap;
+            if (right_haps.empty()) {
+                count = (pcg_mix(pcg_next(left_hap->hapid)) & 0xffffff) > (0x7fffff);
+            } else {
+                for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
+                    if (right_hap->t0 > t0 || right_hap->t1 <= t0)
+                        continue;
+                    float value = right_hap->get_param(P_NUMBER, 1.f);
+                    if (value>=1.f || (pcg_mix(hash2_pcg(left_hap->hapid, right_hap->hapid)) & 0xffffff) < (value * 0xffffff))
+                        continue;
+                    if (count++) {
+                        if (dst.s >= dst.e)
+                            break;
+                        hap_t *target = dst.s++;
+                        *target = *left_hap;
+                    }
                 }
             }
             if (count == 0)
@@ -309,7 +298,53 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
         }
         break;
     }
-    }
+    case N_OP_EUCLID: {
+        if (n->num_children < 3)
+            break;
+        hap_span_t left_haps = _make_haps(tmp, tmp, n->first_child, a, b, hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
+        hap_span_t setsteps_haps = _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true);
+        hap_span_t numsteps_haps = _make_haps(tmp, tmp, n->first_child + 2, a, b, hash2_pcg(hapid, n->first_child + 2), true);
+        hap_span_t rot_haps = {};
+        if (n->num_children > 3) rot_haps = _make_haps(tmp, tmp, n->first_child + 3, a, b, hash2_pcg(hapid, n->first_child + 3), true);
+        for (hap_t *numsteps_hap = numsteps_haps.s; numsteps_hap < numsteps_haps.e; numsteps_hap++) {
+            int numsteps = (int)numsteps_hap->get_param(P_NUMBER, 0.f);
+            if (numsteps < 1)
+                continue;
+            hap_time child_a = a * numsteps;
+            hap_time child_b = b * numsteps;
+            for (int i=floor(child_a+hap_eps); i<child_b; i++) {
+                hap_time t0 = i / (float)numsteps;
+                hap_time t1 = (i+1) / (float)numsteps;
+                if (t0 >= b || t1 <= a)
+                    continue;
+                for (hap_t *setsteps_hap = setsteps_haps.s; setsteps_hap < setsteps_haps.e; setsteps_hap++) {
+                    if (setsteps_hap->t0 > t0 || setsteps_hap->t1 <= t0)
+                        continue;
+                    int set_steps = (int)setsteps_hap->get_param(P_NUMBER, 0.f);
+                    if (set_steps < 1)
+                        continue;
+                    for (hap_t *rot_hap = rot_haps.s; rot_hap < rot_haps.e || rot_haps.empty(); rot_hap++) {
+                        int rot = rot_hap ? (int)rot_hap->get_param(P_NUMBER, 0.f) : 0;
+                        if (euclid_rhythm(i, set_steps, numsteps, rot)) {
+                            for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
+                                if (dst.s>=dst.e)
+                                    break;
+                                if (left_hap->t0 > t0 || left_hap->t1 <= t0)
+                                    continue;
+                                *dst.s = *left_hap;
+                                dst.s->t0 = t0;
+                                dst.s->t1 = t1;
+                                dst.s->hapid = hash2_pcg(hapid, left_hap->hapid);
+                                dst.s++;
+                            } // left haps
+                        }
+                        if (!rot_hap) break;
+                    } // rot haps
+                } // setsteps haps
+            } // looping over subdivisions
+        } // numsteps haps
+    } // euclid
+    } // switch
     rv.e = dst.s;
     return rv;
 } // make_haps

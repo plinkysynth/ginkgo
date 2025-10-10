@@ -38,6 +38,7 @@ typedef struct hap_t {
     uint32_t valid_params; // which params have been assigned for this hap.
     int hapid;
     float params[P_LAST];
+    float get_param(int param, float default_value) { return valid_params & (1 << param) ? params[param] : default_value; } 
 } hap_t;
 
 typedef struct hap_span_t {

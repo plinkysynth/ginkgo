@@ -290,7 +290,8 @@ float test_patterns(void) {
             float age = (from - h->t0);
             if (age>=0.f) 
             {
-                rv += sawo(midi2dphase(h->params[P_NOTE])) * exp2f(-age*8.f);
+                float duty = h->get_param(P_NUMBER, 4.f)*0.125f + 0.0625f;
+                rv += pwmo(midi2dphase(h->params[P_NOTE]), duty) * exp2f(-age*8.f);
             }
         }
     }

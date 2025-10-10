@@ -1,6 +1,6 @@
 
 #ifdef PATTERNS
-/fancy_pattern [[c|d]*8(3,8)]
+/fancy_pattern [c?0.05]*8 : [0 1]
 // /fancy_pattern [c f g] * [2 1]
 #endif
 

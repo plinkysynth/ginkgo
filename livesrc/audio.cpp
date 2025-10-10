@@ -1,8 +1,7 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern <[c4 [a5 a3 a2] [f5 f4] [e4 c4]]!4 [[e4 e5] [g3 g5] [b3 b4] e4]!4>:2, 
-	<[a1*4]!4 [g1*4]!3 [e1*4]!1>, <[a1*4]!4 [g1*4]!3 [e1*4]!1>
+/fancy_pattern [c1 d1 e1 f1 g1] :[0 1 2 3 4]
 
 /bpm 120
 
@@ -10,7 +9,7 @@ STATE_VERSION(1,  )
 
 
 stereo do_sample(stereo inp) {
-	F drums = sclip(rompler("break_think")*5); 
+	F drums = 0 * sclip(rompler("break_think")*5); 
     F t = test_patterns()*0.2;
 	stereo dry=stereo{t,t};
 	stereo wet=reverb(dry*0.5f);

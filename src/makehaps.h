@@ -160,7 +160,7 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
         left_hap->t0 /= speed_scale;
         left_hap->t1 /= speed_scale;
-        if (left_hap->t0 >= b || left_hap->t1 <= a || left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps >= to) {
+        if (left_hap->t0 > b || left_hap->t1 < a || left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps > to) {
             left_hap->valid_params = 0;
         }
     }
@@ -285,7 +285,7 @@ assign_value:
             _apply_values(
                 dst, tmp, left_hap, n->first_child + 1, nullptr,
                 [](hap_t *target, hap_t *right_hap, size_t param_idx) {
-                    target->params[param_idx] = right_hap->get_param(param_idx, 0.f);
+                    target->params[param_idx] = right_hap ? right_hap->get_param(param_idx, 0.f) : 0.f;
                     target->valid_params |= 1 << param_idx;
                 },
                 param);
@@ -340,7 +340,7 @@ assign_value:
                 for (hap_t *src_hap = newhaps.s; src_hap < newhaps.e; src_hap++) {
                     src_hap->t0 = (src_hap->t0 + tofs) / speed_scale;
                     src_hap->t1 = (src_hap->t1 + tofs) / speed_scale;
-                    if (src_hap->t0 >= b || src_hap->t1 <= a) { // filter out haps that are outside the query range
+                    if (src_hap->t0 > b || src_hap->t1 < a) { // filter out haps that are outside the query range
                         src_hap->valid_params = 0;
                     }
                 }

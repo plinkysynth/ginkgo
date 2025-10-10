@@ -17,15 +17,15 @@ reticule=min(reticule,reticule2*0.1);
 reticule *= reticule;
 reticule = exp2(-reticule*3000.)*0.66+exp2(-reticule*300.)*0.125;
 
-vec2 sc = scope((uv.x+2.f)*512.f);
+vec2 sc = scope((uv.x+2.f)*512.f)*0.5;
 float beam = exp(-10000.*square((uv.y*5+2.1)-sc.x));
 beam += exp(-10000.*square((uv.y*5+2.1)-sc.y));
 
-beam *= 0.1; // beam brigtness
+beam *= 0.3; // beam brigtness
 
 beam*=exp(fract(uv.x*0.5-iTime*11.)-1.);
 beam+=0.01;
 beam*=vignette;
 beam*=1.-reticule;
 o.xyz=vec3(2,4,3) * beam;
-o=mix(o, texture(uFP,v_uv).xyz, 0.5);
+o=mix(o, texture(uFP,v_uv).xyz, 0.1);

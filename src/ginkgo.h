@@ -161,7 +161,8 @@ typedef struct pattern_t pattern_t;
 typedef struct basic_state_t {
     int _ver;
     int _size;
-    int reloaded;
+    uint8_t reloaded;
+    uint8_t playing;
     float bpm;
     float cpu_usage;
     float cpu_usage_smooth;
@@ -716,16 +717,27 @@ static inline float do_slider(int slider_idx, basic_state_t *G, int myline, floa
 
 void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_size, int version, void (*init_state)(void));
 
+static inline float rompler(const char *fname) {
+	wave_t *wave=get_wave_by_name(fname);
+    if (!wave || !wave->frames) return 0.f;
+    int64_t smpl = (G->t_q32 & 0xffffffffull);
+    smpl *= wave->num_frames;
+    smpl >>= 32;
+	return wave->frames[smpl*wave->channels];    
+}
+
 #ifdef LIVECODE
 typedef struct state state;
 stereo do_sample(stereo inp);
 void init_state(void);
+__attribute__((weak)) void init_state(void) {}
+
 size_t get_state_size(void);
 int get_state_version(void);
 stereo probe;
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
     G = (basic_state_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
-    int dt_q32 = G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)); // on the order of 22000
+    int dt_q32 = G->playing ? G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)) : 0; // on the order of 22000
     for (int i = 0; i < frames; i++) {
         // reset the per-sample bump allocators
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
@@ -747,6 +759,8 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 }
 
 #endif
+
+float test_patterns(void);
 
 #define STATE_VERSION(version, ...)                                                                                                \
     typedef struct state : public basic_state_t{__VA_ARGS__} state;                                                                \

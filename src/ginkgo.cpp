@@ -368,10 +368,12 @@ const char *kFS_ui = SHADER(
 
         vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y);
         // status line doesnt scroll
-        if (fpixel.y < uScreenPx.y - uFontPx.y * status_bar_size) {
+        float status_bar_y = uScreenPx.y - uFontPx.y * status_bar_size;
+        if (fpixel.y < status_bar_y) {
             fpixel.y += scroll_y;
         } else {
-            fpixel.y += uFontPx.y;
+            int TMH = 256;
+            fpixel.y = (fpixel.y - status_bar_y) + uFontPx.y * (TMH-21);
         }
 
         ivec2 pixel = ivec2(fpixel);
@@ -532,6 +534,7 @@ static void set_tab(EditorState *newE) {
 }
 
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
+    // printf("key: %d\n", key);
     EditorState *E = curE;
     if (action != GLFW_PRESS && action != GLFW_REPEAT)
         return;
@@ -553,6 +556,21 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     if (key == GLFW_KEY_ENTER)
         key = '\n';
     if (mods == GLFW_MOD_SUPER) {
+        if (key == GLFW_KEY_P) {
+            G->playing = !G->playing;
+        }
+        if (key == GLFW_KEY_COMMA || key == GLFW_KEY_PERIOD) {
+            if (G->playing) {
+                G->playing = false;
+                G->t_q32 &= ~((1<<30)-1);
+            } else {
+                if (G->t_q32 & (0xffffffffull)) {
+                    G->t_q32 &= ~(0xffffffffull);
+                } else {
+                    G->t_q32 =0;
+                }
+            }
+        }
         if (key == GLFW_KEY_S) {
             bool compiled = true;
             if (!E->is_shader || try_to_compile_shader(E) != 0) {
@@ -675,8 +693,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         E->intscroll = (int)(E->scroll_y / E->font_height);
         code_color(E, ptr);
         if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
-            int x = tmw - strlen(status_bar);
-            print_to_screen(ptr, x, tmh, status_bar_color, false, "%s", status_bar);
+            int x = tmw - strlen(status_bar) + 1;
+            print_to_screen(ptr, x, TMH - 21, status_bar_color, false, "%s", status_bar);
         } else {
             status_bar_color = 0;
         }
@@ -1102,7 +1120,7 @@ int main(int argc, char **argv) {
         double t = G->t;
         int bar = (int)t;
         int beat = (int)((t - bar) * 64);
-        set_status_bar(0x04cfff00, " %.1f%% | %x.%02x ", G->cpu_usage_smooth*100.f, bar, beat);
+        set_status_bar(G->playing ? 0x04cfff00 : 0x0222aaa00, " %.1f%% | %x.%02x  ", G->cpu_usage_smooth*100.f, bar, beat);
 
         // pump wave load requests
         pump_wave_load_requests_main_thread();

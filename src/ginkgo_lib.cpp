@@ -300,7 +300,10 @@ float test_patterns(void) {
             from = to - 1.f/100.;
         }
         //printf("%f\n", to);
-        hs=p->make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
+        if (G->playing)
+            hs=p->make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
+        else 
+            hs = {};
         pretty_print_haps(hs, from, to);
     }
     float rv=0.f;

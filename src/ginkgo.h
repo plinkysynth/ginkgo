@@ -658,7 +658,7 @@ static inline float *lorenz(float dt) {
 // midi note 69 is A4 (440hz)
 // what note is 48khz?
 // 150.2326448623 :)
-static inline float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f - (OVERSAMPLE - 1) * 12.f) * (1.f / 12.f)); }
+static inline float midi2dphase(float midi) { return exp2f((midi - 150.2326448623f) * (1.f / 12.f)); }
 
 #define P_(x) midi2dphase(x)
 

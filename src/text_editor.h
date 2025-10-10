@@ -1505,7 +1505,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             cached_parser = {.s=codes, .n=(int)(codee-codes)};
             pattern_t pat = parse_pattern(&cached_parser);
             if (cached_parser.err <= 0) {
-                cached_haps = pat.make_haps({cached_hap_mem,cached_hap_mem+1024}, {temp_hap_mem,temp_hap_mem+1024}, 0.f, 4.f * hap_cycle_time);
+                cached_haps = pat.make_haps({cached_hap_mem,cached_hap_mem+1024}, {temp_hap_mem,temp_hap_mem+1024}, 0.f, 4.f);
             }
         }
         if (!cached_haps.empty()) {
@@ -1568,8 +1568,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     hapcol = C_SELECTION;
                 else if (hapstart_idx <= E->cursor_idx && hapend_idx >= E->cursor_idx)
                     hapcol = C_CHART_HILITE;
-                int hapx1 = (int)((h->t0 * 32.f) / hap_cycle_time);
-                int hapx2 = (int)((h->t1 * 32.f) / hap_cycle_time);
+                int hapx1 = (int)((h->t0 * 32.f));
+                int hapx2 = (int)((h->t1 * 32.f));
                 for (int x = hapx1; x < hapx2; ++x) {
                     if (x >= 0 && x < 128) {
                         uint32_t charcol = hapcol ? hapcol : t.ptr[y * TMW + x + chartx] & 0xffffff00u;

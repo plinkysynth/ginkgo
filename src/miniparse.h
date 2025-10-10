@@ -18,13 +18,6 @@ enum EValueType : int8_t { // for Node.value_type
     VT_SOUND = P_SOUND,
 };
 
-typedef struct fraction_t { // helps with rounding a bit... didn't go full rational yet :)
-    float num, denom;
-    fraction_t operator*(float f) { return (f>=1) ? fraction_t{num*f, denom} : fraction_t{num, denom/f}; }
-    fraction_t operator/(float f) { return (f>=1) ? fraction_t{num, denom*f} : fraction_t{num/f, denom}; }
-    fraction_t inverse() const { return {denom, num}; }
-} fraction_t;
-
 
 typedef struct Node {
     uint8_t type;
@@ -37,41 +30,7 @@ typedef struct Node {
     float min_value, max_value; // parsed value of the node
 } Node;
 
-//#define INTEGER_HAP_TIME 
-#ifdef INTEGER_HAP_TIME
-typedef int hap_time; // 16 bit fixed point :)
-static const int cycle_shift = 16;
-static const hap_time hap_cycle_time = 1<<cycle_shift;
-static const hap_time epsilon = 2;
-static inline hap_time scale_time(hap_time t, fraction_t f) {
-    return (int64_t(t) * int64_t(f.num*65536.f)) / (f.denom*65536.f);
-}
-static inline hap_time floor2cycle(hap_time t) {
-    return t & ~(hap_cycle_time - 1);
-}
-static inline int haptime2cycleidx(hap_time t) {
-    return t >> cycle_shift;
-}
-static inline hap_time sample_idx2hap_time(int sample_idx, float bpm) {
-    return (sample_idx*double(bpm*hap_cycle_time/(SAMPLE_RATE*240.f)));
-}
-#else
-typedef float hap_time;
-static const hap_time hap_cycle_time = 1.f;
-static const hap_time epsilon = 2.f/SAMPLE_RATE;
-static inline hap_time scale_time(hap_time t, fraction_t f) {
-    return (t * f.num) / f.denom;
-}
-static inline hap_time floor2cycle(hap_time t) {
-    return floor(t);
-}
-static inline int haptime2cycleidx(hap_time t) {
-    return (int)t;
-}
-static inline hap_time sample_idx2hap_time(int sample_idx, float bpm) {
-    return sample_idx*(bpm/(SAMPLE_RATE*240.f));
-}
-#endif 
+typedef double hap_time;
 
 typedef struct hap_t { 
     hap_time t0, t1; 
@@ -87,7 +46,6 @@ typedef struct hap_span_t {
     inline bool hasatleast(int i) const { return s+i<e; }
 } hap_span_t;
 
-#define FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES 1
 
 typedef struct bfs_node_t {
     uint8_t type;
@@ -95,7 +53,6 @@ typedef struct bfs_node_t {
     uint16_t num_children;
     int32_t first_child; // index or -1
 } bfs_node_t;
-
 
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
@@ -110,10 +67,11 @@ typedef struct pattern_t { // a parsed version of a min notation string
     bfs_node_t *bfs_nodes;
 
     float get_length(int nodeidx);
-    hap_span_t _make_haps(hap_span_t &dst, hap_span_t tmp, int nodeidx, hap_time t0, hap_time t1, int hapid);
+    void _filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time a, hap_time b, hap_time from, hap_time to);
+    hap_span_t _make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves);
     void _append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
     hap_span_t make_haps(hap_span_t dst, hap_span_t tmp, hap_time t0, hap_time t1) { 
-        return _make_haps(dst, tmp, root, t0, t1, 1);
+        return _make_haps(dst, tmp, root, t0, t1, 1, false);
     }
     void unalloc() {
         stbds_arrfree(nodes);
@@ -135,7 +93,7 @@ typedef struct pattern_maker_t {
     int32_t i;   // current position in string during parsing.
     int err;     // 0 ok, else position of first error
     const char *errmsg;
-    pattern_t get_pattern(const char *key=NULL);
+    pattern_t make_pattern(const char *key=NULL);
     void unalloc() {
         stbds_arrfree(nodes);
         stbds_arrfree(curvedata);

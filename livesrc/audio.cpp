@@ -1,6 +1,8 @@
 
 #ifdef PATTERNS
-/fancy_pattern [c3 <f3 g3>]
+/fancy_pattern [c!2 d!3]
+
+// /fancy_pattern [c f g] * [2 1]
 #endif
 
 
@@ -14,6 +16,7 @@ float test_patterns(void);
 float rompler(const char *fname) {
 	wave_t *wave=get_wave_by_name(fname);
 	return (wave && wave->frames) ? wave->frames[((G->sampleidx/2) % (wave->num_frames))*wave->channels] : 0.f;
+    
 }
 
 

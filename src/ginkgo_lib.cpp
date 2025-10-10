@@ -278,8 +278,8 @@ float test_patterns(void) {
         pattern_t p = G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
         if (!p.key) return 0.f;
         int smpl = G->sampleidx + 60*96000*4;
-        from = sample_idx2hap_time(smpl, 140.f);
-        to = sample_idx2hap_time(smpl+96, 140.f);
+        from = smpl/96000.f/2.f;
+        to = (smpl+1)/96000.f/2.f;
         hs=p.make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
         pretty_print_haps(hs, from, to);
     }
@@ -287,7 +287,7 @@ float test_patterns(void) {
     static float phases[8]={};    
     for (hap_t *h = hs.s; h < hs.e; h++) {
         if (h->valid_params & (1 << P_NOTE)) {
-            float age = (from - h->t0) / float(hap_cycle_time);
+            float age = (from - h->t0);
             if (age>=0.f) 
             {
                 rv += sawo(midi2dphase(h->params[P_NOTE])) * exp2f(-age*8.f);

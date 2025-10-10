@@ -569,7 +569,7 @@ pattern_t parse_pattern(pattern_maker_t *p) {
     p->errmsg = NULL;
     p->root = parse_args(p, N_FASTCAT, 0, 0);
     update_lengths(p, p->root);
-    return p->get_pattern();
+    return p->make_pattern();
 }
 
 #include "makehaps.h"
@@ -589,7 +589,7 @@ void test_minipat(void) {
     printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
     pattern_maker_t pm = {.s = s, .n = (int)strlen(s)};
     parse_pattern(&pm);
-    pattern_t p = pm.get_pattern();
+    pattern_t p = pm.make_pattern();
     printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
     if (pm.errmsg)
         printf("error: %s\n", pm.errmsg);
@@ -685,8 +685,8 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
                 stbds_hmputs(patterns_map, pat);
                 hap_t dst[64], tmp[64];
-                hap_span_t haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f * hap_cycle_time);
-                pretty_print_haps(haps, 0.f, 4.f * hap_cycle_time);
+                hap_span_t haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
+                pretty_print_haps(haps, 0.f, 4.f);
 
                 // hap_span_t haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
                 //  pretty_print_haps(haps);

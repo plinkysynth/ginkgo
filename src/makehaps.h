@@ -1,5 +1,7 @@
 // code for turning patterns (a tree of nodes) into haps (a flat list of events with times and values)
 
+static const hap_time hap_eps = 1.f / 1000.f; // as large as possible but smaller than the smallest note
+
 template <typename T> void arrsetlencap(T *&arr, int len, int cap) {
     assert(len <= cap);
     stbds_arrsetcap(arr, cap);
@@ -7,7 +9,7 @@ template <typename T> void arrsetlencap(T *&arr, int len, int cap) {
 }
 
 // convert the parsed node structure into an SoA bfs tree. also 'squeezes' single child lists.
-pattern_t pattern_maker_t::get_pattern(const char *key) {
+pattern_t pattern_maker_t::make_pattern(const char *key) {
     pattern_t p = {.key = key, .nodes = nodes, .curvedata = curvedata, .root = root};
     int n_input = stbds_arrlen(nodes);
     arrsetlencap(p.bfs_start_end, 0, n_input);
@@ -15,7 +17,7 @@ pattern_t pattern_maker_t::get_pattern(const char *key) {
     arrsetlencap(p.bfs_nodes, 0, n_input);
     arrsetlencap(p.bfs_nodes_total_length, 0, n_input);
     int_pair_t q[n_input];
-    int qhead = 1;
+    int qhead = (root >= 0 && root < n_input) ? 1 : 0;
     q[0] = {root, -1};
     for (int i = 0; i < qhead; i++) {
         Node *n = nodes + q[i].k;
@@ -41,6 +43,7 @@ pattern_t pattern_maker_t::get_pattern(const char *key) {
         stbds_arrpush(p.bfs_nodes, node);
         stbds_arrpush(p.bfs_nodes_total_length, n->total_length);
         for (int child = n->first_child; child >= 0; child = nodes[child].next_sib) {
+            assert(child < n_input);
             q[qhead++] = {child, my_bfs_idx};
         }
     }
@@ -120,17 +123,13 @@ float pattern_t::get_length(int nodeidx) {
 }
 
 void pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid) {
-    if (dst.s >= dst.e)
+    if (dst.s >= dst.e || t0 > t1 || nodeidx < 0)
         return;
-    hap_t *hap = dst.s++;
-    hap->t0 = t0;
-    hap->t1 = t1;
-    hap->node = nodeidx;
-    hap->hapid = hapid;
     bfs_node_t *n = bfs_nodes + nodeidx;
     int value_type = n->value_type;
+    if (value_type <= VT_NONE)
+        return;
     float_pair_t minmax = bfs_min_max_value[nodeidx];
-    hap->valid_params = 1 << value_type;
     float v;
     if (minmax.k != minmax.v) { // randomize in range
         float t = (pcg_mix(pcg_next(hapid)) & 0xffffff) * (1.f / 0xffffff);
@@ -140,55 +139,160 @@ void pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time 
             v = roundf(v);
     } else
         v = minmax.v;
+    if (value_type == VT_SOUND && v < 1.f)
+        return; // its a rest! is_rest
+
+    hap_t *hap = dst.s++;
+    hap->t0 = t0;
+    hap->t1 = t1;
+    hap->node = nodeidx;
+    hap->hapid = hapid;
+    hap->valid_params = 1 << value_type;
     hap->params[value_type] = v;
 }
 
-hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t tmp, int nodeidx, hap_time a, hap_time b, int hapid) {
+// filter out haps that are outside the query range a-b as an optimization,
+// but ALSO filter out haps whose start is outside the from-to hap range.
+// this actually culls haps determinstically! eg [a b c] * [2 1] will have a rest in the second half.
+void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time a, hap_time b, hap_time from, hap_time to) {
+    for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
+        left_hap->t0 /= speed_scale;
+        left_hap->t1 /= speed_scale;
+        if (left_hap->t0 >= b || left_hap->t1 <= a || left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps >= to) {
+            left_hap->valid_params = 0;
+        }
+    }
+}
+
+hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, hap_time a, hap_time b, int hapid,
+                                 bool merge_repeated_leaves) {
     hap_span_t rv = {dst.s, dst.s};
     if (nodeidx < 0 || a > b)
         return rv;
     bfs_node_t *n = bfs_nodes + nodeidx;
-    float speed_scale = 1.f;
-    float total_length = bfs_nodes_total_length[nodeidx];
+    hap_time speed_scale = 1.f;
+    hap_time total_length = bfs_nodes_total_length[nodeidx];
     switch (n->type) {
+    case N_LEAF:
+        if (merge_repeated_leaves)
+            _append_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid);
+        else
+            for (int i = floor(a + hap_eps); i < b; ++i) {
+                _append_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
+            }
+        break;
+    case N_POLY:
+        speed_scale = (bfs_min_max_value[nodeidx].v > 0) ? bfs_min_max_value[nodeidx].v
+                      : (n->first_child >= 0)            ? bfs_nodes_total_length[n->first_child]
+                                                         : 1.;
+    case N_PARALLEL: {
+        if (speed_scale <= 0.f)
+            break;
+        for (int childidx = 0; childidx < n->num_children; ++childidx) {
+            int child = n->first_child + childidx;
+            _make_haps(dst, tmp, child, a * speed_scale, b * speed_scale, hash2_pcg(hapid, childidx), merge_repeated_leaves);
+        }
+        _filter_haps({rv.s, dst.s}, speed_scale, a, b, floor(a + hap_eps), ceil(b - hap_eps));
+        break;
+    }
+    case N_OP_ELONGATE:
+    case N_OP_REPLICATE:
     case N_OP_TIMES:
     case N_OP_DIVIDE: {
-        hap_span_t old_dst = dst;
-        dst = tmp;
-        dst=old_dst;
-        break; }
-    case N_LEAF:
-        for (int i = floor(a); i < b; ++i) {            
-            _append_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
+        if (n->first_child < 0 || n->num_children != 2)
+            break;
+        hap_span_t right_haps = _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, nodeidx), true);
+        for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
+            if ((right_hap->valid_params & (1 << P_NUMBER)) == 0)
+                continue;
+            hap_time speed_scale = right_hap->params[P_NUMBER];
+            if (speed_scale <= 0.f)
+                continue;
+            if (n->type == N_OP_REPLICATE)
+                speed_scale = 1.f;
+            else if (n->type != N_OP_TIMES)
+                speed_scale = 1.f / speed_scale;
+            hap_time from = right_hap->t0;
+            hap_time to = right_hap->t1;
+            hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, max(from, a) * speed_scale, min(to, b) * speed_scale,
+                                              hash2_pcg(hapid, right_hap->hapid), merge_repeated_leaves);
+            _filter_haps(left_haps, speed_scale, a, b, from, to);
         }
         break;
+    }
+    case N_RANDOM: {
+        if (n->num_children <= 0)
+            break;
+        for (int i = floor(a + hap_eps); i < b; ++i) {
+            int childidx = (hash2_pcg(hapid, i)) % n->num_children;
+            _make_haps(dst, tmp, n->first_child + childidx, i, i + 1, hash2_pcg(hapid, i), merge_repeated_leaves);
+        }
+        break;
+    }
+    case N_OP_DEGRADE: {
+        hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
+        hap_t dummy_hap;
+        dummy_hap.valid_params = 1 << P_NUMBER;
+        dummy_hap.params[P_NUMBER] = 0.5f;
+        hap_span_t dummy_hap_span = {&dummy_hap, &dummy_hap + 1};
+        hap_span_t right_haps = n->num_children > 1
+                                    ? _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true)
+                                    : dummy_hap_span;
+        // for each left hap (already output), find right haps that overlap it and apply change. if >1, make more haps
+        for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
+            float t0 = left_hap->t0;
+            int count = 0;
+            if (right_haps.s == &dummy_hap) {
+                dummy_hap.t0 = left_hap->t0;
+                dummy_hap.t1 = left_hap->t1;
+            }
+            for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
+                if (!(right_hap->valid_params & (1 << P_NUMBER)))
+                    continue;
+                if (right_hap->t0 > t0 || right_hap->t1 <= t0)
+                    continue;
+                bool skipped = (pcg_mix(hash2_pcg(left_hap->hapid, right_hap->hapid)) & 0xffffff) < (right_hap->params[P_NUMBER] * 0xffffff);
+                if (skipped)
+                    continue;
+                if (count++) {
+                    if (dst.s >= dst.e)
+                        break;
+                    hap_t *target = dst.s++;
+                    *target = *left_hap;
+                }
+            }
+            if (count == 0)
+                left_hap->valid_params = 0; // degraded!
+        }
+        break;
+    }
     case N_FASTCAT:
         speed_scale = total_length;
         // fall thru
     case N_CAT: {
         if (total_length <= 0.f || n->first_child < 0)
             break;
-        float child_a = a * speed_scale, child_b = b * speed_scale;
-        int loopidx = floor(child_a / total_length);
-        float from = loopidx * total_length;
+        hap_time child_a = a * speed_scale, child_b = b * speed_scale;
+        int loopidx = floor(child_a / total_length + hap_eps);
+        hap_time from = loopidx * total_length;
         int childidx = 0;
         while (from < child_b) {
             int childnode = n->first_child + childidx;
-            float child_length = get_length(childnode);
-            float to = from + child_length;
+            hap_time child_length = get_length(childnode);
+            hap_time to = from + child_length;
             if (to <= from)
                 break;
             if (to > child_a) {
                 // we shift time so that the child feels like it's just looping on its own
                 hap_time child_from = loopidx * child_length;
                 hap_time child_to = (loopidx + 1) * child_length;
-                float tofs = from - child_from;
+                hap_time tofs = from - child_from;
                 // we pass down the query range scaled & shifted into child local time,
                 // but we also clip it to the extent of this part of the cat (from-to)
                 // in that way, large query ranges dont return multiple copies of the children
                 // but also, small query ranges propagate down the callstack to keep things fast.
-                hap_span_t newhaps =
-                    _make_haps(dst, tmp, childnode, max(child_a, from) - tofs, min(child_b, to) - tofs, hash2_pcg(hapid, childnode));
+                hap_span_t newhaps = _make_haps(dst, tmp, childnode, max(child_a, from) - tofs, min(child_b, to) - tofs,
+                                                hash2_pcg(hapid, childidx + loopidx * n->num_children), merge_repeated_leaves);
                 for (hap_t *src_hap = newhaps.s; src_hap < newhaps.e; src_hap++) {
                     src_hap->t0 = (src_hap->t0 + tofs) / speed_scale;
                     src_hap->t1 = (src_hap->t1 + tofs) / speed_scale;
@@ -215,8 +319,12 @@ void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to) {
         // hap onset must overlap the query range
         if (hap->t0 < from || hap->t0 >= to)
             continue;
-        printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node,
-               hap->t0 / double(hap_cycle_time), hap->t1 / double(hap_cycle_time));
+        if (hap->valid_params == 0) {
+            printf(COLOR_GREY "%08x(%d) %5.2f -> %5.2f (filtered)\n" COLOR_RESET, hap->hapid, hap->node, hap->t0, hap->t1);
+            continue;
+        }
+        printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node, hap->t0,
+               hap->t1);
         for (int i = 0; i < P_LAST; i++) {
             if (hap->valid_params & (1 << i)) {
                 if (i == P_SOUND) {

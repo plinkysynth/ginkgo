@@ -164,11 +164,12 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
     }
 }
 
-
-// 
-int pattern_t::_apply_values(hap_span_t &dst, hap_span_t tmp, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb) {
+//
+int pattern_t::_apply_values(hap_span_t &dst, hap_span_t tmp, hap_t *structure_hap, int value_node_idx, filter_cb_t filter_cb,
+                             value_cb_t value_cb, size_t context) {
     hap_time t0 = structure_hap->t0;
-    hap_span_t value_haps = _make_haps(tmp, tmp, value_node_idx, t0, t0 + hap_eps, hash2_pcg(structure_hap->hapid, value_node_idx), true);
+    hap_span_t value_haps =
+        _make_haps(tmp, tmp, value_node_idx, t0, t0 + hap_eps, hash2_pcg(structure_hap->hapid, value_node_idx), true);
     int count = 0;
     int structure_hapid = structure_hap->hapid;
     if (value_haps.empty()) {
@@ -177,7 +178,7 @@ int pattern_t::_apply_values(hap_span_t &dst, hap_span_t tmp, hap_t *structure_h
             structure_hap->valid_params = 0;
         else {
             if (value_cb)
-                value_cb(structure_hap, nullptr);
+                value_cb(structure_hap, nullptr, context);
         }
         return filtered ? 0 : 1;
     }
@@ -194,7 +195,7 @@ int pattern_t::_apply_values(hap_span_t &dst, hap_span_t tmp, hap_t *structure_h
             target->hapid = new_hapid;
         }
         if (value_cb)
-            value_cb(target, right_hap);
+            value_cb(target, right_hap, context);
     }
     if (count == 0)
         structure_hap->valid_params = 0; // no copies wanted!
@@ -269,10 +270,13 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
             break;
         hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-            _apply_values(dst, tmp, left_hap, n->first_child + 1, nullptr, [](hap_t *target, hap_t *right_hap) {
-                target->params[P_NUMBER] = right_hap->get_param(P_NUMBER, 0.f);
-                target->valid_params |= 1 << P_NUMBER;
-            });
+            _apply_values(
+                dst, tmp, left_hap, n->first_child + 1, nullptr,
+                [](hap_t *target, hap_t *right_hap, size_t param_idx) {
+                    target->params[param_idx] = right_hap->get_param(param_idx, 0.f);
+                    target->valid_params |= 1 << param_idx;
+                },
+                P_NUMBER);
         }
         break;
     }
@@ -280,12 +284,17 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
         hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
         int value_node_idx = (n->num_children > 1) ? n->first_child + 1 : -1;
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-            _apply_values(dst, tmp, left_hap, value_node_idx, [](hap_t *target, hap_t *right_hap, int new_hapid) {
-                float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
-                if (value >= 1.f) return true;
-                if (value <= 0.f) return false;
-                return (pcg_mix(pcg_next(new_hapid)) & 0xffffff) < (value * 0xffffff);
-            }, nullptr);
+            _apply_values(
+                dst, tmp, left_hap, value_node_idx,
+                [](hap_t *target, hap_t *right_hap, int new_hapid) {
+                    float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
+                    if (value >= 1.f)
+                        return true;
+                    if (value <= 0.f)
+                        return false;
+                    return (pcg_mix(pcg_next(new_hapid)) & 0xffffff) < (value * 0xffffff);
+                },
+                nullptr, 0);
         }
         break;
     }
@@ -335,6 +344,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
     case N_OP_EUCLID: {
         if (n->num_children < 3)
             break;
+        // TODO make we can shorten this by making use of apply_steps repeatedly. maybe! but this is more explicit for now...
         hap_span_t left_haps = _make_haps(tmp, tmp, n->first_child, a, b, hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
         hap_span_t setsteps_haps = _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true);
         hap_span_t numsteps_haps = _make_haps(tmp, tmp, n->first_child + 2, a, b, hash2_pcg(hapid, n->first_child + 2), true);

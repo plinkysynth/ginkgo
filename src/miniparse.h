@@ -56,7 +56,7 @@ typedef struct bfs_node_t {
 } bfs_node_t;
 
 typedef bool (*filter_cb_t)(hap_t *left_hap, hap_t *right_hap, int new_hapid);
-typedef void (*value_cb_t)(hap_t *target, hap_t *right_hap);
+typedef void (*value_cb_t)(hap_t *target, hap_t *right_hap, size_t context);
 
 
 typedef struct pattern_t { // a parsed version of a min notation string
@@ -73,7 +73,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
 
     float get_length(int nodeidx);
     void _filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time a, hap_time b, hap_time from, hap_time to);
-    int _apply_values(hap_span_t &dst, hap_span_t tmp, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb);
+    int _apply_values(hap_span_t &dst, hap_span_t tmp, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb, size_t context);
     hap_span_t _make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves);
     void _append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
     hap_span_t make_haps(hap_span_t dst, hap_span_t tmp, hap_time t0, hap_time t1) { 

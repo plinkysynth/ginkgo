@@ -224,6 +224,8 @@ static int parse_args(pattern_maker_t *p, int group_type, int start, int is_poly
     return group_node;
 }
 
+static int parse_leaf(pattern_maker_t *p);
+
 static int parse_group(pattern_maker_t *p, char open, char close, int node_type) {
     int start = p->i;
     if (!consume(p, open)) {
@@ -237,6 +239,18 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
         return -1;
     }
     p->nodes[group_node].end = p->i;
+    if (is_poly) {
+        skipws(p);
+        if (consume(p, '%')) {
+            int modulo_node = parse_leaf(p);
+            if (modulo_node < 0 || p->nodes[modulo_node].max_value <= 0.f) {
+                error(p, "expected positive number in modulo");
+                return -1;
+            }
+            // we store the modulo constant in our value.number. a bit of a hack...
+            p->nodes[group_node].max_value = p->nodes[modulo_node].max_value;
+        }
+    }
     return group_node;
 }
 
@@ -481,17 +495,6 @@ static int parse_expr(pattern_maker_t *p) {
                 p->nodes[elongate_node].max_value = count;
                 node = elongate_node;
                 break;
-            }
-        } else if (peek(p) == '%') {
-            if (p->nodes[node].type == N_POLY) {
-                consume(p, '%');
-                int modulo_node = parse_leaf(p);
-                if (modulo_node < 0 || p->nodes[modulo_node].max_value <= 0.f) {
-                    error(p, "expected positive number in modulo");
-                    return -1;
-                }
-                // we store the modulo constant in our value.number. a bit of a hack...
-                p->nodes[node].max_value = p->nodes[modulo_node].max_value;
             }
         } else if (peek(p) == '(') {
             consume(p, '(');

@@ -55,7 +55,9 @@ typedef struct int_pair_t {
     int k, v;
 } int_pair_t;
 
-typedef struct float_pair_t { float k, v; } float_pair_t;
+typedef struct float_pair_t {
+    float k, v;
+} float_pair_t;
 
 static inline int compare_int_pair(int_pair_t a, int_pair_t b) { return (a.k != b.k) ? a.k - b.k : a.v - b.v; }
 

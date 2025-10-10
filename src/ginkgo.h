@@ -162,6 +162,11 @@ typedef struct basic_state_t {
     int _ver;
     int _size;
     int reloaded;
+    float bpm;
+    float cpu_usage;
+    float cpu_usage_smooth;
+    double t; // the current musical time! as a double
+    int64_t t_q32; // the current musical time! as a 32.32 fixed point number
     uint8_t midi_cc[128];
     uint32_t midi_cc_gen[128];
     int cursor_x, cursor_y;
@@ -172,7 +177,7 @@ typedef struct basic_state_t {
     uint32_t sampleidx;
     atomic_flag load_request_cs;
     sound_pair_t *sounds;
-    pattern_t *patterns_map;
+    pattern_t *patterns_map; // stbds_sh
     sound_request_t *load_requests;
     bump_array_t sliders[16];
     int sliders_hwm[16];
@@ -720,6 +725,7 @@ int get_state_version(void);
 stereo probe;
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
     G = (basic_state_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
+    int dt_q32 = G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)); // on the order of 22000
     for (int i = 0; i < frames; i++) {
         // reset the per-sample bump allocators
         for (int slider_idx = 0; slider_idx < 16; slider_idx++)
@@ -729,6 +735,8 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
         audio[i] = do_sample(audio[i]);
         audio[i + frames] = probe;
         G->sampleidx++;
+        G->t_q32 += dt_q32;
+        G->t=G->t_q32*(1./4294967296.);
         G->reloaded = 0;
     }
     // remember the high watermark for the sliders

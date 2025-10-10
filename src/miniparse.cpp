@@ -34,7 +34,6 @@ static const char *node_type_names[N_LAST] = {
 #include "node_types.h"
 };
 
-
 static inline uint32_t hash2_pcg(uint32_t a, uint32_t b) {
     const uint64_t MUL = 6364136223846793005ull;
     uint64_t state = ((uint64_t)a << 32) | b; // pack inputs
@@ -103,8 +102,6 @@ const char *print_midinote(int note) {
     buf[(buf[1] == ' ') ? 1 : 2] = note / 12 + '0';
     return buf;
 }
-
-
 
 static void error(pattern_maker_t *p, const char *msg) {
     if (p->errmsg != NULL)
@@ -318,9 +315,9 @@ static inline EValueType parse_number_or_note_or_sound(const char *s, const char
         return VT_NUMBER;
     }
     int sound_idx;
-    if (e==s+1 && (*s=='-' || *s=='~'))
+    if (e == s + 1 && (*s == '-' || *s == '~'))
         sound_idx = 0;
-    else if (e==s+1 && (*s=='X' || *s=='x'))
+    else if (e == s + 1 && (*s == 'X' || *s == 'x'))
         sound_idx = 1;
     else
         sound_idx = get_sound_index(temp_cstring_from_span(s, e));
@@ -577,7 +574,6 @@ pattern_t parse_pattern(pattern_maker_t *p) {
 
 #include "makehaps.h"
 
-
 void test_minipat(void) {
     // const char *s = "sd,<oh hh>,[[bd bd:1 -] rim]";
     // const char *s = "{bd sd, rim hh oh}%4";
@@ -593,7 +589,7 @@ void test_minipat(void) {
     pattern_maker_t pm = {.s = s, .n = (int)strlen(s)};
     parse_pattern(&pm);
     pattern_t p = pm.make_pattern();
-    printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
+    printf("parsed %d nodes\n", (int)stbds_arrlen(pm.nodes));
     if (pm.errmsg)
         printf("error: %s\n", pm.errmsg);
     pretty_print_nodes(s, s + pm.n, &p);
@@ -620,21 +616,14 @@ const char *skip_path(const char *s, const char *e) {
 }
 
 const char *find_end_of_pattern(const char *s, const char *e) {
-    // look for a blank line, or a line that starts with / or #
     while (s < e) {
         while (s < e && *s != '\n')
             ++s; // find new line
-        if (s < e)
-            ++s; // skip \n
-        if (s + 2 < e && *s == '/' && s[1] != '/')
+        if (s + 3 < e && s[0] == '\n' && s[1] == '/' && s[2] != '/')
             return s;                  // its a new path
-        while (s < e && isspace(*s)) { // skip leading white space
-            if (*s == '\n')
-                return s; // its a blank line
-            ++s;          // skip white space
-        }
-        if (*s == '#')
-            return s; // its a macro at the start of a line
+        if (s + 2 < e && s[0] == '\n' && s[1] == '#')
+            return s; // its a line starting '#'
+        if (s<e) ++s;
     }
     return s;
 }
@@ -666,11 +655,11 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
         while (s < e) {
             while (s < e && *s != '\n')
                 ++s; // find end of line
-            if (s < e)
-                ++s; // skip \n
+            ++s;     // skip \n
             const char *pathstart = s;
-            if (s >= e || *s != '/' || (s + 1 < e && s[1] == '/'))
+            if (s >= e || *s != '/' || (s + 1 < e && s[1] == '/')) {
                 continue; // not a path
+            }
             s = skip_path(s, e);
             const char *pathend = s;
             if (pathend == pathstart)
@@ -679,14 +668,15 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             s = find_end_of_pattern(s, e);
             if (s == pattern_start)
                 continue; // not a pattern
-            // printf("found pattern: %.*s - %.*s\n", (int)(pathend-pathstart), pathstart, (int)(s-pattern_start), pattern_start);
+            // printf("found pattern: %.*s - %.*s\n", (int)(pathend-pathstart), pathstart, (int)(s-pattern_start),
+            // pattern_start);
             pattern_maker_t p = {.s = pattern_start, .n = (int)(s - pattern_start)};
             pattern_t pat = parse_pattern(&p);
             if (p.err <= 0) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
-                pretty_print_nodes(pattern_start, s - 1, &pat);
+                pretty_print_nodes(pattern_start, s, &pat);
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
-                stbds_hmputs(patterns_map, pat);
+                stbds_shputs(patterns_map, pat);
                 hap_t dst[64], tmp[64];
                 hap_span_t haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
                 pretty_print_haps(haps, 0.f, 4.f);

@@ -1,4 +1,5 @@
 #include "wavfile.h"
+#include <sys/time.h>
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // hot reload and scope
 
@@ -11,6 +12,10 @@ float probe_db_smooth[FFT_SIZE/2];
 int xyscope[128][128];
 uint32_t scope_pos = 0;
 
+static inline uint64_t nsec_now(void) {
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); // excludes sleep; great for profiling
+    // return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW); // includes sleep
+  }
 
 static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
 static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
@@ -40,8 +45,17 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         memcpy(audio, i, frames * sizeof(stereo));
     }
     // this causes the dll's copy of G to be copied to the main program's copy of G.
+    uint64_t t0 = nsec_now();
     if (dsp)
         G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp);
+    uint64_t t1 = nsec_now();
+    uint64_t budget = (1000000000ull * frames * OVERSAMPLE) / SAMPLE_RATE;
+    float cpu_usage = (t1-t0)/double(budget);
+    G->cpu_usage = cpu_usage;
+    if (cpu_usage > G->cpu_usage_smooth)
+        G->cpu_usage_smooth = cpu_usage;
+    else
+        G->cpu_usage_smooth = G->cpu_usage_smooth * 0.999f + cpu_usage * 0.001f;
     // if (!wav_recording) {
     //     wav_recording = fopen("recording.wav", "wb");
     //     write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);

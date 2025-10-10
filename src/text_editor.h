@@ -835,7 +835,7 @@ void set_status_bar(uint32_t color, const char *msg, ...) {
     va_start(args, msg);
     vsnprintf(status_bar, sizeof(status_bar) - 1, msg, args);
     va_end(args);
-    fprintf(stderr, "%s\n", status_bar);
+    //fprintf(stderr, "%s\n", status_bar);
     status_bar_color = color;
     status_bar_time = glfwGetTime();
 }

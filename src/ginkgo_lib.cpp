@@ -12,7 +12,7 @@ basic_state_t dummy_state;
 basic_state_t *_BG = &dummy_state;
 
 void init_basic_state(void) {
-    
+    _BG->bpm = 120.f;
 }
 
 #define RVMASK 65535
@@ -207,6 +207,22 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
     if (!_G->audio_bump.data) {
         ba_grow(&_G->audio_bump, 65536);
     }
+    // update bpm
+    if (_G->patterns_map) {
+        pattern_t *bpm_pattern = stbds_shgetp(_G->patterns_map, "/bpm");
+        if (bpm_pattern && bpm_pattern->key) {
+            hap_t haps[8];
+            hap_t tmp[8];
+            hap_span_t hs=bpm_pattern->make_haps({haps,haps+8}, {tmp,tmp+8}, _G->t, _G->t+hap_eps);
+            if (hs.s < hs.e) {
+                float newbpm = hs.s->get_param(P_NUMBER, _G->bpm);
+                if (newbpm > 20.f && newbpm < 400.f && newbpm != _G->bpm) {
+                    printf("setting bpm to %f\n", newbpm);
+                    _G->bpm = newbpm;
+                }
+            }
+        }
+    } 
     return _G;
 }
 
@@ -275,12 +291,16 @@ float test_patterns(void) {
     static hap_span_t hs;
     static hap_time from,to;
     if ((G->sampleidx % 96)==0 && G->patterns_map) {
-        pattern_t p = G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
-        if (!p.key) return 0.f;
-        int smpl = G->sampleidx + 60*96000*4;
-        from = smpl/96000.f/2.f;
-        to = (smpl+96)/96000.f/2.f;
-        hs=p.make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
+        pattern_t *p = &G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
+        if (!p->key) return 0.f;
+        from=to;
+        to = G->t;
+        if (to-from > 1./10. || to-from<0.) {
+            printf("resetting from %f to %f\n", from, to);
+            from = to - 1.f/100.;
+        }
+        //printf("%f\n", to);
+        hs=p->make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
         pretty_print_haps(hs, from, to);
     }
     float rv=0.f;

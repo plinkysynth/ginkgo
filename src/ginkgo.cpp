@@ -675,7 +675,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         E->intscroll = (int)(E->scroll_y / E->font_height);
         code_color(E, ptr);
         if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
-            print_to_screen(ptr, 0, tmh, status_bar_color, false, status_bar);
+            int x = tmw - strlen(status_bar);
+            print_to_screen(ptr, x, tmh, status_bar_color, false, "%s", status_bar);
         } else {
             status_bar_color = 0;
         }
@@ -1097,6 +1098,11 @@ int main(int argc, char **argv) {
             try_to_compile_audio(audio_tab.fname, &audio_tab.last_compile_log);
             parse_error_log(&audio_tab);
         }
+
+        double t = G->t;
+        int bar = (int)t;
+        int beat = (int)((t - bar) * 64);
+        set_status_bar(0x04cfff00, " %.1f%% | %x.%02x ", G->cpu_usage_smooth*100.f, bar, beat);
 
         // pump wave load requests
         pump_wave_load_requests_main_thread();

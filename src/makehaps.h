@@ -1,6 +1,5 @@
 // code for turning patterns (a tree of nodes) into haps (a flat list of events with times and values)
 
-static const hap_time hap_eps = 1.f / 1000.f; // as large as possible but smaller than the smallest note
 
 template <typename T> void arrsetlencap(T *&arr, int len, int cap) {
     assert(len <= cap);
@@ -10,7 +9,7 @@ template <typename T> void arrsetlencap(T *&arr, int len, int cap) {
 
 // convert the parsed node structure into an SoA bfs tree. also 'squeezes' single child lists.
 pattern_t pattern_maker_t::make_pattern(const char *key) {
-    pattern_t p = {.key = key, .nodes = nodes, .curvedata = curvedata, .root = root};
+    pattern_t p = {.key = key, .curvedata = curvedata};
     int n_input = stbds_arrlen(nodes);
     arrsetlencap(p.bfs_start_end, 0, n_input);
     arrsetlencap(p.bfs_min_max_value, 0, n_input);
@@ -55,6 +54,9 @@ void pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int i
         return;
     int c0 = p->bfs_start_end[i].k;
     int c1 = p->bfs_start_end[i].v;
+    if (srcend>src && srcend[-1]=='\n') --srcend;
+    c0=clamp(c0,0,(int)(srcend-src));
+    c1=clamp(c1,0,(int)(srcend-src));
     printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%.*s" COLOR_RESET, i, c0, src, c1 - c0,
            src + c0, (int)(srcend - src - c1), src + c1);
     for (int j = 0; j < depth + 1; j++) {

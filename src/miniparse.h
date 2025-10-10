@@ -32,6 +32,9 @@ typedef struct Node {
 
 typedef double hap_time;
 
+static const hap_time hap_eps = 1.f / 1000.f; // as large as possible but smaller than the smallest note
+
+
 typedef struct hap_t { 
     hap_time t0, t1; 
     int node; // index of the node that generated this hap.
@@ -61,9 +64,7 @@ typedef void (*value_cb_t)(hap_t *target, hap_t *right_hap, size_t context);
 
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
-    Node *nodes; // stb_ds // TODO remove
     float *curvedata; // stb_ds
-    int root;    // index of root node // TODO remove
 
     // bfs 
     int_pair_t *bfs_start_end; // source code ranges
@@ -77,15 +78,13 @@ typedef struct pattern_t { // a parsed version of a min notation string
     hap_span_t _make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves);
     void _append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
     hap_span_t make_haps(hap_span_t dst, hap_span_t tmp, hap_time t0, hap_time t1) { 
-        return _make_haps(dst, tmp, root, t0, t1, 1, false);
+        return _make_haps(dst, tmp, 0, t0, t1, 1, false);
     }
     void unalloc() {
-        stbds_arrfree(nodes);
         stbds_arrfree(curvedata);
         stbds_arrfree(bfs_start_end);
         stbds_arrfree(bfs_min_max_value);
         stbds_arrfree(bfs_nodes);
-        root=-1;
     }
 } pattern_t;
 

@@ -1,10 +1,4 @@
 
-#ifdef PATTERNS
-/fancy_pattern <[c3,g3,e4] [c3,f3,a4] [b2,g3,d5] [c3,a3,e5](3,8,2) >
-
-#endif
-
-
 STATE_VERSION(1,  )
 
 void init_state(void) {
@@ -18,9 +12,18 @@ float rompler(const char *fname) {
     
 }
 
+#ifdef PATTERNS
+/fancy_pattern <[c4 [a5 a3 a2] [f5 f4] [e4 c4]]!4 [[e4 e5] [g3 g5] [b3 b4] e4]!4>:2, 
+	<[a1*4]!4 [g1*4]!3 [e1*4]!1>, <[a1*4]!4 [g1*4]!3 [e1*4]!1>
+
+/bpm 124.5
+
+#endif
+
 
 stereo do_sample(stereo inp) {
-   F t = test_patterns()*0.5;
+F drums = sclip(rompler("break_think")*5); 
+   F t = test_patterns()*0.2;
      stereo dry=stereo{t,t};
   //    return dry2;
   // //return stereo{t,t};
@@ -38,12 +41,12 @@ stereo do_sample(stereo inp) {
   //       chord2 * vol(slew(S1(0.))) +
   //       chord3 * vol(slew(S2(0.)));
   //  //F bass = sclip(lpf_dp(sawo(P_C1)+sawo(P_C2*1.03324f)+sawo(P_C2*0.99532f), P_C3, 0.1f))*0.2; // growly bass    
-  //  F drums = sclip(rompler("break_think") * pow4(S4(0))*10.); 
+  //  
   //  F dc = S5(0) * 2.;
   //  F mixed = chord1;
   //   stereo dry=stereo{mixed*0.5f,mixed*0.5f};
      stereo wet=reverb(dry*0.5f);
-    wet = wet*0.5+dry*1.;//+drums*0.5f;
+    wet = wet*0.5+dry*1.+drums;
     
     return probe = wet;// + dc;
 }

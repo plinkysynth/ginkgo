@@ -104,66 +104,9 @@ const char *print_midinote(int note) {
     return buf;
 }
 
-void pretty_print_haps(HapSpan haps, hap_time from, hap_time to) {
-    for (Hap *hap = haps.s; hap < haps.e; hap++) {
-        // hap onset must overlap the query range
-        if (hap->t0 < from || hap->t0 >= to)
-            continue;
-        printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node,
-               hap->t0 / double(hap_cycle_time), hap->t1 / double(hap_cycle_time));
-        for (int i = 0; i < P_LAST; i++) {
-            if (hap->valid_params & (1 << i)) {
-                if (i == P_SOUND) {
-                    Sound *sound = get_sound_by_index((int)hap->params[i]);
-                    printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
-                } else if (i == P_NOTE) {
-                    printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
-                } else {
-                    printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
-                }
-            }
-        }
-        printf("\n");
-    }
-}
 
-void pretty_print_nodes(const char *src, const char *srcend, Node *nodes, int i, int depth) {
-    if (i < 0)
-        return;
-    int c0 = nodes[i].start;
-    int c1 = nodes[i].end;
-    printf(COLOR_GREY "%d " COLOR_BLUE "%.*s" COLOR_BRIGHT_YELLOW "%.*s" COLOR_BLUE "%.*s" COLOR_RESET, i, c0, src, c1 - c0,
-           src + c0, (int)(srcend - src - c1), src + c1);
-    for (int j = 0; j < depth + 1; j++) {
-        printf("  ");
-    }
-    switch (nodes[i].value_type) {
-    case VT_SOUND: {
-        Sound *sound = get_sound_by_index((int)nodes[i].max_value);
-        printf("%d - %s - maxlen %g val %g-%g %s\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value,
-               nodes[i].max_value, sound ? sound->name : "");
-        break;
-    }
-    case VT_NOTE: {
-        printf("%d - %s - maxlen %g val %g-%g %s-%s\n", i, node_type_names[nodes[i].type], nodes[i].total_length,
-               nodes[i].min_value, nodes[i].max_value, print_midinote((int)nodes[i].min_value),
-               print_midinote((int)nodes[i].max_value));
-        break;
-    }
-    default:
-        printf("%d - %s - maxlen %g val %g-%g\n", i, node_type_names[nodes[i].type], nodes[i].total_length, nodes[i].min_value,
-               nodes[i].max_value);
-        break;
-    }
-    if (nodes[i].first_child >= 0) {
-        pretty_print_nodes(src, srcend, nodes, nodes[i].first_child, depth + 1);
-    }
-    if (nodes[i].next_sib >= 0) {
-        pretty_print_nodes(src, srcend, nodes, nodes[i].next_sib, depth);
-    }
-}
 
-static void error(PatternMaker *p, const char *msg) {
+static void error(pattern_maker_t *p, const char *msg) {
     if (p->errmsg != NULL)
         return;
     p->err = p->i;
@@ -171,7 +114,7 @@ static void error(PatternMaker *p, const char *msg) {
     // fprintf(stderr, "ERROR: %s - %.*s" COLOR_BRIGHT_RED "%s" COLOR_RESET "\n", msg, p->err, p->s, p->s + p->err);
 }
 
-static void skipws(PatternMaker *p) {
+static void skipws(pattern_maker_t *p) {
     while (1) {
         while (p->i < p->n && isspace(p->s[p->i]))
             p->i++;
@@ -184,10 +127,10 @@ static void skipws(PatternMaker *p) {
     }
 }
 
-static int peek(PatternMaker *p) { return (p->i >= p->n) ? -1 : (unsigned char)p->s[p->i]; }
-static int peek_i(PatternMaker *p, int i) { return (i >= p->n) ? -1 : (unsigned char)p->s[i]; }
+static int peek(pattern_maker_t *p) { return (p->i >= p->n) ? -1 : (unsigned char)p->s[p->i]; }
+static int peek_i(pattern_maker_t *p, int i) { return (i >= p->n) ? -1 : (unsigned char)p->s[i]; }
 
-static int consume(PatternMaker *p, int c) {
+static int consume(pattern_maker_t *p, int c) {
     if (peek(p) == c) {
         p->i++;
         return 1;
@@ -199,21 +142,22 @@ static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' 
 static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
-static int make_node(PatternMaker *p, int node_type, int first_child, int next_sib, int start, int end) {
+static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end) {
     int i = stbds_arrlen(p->nodes);
     Node n = (Node){.type = (uint8_t)node_type,
                     .start = start,
                     .end = end,
                     .first_child = first_child,
                     .next_sib = next_sib,
-                    .total_length = 0};
+                    .total_length = 0,
+                    .num_children = 0};
     stbds_arrput(p->nodes, n);
     return i;
 }
 
-static int parse_expr(PatternMaker *p);
+static int parse_expr(pattern_maker_t *p);
 
-static int parse_args(PatternMaker *p, int group_type, int start, int is_poly) {
+static int parse_args(pattern_maker_t *p, int group_type, int start, int is_poly) {
     int group_node = make_node(p, group_type, -1, -1, start, start);
     int group_link_idx = -1;
     int comma_node = -1;
@@ -280,7 +224,7 @@ static int parse_args(PatternMaker *p, int group_type, int start, int is_poly) {
     return group_node;
 }
 
-static int parse_group(PatternMaker *p, char open, char close, int node_type) {
+static int parse_group(pattern_maker_t *p, char open, char close, int node_type) {
     int start = p->i;
     if (!consume(p, open)) {
         error(p, "expected opening bracket");
@@ -359,7 +303,13 @@ static inline EValueType parse_number_or_note_or_sound(const char *s, const char
     } else if (parse_number(s, e, 0, out)) {
         return VT_NUMBER;
     }
-    int sound_idx = get_sound_index(temp_cstring_from_span(s, e));
+    int sound_idx;
+    if (e==s+1 && (*s=='-' || *s=='~'))
+        sound_idx = 0;
+    else if (e==s+1 && (*s=='X' || *s=='x'))
+        sound_idx = 1;
+    else
+        sound_idx = get_sound_index(temp_cstring_from_span(s, e));
     *out = sound_idx;
     return VT_SOUND;
 }
@@ -404,7 +354,7 @@ void fill_curve_data_from_string(float *data, const char *s, int n) {
     }
 }
 
-static int parse_curve(PatternMaker *p) {
+static int parse_curve(pattern_maker_t *p) {
     int start = p->i;
     consume(p, '\'');
     while (p->i < p->n && p->s[p->i] != '\'')
@@ -423,7 +373,7 @@ static int parse_curve(PatternMaker *p) {
     return node;
 }
 
-static int parse_leaf(PatternMaker *p) {
+static int parse_leaf(pattern_maker_t *p) {
     int start = p->i;
     while (isleaf(peek(p)))
         p->i++;
@@ -441,7 +391,7 @@ static int parse_leaf(PatternMaker *p) {
     return node;
 }
 
-static int parse_expr_inner(PatternMaker *p) {
+static int parse_expr_inner(pattern_maker_t *p) {
     skipws(p);
     switch (peek(p)) {
     case '[':
@@ -460,7 +410,7 @@ static int parse_expr_inner(PatternMaker *p) {
     return -1;
 }
 
-static int parse_euclid(PatternMaker *p, int node) {
+static int parse_euclid(pattern_maker_t *p, int node) {
     int euclid_node0 = parse_expr(p);
     if (euclid_node0 < 0)
         return -1;
@@ -488,7 +438,7 @@ static int parse_euclid(PatternMaker *p, int node) {
     return euclid_node;
 }
 
-static int parse_op(PatternMaker *p, int left_node, int node_type, int num_params, int optional_right) {
+static int parse_op(pattern_maker_t *p, int left_node, int node_type, int num_params, int optional_right) {
     if (left_node < 0)
         return -1;
     if (node_type == N_OP_EUCLID) {
@@ -510,7 +460,7 @@ static int parse_op(PatternMaker *p, int left_node, int node_type, int num_param
     return parent_node;
 }
 
-static int parse_expr(PatternMaker *p) {
+static int parse_expr(pattern_maker_t *p) {
     int node = parse_expr_inner(p);
     skipws(p);
     if (node < 0)
@@ -585,48 +535,30 @@ template <typename T> float get_length(T *p, int node) {
     return 1.f;
 }
 
-static void update_lengths(PatternMaker *p, int node) {
+static void update_lengths(pattern_maker_t *p, int node) {
     if (node < 0)
         return;
     Node *n = &p->nodes[node];
     float max_value = 0.f;
     float total_length = 0.f;
+    int num_children = 0;
     if (n->first_child < 0)
         total_length = 1.f;
     for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
+        ++num_children;
         update_lengths(p, i);
         if (i != n->first_child)
             max_value = max(max_value, p->nodes[i].max_value);
         total_length += get_length(p, i);
     }
     n->total_length = total_length;
+    n->num_children = num_children;
     if (n->type != N_POLY && n->type != N_LEAF) {
         n->max_value = max_value;
     }
 }
 
-static inline void squeeze(PatternMaker *p, int *parent) {
-    // remove all
-    //  CAT nodes with 1 child;
-    //  FASTCAT nodes with 1 child and a total child length of 1;
-    //  PARALLEL nodes with 1 child;
-    int *prevlink = parent;
-    while (*prevlink >= 0) { // loop over siblings
-        Node *n = p->nodes + *prevlink;
-        squeeze(p, &n->first_child);
-        bool has_one_child = n->first_child >= 0 && p->nodes[n->first_child].next_sib < 0;
-        if (has_one_child && (n->type == N_CAT || (n->type == N_FASTCAT && n->total_length == 1.f) || n->type == N_PARALLEL)) {
-            // we want to replace this node with its only child
-            int old_sibling = n->next_sib;
-            *prevlink = n->first_child;
-            n = p->nodes + *prevlink;
-            n->next_sib = old_sibling;
-        }
-        prevlink = &n->next_sib;
-    }
-}
-
-Pattern parse_pattern(PatternMaker *p) {
+pattern_t parse_pattern(pattern_maker_t *p) {
     p->i = 0;
     if (p->nodes)
         stbds_arrsetlen(p->nodes, 0);
@@ -637,277 +569,11 @@ Pattern parse_pattern(PatternMaker *p) {
     p->errmsg = NULL;
     p->root = parse_args(p, N_FASTCAT, 0, 0);
     update_lengths(p, p->root);
-    squeeze(p, &p->root);
     return p->get_pattern();
 }
 
-static inline int cmp_haps_by_t0(const Hap *a, const Hap *b) { return a->t0 < b->t0 ? -1 : a->t0 > b->t0 ? 1 : 0; }
+#include "makehaps.h"
 
-static inline void sort_haps_by_t0(HapSpan haps) {
-    qsort(haps.s, haps.e - haps.s, sizeof(Hap), (int (*)(const void *, const void *))cmp_haps_by_t0);
-}
-
-static inline void init_hap_in_place(Hap *dst, hap_time t0, hap_time t1, int nodeidx, int hapid, int value_type, float value) {
-    dst->t0 = t0;
-    dst->t1 = t1;
-    dst->node = nodeidx;
-    dst->valid_params = 1 << value_type;
-    dst->hapid = hapid;
-    dst->params[value_type] = value;
-}
-
-HapSpan Pattern::_append_hap(HapSpan &dst, int nodeidx, hap_time t0, hap_time t1, int hapid) {
-    if (dst.s >= dst.e)
-        return {};
-    Node *n = nodes + nodeidx;
-    int value_type = n->value_type;
-    if (value_type <= VT_NONE)
-        return {};
-    bool is_rest = value_type == VT_SOUND && n->max_value < 2;
-    if (is_rest)
-        return {};
-    float v = n->max_value;
-    if (n->min_value != n->max_value) { // randomize in range
-        float t = (pcg_mix(pcg_next(hapid)) & 0xffffff) * (1.f / 0xffffff);
-        v = lerp(n->min_value, n->max_value, t);
-        if (value_type == VT_NOTE && n->max_value - n->min_value >= 1.f) // if it's a range of at least two semitone, quantize to
-                                                                         // nearest semitone
-            v = roundf(v);
-    }
-    init_hap_in_place(dst.s++, t0, t1, nodeidx, hapid, value_type, v);
-    return {dst.s - 1, dst.s};
-}
-
-static inline hap_time global_to_local(hap_time t, fraction_t tscale, hap_time tofs) {
-    return scale_time(t - tofs, tscale.inverse());
-}
-static inline hap_time local_to_global(hap_time t, fraction_t tscale, hap_time tofs) { return scale_time(t, tscale) + tofs; }
-
-// consumes dst; returns a new span of added haps, either with dst or empty.
-HapSpan Pattern::_make_haps(HapSpan &dst, HapSpan &tmp, int nodeidx, hap_time global_t0, hap_time global_t1, fraction_t tscale,
-                            hap_time tofs, int flags, int hapid) {
-    if (nodeidx < 0 || global_t0 > global_t1)
-        return {};
-    Node *n = nodes + nodeidx;
-    if (n->type == N_LEAF && (flags & FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES)) {
-        int loop_idx = haptime2cycleidx(global_to_local(global_t0, tscale, tofs));
-        return _append_hap(dst, nodeidx, global_t0, global_t1, hash2_pcg(hapid, loop_idx));
-    }
-    hapid = hash2_pcg(hapid, nodeidx); // go deeper in the tree...
-    HapSpan rv = {dst.s, dst.s};
-    Node *first_child = (n->first_child < 0) ? NULL : nodes + n->first_child;
-    switch (n->type) {
-    case N_OP_EUCLID: {
-        if (!first_child)
-            return {};
-        int setsteps_nodeidx = first_child->next_sib;
-        if (setsteps_nodeidx < 0)
-            return {};
-        int numsteps_nodeidx = nodes[setsteps_nodeidx].next_sib;
-        if (numsteps_nodeidx < 0)
-            return {};
-        int rot_nodeidx = nodes[numsteps_nodeidx].next_sib;
-        HapSpan setsteps_haps = _make_haps(tmp, tmp, setsteps_nodeidx, global_t0, global_t1, tscale, tofs,
-                                           FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 1);
-        HapSpan numsteps_haps = _make_haps(tmp, tmp, numsteps_nodeidx, global_t0, global_t1, tscale, tofs,
-                                           FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 2);
-        HapSpan rot_haps = _make_haps(tmp, tmp, rot_nodeidx, global_t0, global_t1, tscale, tofs,
-                                      FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 3);
-        sort_haps_by_t0(setsteps_haps);
-        sort_haps_by_t0(numsteps_haps);
-        sort_haps_by_t0(rot_haps);
-        hap_time from = global_t0;
-        while (from < global_t1) {
-            while (setsteps_haps.hasatleast(2) && setsteps_haps.s[1].t0 <= from)
-                setsteps_haps.s++;
-            while (numsteps_haps.hasatleast(2) && numsteps_haps.s[1].t0 <= from)
-                numsteps_haps.s++;
-            while (rot_haps.hasatleast(2) && rot_haps.s[1].t0 <= from)
-                rot_haps.s++;
-            hap_time to = global_t1;
-            to = min(to, setsteps_haps.hasatleast(2) ? setsteps_haps.s[1].t0 : global_t1);
-            to = min(to, numsteps_haps.hasatleast(2) ? numsteps_haps.s[1].t0 : global_t1);
-            to = min(to, rot_haps.hasatleast(2) ? rot_haps.s[1].t0 : global_t1);
-            if (to <= from)
-                break;
-            int setsteps = setsteps_haps.empty() ? 0 : nodes[setsteps_haps.s[0].node].max_value;
-            int numsteps = numsteps_haps.empty() ? 1 : nodes[numsteps_haps.s[0].node].max_value;
-            int rot = rot_haps.empty() ? 0 : nodes[rot_haps.s[0].node].max_value;
-            if (numsteps <= 0)
-                break;
-            fraction_t child_tscale = tscale / numsteps;
-            hap_time child_t0 = global_to_local(from, child_tscale, tofs);
-            hap_time child_t1 = global_to_local(to, child_tscale, tofs);
-            int stepidx = floor2cycle(child_t0);
-            while (child_t0 < child_t1) {
-                if (euclid_rhythm(haptime2cycleidx(stepidx), setsteps, numsteps, rot)) {
-                    hap_time step_from = local_to_global(stepidx, child_tscale, tofs);
-                    hap_time step_to = local_to_global(stepidx + hap_cycle_time, child_tscale, tofs);
-                    _make_haps(dst, tmp, n->first_child, max(global_t0, step_from), min(global_t1, step_to), child_tscale, tofs, flags,
-                               hapid + haptime2cycleidx(stepidx));
-                }
-                child_t0 = (stepidx += hap_cycle_time);
-            }
-            from = to;
-        }
-        break;
-    }
-    case N_OP_DEGRADE:
-    case N_OP_IDX:
-    case N_OP_REPLICATE:
-    case N_OP_ELONGATE:
-    case N_OP_DIVIDE:
-    case N_OP_TIMES: {
-        float right_value = 0.5f;
-        HapSpan right_haps = {};
-        int num_right_haps = 1;
-        if (first_child->next_sib >= 0) {
-            right_haps = _make_haps(tmp, tmp, first_child->next_sib, global_t0, global_t1, tscale, tofs,
-                                    FLAG_DONT_BOTHER_WITH_RETRIGS_FOR_LEAVES, hapid + 1);
-            num_right_haps = right_haps.e - right_haps.s;
-        }
-        int target_type = (n->type == N_OP_IDX) ? P_NUMBER : -1;
-        for (int i = 0; i < num_right_haps; i++) {
-            if (!right_haps.empty()) {
-                Hap *right_hap = right_haps.s + i;
-                if (!(right_hap->valid_params & (1 << P_NUMBER)))
-                    continue; // TODO  does it ever make sense for the right side to have non-number data?
-                right_value = right_hap->params[P_NUMBER];
-            }
-            fraction_t child_tscale;
-            if (n->type == N_OP_TIMES) {
-                if (right_value <= 0.f)
-                    continue;
-                child_tscale = tscale / right_value;
-            } else if (n->type == N_OP_DIVIDE || n->type == N_OP_ELONGATE) {
-                if (right_value <= 0.f)
-                    continue;
-                child_tscale = tscale * (right_value ? right_value : 1.f);
-            } else 
-                child_tscale = tscale;
-            hap_time child_t0 = !right_haps.empty() ? right_haps.s[i].t0 : global_t0;
-            hap_time child_t1 = !right_haps.empty() ? right_haps.s[i].t1 : global_t1;
-            child_t0 = max(global_t0, child_t0);
-            child_t1 = min(global_t1, child_t1);
-            HapSpan child_haps = _make_haps(dst, tmp, n->first_child, child_t0, child_t1, child_tscale, tofs, flags, hapid + i);
-            if (n->type == N_OP_DEGRADE) {
-                // blank out degraded haps
-                if (right_value >= 1.f)
-                    dst.e = rv.e; // delete all outputs!
-                else if (right_value > 0.f)
-                    for (Hap *hap = child_haps.s; hap < child_haps.e; hap++) {
-                        float t = (pcg_mix(pcg_next(23124 - hap->hapid)) & 0xffffff) * (1.f / 0xffffff);
-                        if (right_value >= t) {
-                            hap->valid_params = 0; // mark it as invalid basically
-                        }
-                    }
-            } else if (target_type >= 0) {
-                for (Hap *hap = child_haps.s; hap < child_haps.e; hap++) {
-                    hap->params[target_type] = right_value;
-                    hap->valid_params |= 1 << target_type;
-                    // todo update hap id?
-                }
-            }
-        }
-        break;
-    }
-    case N_RANDOM: {
-        int num_children = 0;
-        for (int i = n->first_child; i >= 0; i = nodes[i].next_sib)
-            ++num_children;
-        if (!num_children)
-            return {};
-        int kids[num_children];
-        num_children = 0;
-        for (int i = n->first_child; i >= 0; i = nodes[i].next_sib)
-            kids[num_children++] = i;
-        hap_time t0 = global_to_local(global_t0, tscale, tofs);
-        hap_time t1 = global_to_local(global_t1, tscale, tofs);
-        int stepidx = floor2cycle(t0);
-        hap_time from = t0;
-        while (from < t1) {
-            int kid = kids[hash2_pcg(hapid, haptime2cycleidx(stepidx)) % num_children];
-            hap_time child_t0 = max(global_t0, local_to_global(stepidx, tscale, tofs));
-            hap_time child_t1 = min(global_t1, local_to_global(stepidx + hap_cycle_time, tscale, tofs));
-            _make_haps(dst, tmp, kid, child_t0, child_t1, tscale, tofs, flags, hapid + kid);
-            from = (stepidx += hap_cycle_time);
-        }
-        break;
-    }
-    case N_FASTCAT:
-        if (n->total_length <= 0.f)
-            break;
-        tscale = tscale / n->total_length;
-    case N_LEAF:
-    case N_CAT: {
-        hap_time total_length = hap_time(n->total_length * hap_cycle_time);
-        hap_time t0 = global_to_local(global_t0, tscale, tofs);
-        hap_time t1 = global_to_local(global_t1, tscale, tofs);
-        int loop_index = total_length > 0 ? t0 / total_length : 0;
-        int child = n->first_child;
-        hap_time from = loop_index * total_length;
-        while (from < t1) {
-            if (child >= 0) {
-                Node *child_n = nodes + child;
-                hap_time child_length = (hap_time)(get_length(this, child) * hap_cycle_time);
-                if (child_length <= 0)
-                    child_length = hap_cycle_time;
-                hap_time to = from + child_length;
-                if (to > t0 && from < t1) {
-                    // this child overlaps the query range
-                    hap_time child_from = loop_index * child_length;
-                    hap_time child_to = (loop_index + 1) * child_length;
-                    _make_haps(dst, tmp, child, max(global_t0, local_to_global(from, tscale, tofs)),
-                               min(global_t1, local_to_global(to, tscale, tofs)), tscale,
-                               tofs + scale_time(from - child_from, tscale), flags, hash2_pcg(hash2_pcg(hapid, loop_index), child));
-                }
-                from = to;
-                child = child_n->next_sib;
-                if (child < 0) {
-                    child = n->first_child;
-                    loop_index++;
-                }
-            } else { // leaf
-                hap_time to = from + hap_cycle_time;
-                if (to > t0 && from < t1) {
-                    if (nodeidx >= 0 && nodes[nodeidx].value_type > VT_NONE) {
-                        // we do NOT clip this one, so that we know when the notedown was!
-                        // but we do skip it entirely if its outside the query range,
-                        // and we check with an epsilon in *global* time.
-                        hap_time t0g = local_to_global(from, tscale, tofs);
-                        hap_time t1g = local_to_global(to, tscale, tofs);
-                        if (t1g > global_t0 + epsilon && t0g < global_t1 - epsilon)
-                            _append_hap(dst, nodeidx, t0g, t1g, hash2_pcg(hapid, loop_index));
-                    }
-                }
-                from = to;
-                loop_index++;
-            }
-        }
-        break;
-    }
-    case N_POLY:
-    case N_PARALLEL: {
-        int child = n->first_child;
-        float speed_scale = 1.f;
-        if (n->type == N_POLY) {
-            speed_scale = (n->max_value > 0) ? n->max_value : (child >= 0) ? nodes[child].total_length : 1.;
-        }
-        int childidx = 0;
-        if (speed_scale < 0.f)
-            break;
-        tscale = tscale / speed_scale;
-        while (child >= 0) {
-            _make_haps(dst, tmp, child, global_t0, global_t1, tscale, tofs, flags, hapid + childidx);
-            child = nodes[child].next_sib;
-            ++childidx;
-        }
-        break;
-    }
-    }
-    rv.e = dst.s;
-    return rv;
-}
 
 void test_minipat(void) {
     // const char *s = "sd,<oh hh>,[[bd bd:1 -] rim]";
@@ -921,15 +587,15 @@ void test_minipat(void) {
     //  const char *s = "[bd <hh oh>,rim*<4 8>]";
     //  const char *s = "[bd,sd*1.1]";
     printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
-    PatternMaker pm = {.s = s, .n = (int)strlen(s)};
+    pattern_maker_t pm = {.s = s, .n = (int)strlen(s)};
     parse_pattern(&pm);
-    Pattern p = pm.get_pattern();
+    pattern_t p = pm.get_pattern();
     printf("parsed %d nodes\n", (int)stbds_arrlen(p.nodes));
     if (pm.errmsg)
         printf("error: %s\n", pm.errmsg);
-    pretty_print_nodes(s, s + pm.n, p.nodes, p.root, 0);
-    Hap tmp[64], dst[64];
-    HapSpan haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
+    pretty_print_nodes(s, s + pm.n, &p);
+    hap_t tmp[64], dst[64];
+    hap_span_t haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
     pretty_print_haps(haps, 0.f, 4.f);
 
     // char *chart = print_pattern_chart(&p);
@@ -985,7 +651,7 @@ const char *spanstr(const char *s, const char *e, const char *substr) {
 }
 
 void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
-    Pattern *patterns_map = NULL; // stbds_hm
+    pattern_t *patterns_map = NULL; // stbds_hm
     while (s < real_e) {
         s = spanstr(s, real_e, "#ifdef PATTERNS");
         if (!s)
@@ -1011,23 +677,23 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             if (s == pattern_start)
                 continue; // not a pattern
             // printf("found pattern: %.*s - %.*s\n", (int)(pathend-pathstart), pathstart, (int)(s-pattern_start), pattern_start);
-            PatternMaker p = {.s = pattern_start, .n = (int)(s - pattern_start)};
-            Pattern pat = parse_pattern(&p);
+            pattern_maker_t p = {.s = pattern_start, .n = (int)(s - pattern_start)};
+            pattern_t pat = parse_pattern(&p);
             if (p.err <= 0) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
-                pretty_print_nodes(pattern_start, s - 1, pat.nodes, pat.root, 0);
+                pretty_print_nodes(pattern_start, s - 1, &pat);
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
                 stbds_hmputs(patterns_map, pat);
-                Hap dst[64], tmp[64];
-                HapSpan haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f * hap_cycle_time);
+                hap_t dst[64], tmp[64];
+                hap_span_t haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f * hap_cycle_time);
                 pretty_print_haps(haps, 0.f, 4.f * hap_cycle_time);
 
-                // HapSpan haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
+                // hap_span_t haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
                 //  pretty_print_haps(haps);
-                //  HapSpan hapspan = p.make_haps(p.haps, p.root, 0.f, 4.f, 1.f, 0.f, 0, 1);
-                //  Hap *haps = NULL;
+                //  hap_span_t hapspan = p.make_haps(p.haps, p.root, 0.f, 4.f, 1.f, 0.f, 0, 1);
+                //  hap_t *haps = NULL;
                 //  stbds_arrsetlen(haps, p.haps.e - p.haps.s);
-                //  memcpy(haps, p.haps.s, (p.haps.e - p.haps.s) * sizeof(Hap));
+                //  memcpy(haps, p.haps.s, (p.haps.e - p.haps.s) * sizeof(hap_t));
                 //  pretty_print_haps(haps);
                 //  stbds_arrfree(haps);
             } else {

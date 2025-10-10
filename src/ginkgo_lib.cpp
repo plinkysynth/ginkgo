@@ -271,11 +271,11 @@ void test_conv_reverb(void) {
 }
 
 float test_patterns(void) {
-    static Hap haps[8], tmp[8];
-    static HapSpan hs;
+    static hap_t haps[8], tmp[8];
+    static hap_span_t hs;
     static hap_time from,to;
     if ((G->sampleidx % 96)==0 && G->patterns_map) {
-        Pattern p = G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
+        pattern_t p = G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
         if (!p.key) return 0.f;
         int smpl = G->sampleidx + 60*96000*4;
         from = sample_idx2hap_time(smpl, 140.f);
@@ -285,7 +285,7 @@ float test_patterns(void) {
     }
     float rv=0.f;
     static float phases[8]={};    
-    for (Hap *h = hs.s; h < hs.e; h++) {
+    for (hap_t *h = hs.s; h < hs.e; h++) {
         if (h->valid_params & (1 << P_NOTE)) {
             float age = (from - h->t0) / float(hap_cycle_time);
             if (age>=0.f) 

@@ -242,8 +242,10 @@ void dump_all_sounds(const char *fname) {
 
 int init_sampler(void) {
     // add sounds for 'rest'.
-    get_sound_init_only("~");
-    add_alias_init_only("-", "~");
+    if (stbds_hmlen(G->sounds) == 0) {
+        get_sound_init_only("~");
+        get_sound_init_only("1");
+    }
 
     bool eager = false;
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"

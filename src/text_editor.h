@@ -1492,10 +1492,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
         code_start_idx = pat_start - t.str;
         int code_end_idx = pat_end - t.str;
         static uint32_t cached_compiled_string_hash = 0;
-        static PatternMaker cached_parser = {};
-        static Hap cached_hap_mem[1024];
-        static Hap temp_hap_mem[1024];
-        static HapSpan cached_haps = {};
+        static pattern_maker_t cached_parser = {};
+        static hap_t cached_hap_mem[1024];
+        static hap_t temp_hap_mem[1024];
+        static hap_span_t cached_haps = {};
         const char *codes = t.str + code_start_idx;
         const char *codee = t.str + code_end_idx;
         uint32_t hash = fnv1_hash(codes, codee);
@@ -1503,7 +1503,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             cached_compiled_string_hash = hash;
             cached_parser.unalloc();
             cached_parser = {.s=codes, .n=(int)(codee-codes)};
-            Pattern pat = parse_pattern(&cached_parser);
+            pattern_t pat = parse_pattern(&cached_parser);
             if (cached_parser.err <= 0) {
                 cached_haps = pat.make_haps({cached_hap_mem,cached_hap_mem+1024}, {temp_hap_mem,temp_hap_mem+1024}, 0.f, 4.f * hap_cycle_time);
             }
@@ -1522,7 +1522,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             const Node *nodes = cached_parser.nodes;
             int ss = get_select_start(E);
             int se = get_select_end(E);
-            for (Hap *h = cached_haps.s; h < cached_haps.e; h++) {
+            for (hap_t *h = cached_haps.s; h < cached_haps.e; h++) {
                 if (h->valid_params == 0)
                     continue;
                 row_key key = { 

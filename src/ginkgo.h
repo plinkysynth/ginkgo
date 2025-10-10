@@ -55,6 +55,8 @@ typedef struct int_pair_t {
     int k, v;
 } int_pair_t;
 
+typedef struct float_pair_t { float k, v; } float_pair_t;
+
 static inline int compare_int_pair(int_pair_t a, int_pair_t b) { return (a.k != b.k) ? a.k - b.k : a.v - b.v; }
 
 static inline int lower_bound_int_pair(int_pair_t *arr, int n, int_pair_t key) {
@@ -152,7 +154,7 @@ struct reverb_state_t {
     float lpf2 = 0.f;
 };
 
-typedef struct Pattern Pattern;
+typedef struct pattern_t pattern_t;
 
 typedef struct basic_state_t {
     int _ver;
@@ -168,7 +170,7 @@ typedef struct basic_state_t {
     uint32_t sampleidx;
     atomic_flag load_request_cs;
     sound_pair_t *sounds;
-    Pattern *patterns_map;
+    pattern_t *patterns_map;
     sound_request_t *load_requests;
     bump_array_t sliders[16];
     int sliders_hwm[16];

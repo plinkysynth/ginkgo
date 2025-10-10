@@ -1,6 +1,6 @@
 
 #ifdef PATTERNS
-/fancy_pattern [c2-c7]*8 
+/fancy_pattern [c3 <f3 g3>]
 #endif
 
 

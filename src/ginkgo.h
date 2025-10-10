@@ -255,7 +255,7 @@ static inline float slew(float x, float upfac = 1e-5, float downfac = 1e-5) {
 static inline int euclid_rhythm(int stepidx, int numset, int numsteps, int rot) {
     if (numsteps < 1 || numset < 1)
         return 0;
-    stepidx = ((stepidx + rot) % numsteps) + numsteps;
+    stepidx = ((stepidx - rot) % numsteps) + numsteps;
     return ((stepidx * numset) % numsteps) < numset;
 }
 

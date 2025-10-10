@@ -1,7 +1,7 @@
 
 #ifdef PATTERNS
-/fancy_pattern [c a f e] : {0 1 2}%4
-// /fancy_pattern [c f g] * [2 1]
+/fancy_pattern <[c3,g3,e4] [c3,f3,a4] [b2,g3,d5] [c3,a3,e5](3,8,2) >
+
 #endif
 
 

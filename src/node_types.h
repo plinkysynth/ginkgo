@@ -40,7 +40,10 @@ OP(N_OP_DEGRADE, "?", 1, 1)
 OP(N_OP_REPLICATE, "!", 1, 0)
 OP(N_OP_ELONGATE, "@", 1, 0)
 OP(N_OP_EUCLID, "(", 3, 1)
+OP(N_OP_STRUCT, "struct", 3, 1)
 OP(N_OP_PLY, "ply", 1, 0)
+OP(N_OP_NOTE, "note", 1, 0)
+OP(N_OP_S, "s", 1, 0)
 
 #undef OP
 #undef NODE

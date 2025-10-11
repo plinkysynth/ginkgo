@@ -21,6 +21,7 @@
 #include "3rdparty/stb_ds.h"
 #include "3rdparty/miniaudio.h"
 #include "3rdparty/pffft.h"
+#include "3rdparty/sj.h"
 #include "ansicols.h"
 #include "ginkgo.h"
 #include <GLFW/glfw3.h>
@@ -30,10 +31,10 @@
 #include "sampler.h"
 #include "text_editor.h"
 #include "svf_gain.h"
+#include "http_fetch.h"
+
 #define RESW 1920
 #define RESH 1080
-
-
 
 // Named constants for magic numbers
 #define BLOOM_FADE_FACTOR (1.f / 16.f)
@@ -44,8 +45,8 @@
 
 // Status bar system is defined in text_editor.h
 
-static void die(const char *msg) {
-    fprintf(stderr, "ERR: %s\n", msg);
+static void die(const char *msg, const char *param = "") {
+    fprintf(stderr, "ERR: %s: %s\n", msg, param);
     exit(1);
 }
 
@@ -58,22 +59,22 @@ static void check_gl(const char *where) {
 }
 
 typedef struct line_t {
-    float     p0x,p0y;  
-    float     p1x,p1y;
-    uint32_t  col;  
-    float     width;
-} line_t; 
+    float p0x, p0y;
+    float p1x, p1y;
+    uint32_t col;
+    float width;
+} line_t;
 
-#define  MAX_LINES (1<<15)
+#define MAX_LINES (1 << 15)
 uint32_t line_count = 0;
 line_t lines[MAX_LINES];
 
 void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width) {
-    if (line_count >= MAX_LINES) return;
-    lines[line_count] = (line_t){p0x,p0y,p1x,p1y,col,width};
+    if (line_count >= MAX_LINES)
+        return;
+    lines[line_count] = (line_t){p0x, p0y, p1x, p1y, col, width};
     line_count++;
 }
-
 
 static void bind_texture_to_slot(GLuint shader, int slot, const char *uniform_name, GLuint texture, GLenum mag_filter) {
     glUniform1i(glGetUniformLocation(shader, uniform_name), slot);
@@ -222,6 +223,11 @@ uniform sampler2D uFP;
 uniform ivec2 uScreenPx;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
+uniform sampler2D uSky;
+uniform vec3 c_across;
+uniform vec3 c_up;
+uniform vec3 c_fwd;
+uniform vec3 c_pos;
 float square(float x) { return x * x; }
 vec2 wave_read(float x, int y_base) {
     int ix = int(x);
@@ -242,17 +248,14 @@ vec2 rnd_disc_cauchy() {
     h.y = tan(h.y);
     return h.y * vec2(sin(h.x), cos(h.x));
 }
-vec3 c(vec2 uv) { 
-    vec3 o=vec3(0.0); 
-    // user code follows
+// user code follows
 );
     
 const char *kFS_user_suffix = SHADER_NO_VERSION(
-   return o; } // end of user shader
     void main() {
         vec2 fragCoord = gl_FragCoord.xy;
         seed = uint(uint(fragCoord.x) * uint(1973) + uint(fragCoord.y) * uint(9277) + uint(iFrame) * uint(23952683)) | uint(1);
-        o_color = vec4(c(v_uv), 1.0);
+        o_color = vec4(pixel(v_uv), 1.0);
     });
 
 const char *kFS_bloom = SHADER(
@@ -314,15 +317,7 @@ const char *kFS_ui = SHADER(
     void main() {
         vec3 rendercol= texture(uFP, v_uv).rgb;
         vec3 bloomcol= texture(uBloom, v_uv).rgb;
-        rendercol += bloomcol * 0.5;
-        // float kernel_size = 0.25f; // the gap is about double this.
-        // float dx = kernel_size * (16./9.) * (1./1280.);
-        // float dy = kernel_size * (1./720.);
-        // rendercol += texture(uFP, v_uv + vec2(dx, dy)).rgb;
-        // rendercol += texture(uFP, v_uv - vec2(dx, dy)).rgb;
-        // rendercol += texture(uFP, v_uv + vec2(-dx, dy)).rgb;
-        // rendercol += texture(uFP, v_uv - vec2(-dx, dy)).rgb;
-        // rendercol *= 0.2;
+        //rendercol += bloomcol * 0.5;
         rendercol = max(vec3(0.), rendercol);
         float grey = dot(rendercol, vec3(0.2126 * 1.5, 0.7152 * 1.5, 0.0722 * 1.5));
 
@@ -529,7 +524,7 @@ GLFWwindow *gl_init(int want_fullscreen) {
 }
 
 static void set_tab(EditorState *newE) {
-    ui_alpha_target = (ui_alpha_target>0.5 && curE == newE) ? 0.f : 1.f;
+    ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
     curE = newE;
 }
 
@@ -562,12 +557,12 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key == GLFW_KEY_COMMA || key == GLFW_KEY_PERIOD) {
             if (G->playing) {
                 G->playing = false;
-                G->t_q32 &= ~((1<<30)-1);
+                G->t_q32 &= ~((1 << 30) - 1);
             } else {
                 if (G->t_q32 & (0xffffffffull)) {
                     G->t_q32 &= ~(0xffffffffull);
                 } else {
-                    G->t_q32 =0;
+                    G->t_q32 = 0;
                 }
             }
         }
@@ -763,7 +758,7 @@ void editor_update(EditorState *E, GLFWwindow *win) {
             stereo pr = probe_scope[(fft_start + i) & SCOPE_MASK];
             fft_buf[0][i] = sc.l * fft_window[i];
             fft_buf[1][i] = sc.r * fft_window[i];
-            fft_buf[2][i] = (pr.l+pr.r) * fft_window[i];
+            fft_buf[2][i] = (pr.l + pr.r) * fft_window[i];
         }
         pffft_transform_ordered(fft_setup, fft_buf[0], fft_buf[0], fft_work, PFFFT_FORWARD);
         pffft_transform_ordered(fft_setup, fft_buf[1], fft_buf[1], fft_work, PFFFT_FORWARD);
@@ -865,9 +860,16 @@ static void init_audio_midi(ma_device *dev) {
     }
 }
 
+static void unbind_textures_from_slots(int num_slots) {
+    for (int i = 0; i < num_slots; ++i) {
+        glActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+}
+
 // Render pass functions
-static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, double iTime, GLuint vao,
-                             GLuint texFont, GLuint texText) {
+static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, GLuint texsky, uint32_t iFrame, double iTime,
+                             GLuint vao, GLuint texFont, GLuint texText) {
     if (!user_pass) {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo[iFrame % 2]);
         glViewport(0, 0, RESW, RESH);
@@ -881,7 +883,15 @@ static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, uin
         bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
         bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
         bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
+        bind_texture_to_slot(user_pass, 3, "uSky", texsky, GL_LINEAR);
+
+        glUniform3f(glGetUniformLocation(user_pass, "c_across"), 1.f, 0.f, 0.f);
+        glUniform3f(glGetUniformLocation(user_pass, "c_up"), 0.f, 1.f, 0.f);
+        glUniform3f(glGetUniformLocation(user_pass, "c_fwd"), 0.f, 0.f, 1.f);
+        glUniform3f(glGetUniformLocation(user_pass, "c_pos"), 0.f, 0.f, 0.f);
+
         draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
+        unbind_textures_from_slots(4);
     }
 }
 
@@ -936,14 +946,61 @@ static void render_ui_pass(GLuint ui_pass, GLuint *texFPRT, GLuint texFont, GLui
     curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
 
     draw_fullscreen_pass(0, fbw, fbh, vao);
-    glActiveTexture(GL_TEXTURE0);
+    unbind_textures_from_slots(4);
+}
+
+GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mode = GL_CLAMP_TO_EDGE) {
+    int w, h, n;
+    void *img = NULL;
+    int hdr = stbi_is_hdr(fname);
+    if (hdr) {
+        img = stbi_loadf(fname, &w, &h, &n, 4);
+        if (!img)
+            die("failed to load hdr texture", fname);
+    } else {
+        img = stbi_load(fname, &w, &h, &n, 4);
+        if (!img)
+            die("failed to load texture", fname);
+    }
+    GLuint tex = gl_create_texture(filter_mode, wrap_mode);
+    glTexImage2D(GL_TEXTURE_2D, 0, hdr ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, img);
+    if (hdr) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    stbi_image_free(img);
+    check_gl("load texture");
     glBindTexture(GL_TEXTURE_2D, 0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    return tex;
+}
+
+struct {
+    char *key;
+    const char *value;
+} *skies = NULL;
+
+int get_sky(const char *key) {
+    if (!skies) {
+        char *json = load_file("assets/skies.json");
+        sj_Reader r = sj_reader(json, stbds_arrlen(json));
+        sj_Value outer_obj = sj_read(&r);
+        sj_Value key, val;
+        while (sj_iter_object(&r, outer_obj, &key, &val)) {
+            if (val.type == SJ_STRING) {
+                const char *k = make_cstring_from_span(key.start, key.end, 0);
+                const char *v = make_cstring_from_span(val.start, val.end,0);
+                stbds_shput(skies, k, v);
+            }
+        }
+        printf("loaded list of %d skies\n", (int)stbds_shlen(skies));
+    }
+    const char *url = stbds_shget(skies, key);
+    if (!url)
+        return 0;
+    const char *fname = fetch_to_cache(url, 1);
+    if (!fname)
+        return 0;
+    return load_texture(fname);
 }
 
 int main(int argc, char **argv) {
@@ -980,18 +1037,12 @@ int main(int argc, char **argv) {
     try_to_compile_shader(&shader_tab);
     parse_named_patterns_in_c_source(audio_tab.str, audio_tab.str + stbds_arrlen(audio_tab.str));
 
-    int fw = 0, fh = 0, fc = 0;
     // stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
     // stbi_uc *fontPixels = stbi_load("assets/font_brutalita.png", &fw, &fh, &fc, 4);
-    stbi_uc *fontPixels = stbi_load("assets/font_sdf.png", &fw, &fh, &fc, 4);
-    if (!fontPixels)
-        die("Failed to load font");
-    assert(fw == 32 * 16 && fh == 64 * 6);
-    texFont = gl_create_texture(GL_LINEAR, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, fontPixels);
-    stbi_image_free(fontPixels);
-    check_gl("upload font");
-    glBindTexture(GL_TEXTURE_2D, 0);
+    // stbi_uc *fontPixels = stbi_load("assets/font_sdf.png", &fw, &fh, &fc, 4);
+    texFont = load_texture("assets/font_sdf.png");
+
+    GLuint skytex = get_sky("industrial_wooden_attic");
 
     texText = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, TMW, TMH, 0, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, NULL);
@@ -1014,33 +1065,32 @@ int main(int argc, char **argv) {
     glGenVertexArrays(1, &vao);
 
     // fat line init
-    GLuint fatvao[2]={}, fatvbo[2]={};
-    glGenVertexArrays(2,fatvao);
-    glGenBuffers(2,fatvbo);
+    GLuint fatvao[2] = {}, fatvbo[2] = {};
+    glGenVertexArrays(2, fatvao);
+    glGenBuffers(2, fatvbo);
 
     GLsizeiptr cap_bytes = (GLsizeiptr)MAX_LINES * sizeof(line_t);
 
-    for (int i=0;i<2;i++) {
+    for (int i = 0; i < 2; i++) {
         glBindVertexArray(fatvao[i]);
         glBindBuffer(GL_ARRAY_BUFFER, fatvbo[i]);
         glBufferData(GL_ARRAY_BUFFER, cap_bytes, NULL, GL_DYNAMIC_DRAW); // pre-alloc
 
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_t), (void*)offsetof(line_t,p0x));
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(line_t), (void *)offsetof(line_t, p0x));
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(line_t), (void*)offsetof(line_t,p1x));
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(line_t), (void *)offsetof(line_t, p1x));
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(line_t), (void*)offsetof(line_t,width));
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(line_t), (void *)offsetof(line_t, width));
         glEnableVertexAttribArray(3);
-        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(line_t), (void*)offsetof(line_t,col));
-        glVertexAttribDivisor(0,1);
-        glVertexAttribDivisor(1,1);
-        glVertexAttribDivisor(2,1);
-        glVertexAttribDivisor(3,1);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(line_t), (void *)offsetof(line_t, col));
+        glVertexAttribDivisor(0, 1);
+        glVertexAttribDivisor(1, 1);
+        glVertexAttribDivisor(2, 1);
+        glVertexAttribDivisor(3, 1);
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
-
 
     double t0 = glfwGetTime();
     glfwSetKeyCallback(win, key_callback);
@@ -1056,35 +1106,36 @@ int main(int argc, char **argv) {
 
         glDisable(GL_DEPTH_TEST);
         editor_update(curE, win);
-        render_user_pass(user_pass, fbo, texFPRT, iFrame, iTime, vao, texFont, texText);
+        render_user_pass(user_pass, fbo, texFPRT, skytex, iFrame, iTime, vao, texFont, texText);
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, vao);
         render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, iTime, vao, ui_alpha);
 
-        #define MOUSE_LEN 8
-        #define MOUSE_MASK (MOUSE_LEN-1)
+#define MOUSE_LEN 8
+#define MOUSE_MASK (MOUSE_LEN - 1)
         static float mxhistory[MOUSE_LEN], myhistory[MOUSE_LEN];
         int mpos = (iFrame % MOUSE_LEN);
         mxhistory[mpos] = G->mx;
         myhistory[mpos] = G->my;
-        int numlines = min(iFrame, MOUSE_LEN-1u);
-        for (int i=0;i<numlines;i++) {
-            float p0x = mxhistory[(mpos-i)&MOUSE_MASK];
-            float p0y = myhistory[(mpos-i)&MOUSE_MASK];
-            float p1x = mxhistory[(mpos-i-1)&MOUSE_MASK];
-            float p1y = myhistory[(mpos-i-1)&MOUSE_MASK];
-            float len = 50.f + sqrtf(square(p0x-p1x) + square(p0y-p1y));
-            int alpha = (int)clamp(len,0.f,255.f);
+        int numlines = min(iFrame, MOUSE_LEN - 1u);
+        for (int i = 0; i < numlines; i++) {
+            float p0x = mxhistory[(mpos - i) & MOUSE_MASK];
+            float p0y = myhistory[(mpos - i) & MOUSE_MASK];
+            float p1x = mxhistory[(mpos - i - 1) & MOUSE_MASK];
+            float p1y = myhistory[(mpos - i - 1) & MOUSE_MASK];
+            float len = 50.f + sqrtf(square(p0x - p1x) + square(p0y - p1y));
+            int alpha = (int)clamp(len, 0.f, 255.f);
             // red is in the lsb. premultiplied alpha so alpha=0 == additive
-            uint32_t col = (alpha << 24) | ((alpha>>0)<<16) | ((alpha>>0)<<8) | (alpha>>0);
-            if (i==0) col=0;
-            add_line(p0x, p0y, p1x, p1y, col, 17.f-i);
+            uint32_t col = (alpha << 24) | ((alpha >> 0) << 16) | ((alpha >> 0) << 8) | (alpha >> 0);
+            if (i == 0)
+                col = 0;
+            add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
         }
-        //test_svf_gain();
+        // test_svf_gain();
 
         // fat line draw
         if (line_count > 0) {
-            //line_t lines[1] = {{300.f,100.f,G->mx,G->my,0xffff00ff,54.f}};
+            // line_t lines[1] = {{300.f,100.f,G->mx,G->my,0xffff00ff,54.f}};
             GLsizeiptr bytes = (GLsizeiptr)((line_count <= MAX_LINES ? line_count : MAX_LINES) * sizeof(line_t));
 
             glEnable(GL_BLEND);
@@ -1093,7 +1144,7 @@ int main(int argc, char **argv) {
             glBlendEquation(GL_FUNC_ADD);
             glBindVertexArray(fatvao[iFrame % 2]);
             glBindBuffer(GL_ARRAY_BUFFER, fatvbo[iFrame % 2]);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
             glUseProgram(fat_prog);
             glUniform2f(glGetUniformLocation(fat_prog, "fScreenPx"), fbw, fbh);
             glDrawArraysInstanced(GL_TRIANGLES, 0, 6, line_count);
@@ -1120,7 +1171,7 @@ int main(int argc, char **argv) {
         double t = G->t;
         int bar = (int)t;
         int beat = (int)((t - bar) * 64);
-        set_status_bar(G->playing ? 0x04cfff00 : 0x0222aaa00, " %.1f%% | %x.%02x  ", G->cpu_usage_smooth*100.f, bar, beat);
+        set_status_bar(G->playing ? 0x04cfff00 : 0x0222aaa00, " %.1f%% | %x.%02x  ", G->cpu_usage_smooth * 100.f, bar, beat);
 
         // pump wave load requests
         pump_wave_load_requests_main_thread();

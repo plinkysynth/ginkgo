@@ -674,21 +674,14 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             pattern_t pat = parse_pattern(&p);
             if (p.err <= 0) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
+                /*
                 pretty_print_nodes(pattern_start, s, &pat);
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
                 stbds_shputs(patterns_map, pat);
                 hap_t dst[64], tmp[64];
                 hap_span_t haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
                 pretty_print_haps(haps, 0.f, 4.f);
-
-                // hap_span_t haps = p.make_haps({dst,dst+64}, {tmp,tmp+64}, 0.f, 4.f);
-                //  pretty_print_haps(haps);
-                //  hap_span_t hapspan = p.make_haps(p.haps, p.root, 0.f, 4.f, 1.f, 0.f, 0, 1);
-                //  hap_t *haps = NULL;
-                //  stbds_arrsetlen(haps, p.haps.e - p.haps.s);
-                //  memcpy(haps, p.haps.s, (p.haps.e - p.haps.s) * sizeof(hap_t));
-                //  pretty_print_haps(haps);
-                //  stbds_arrfree(haps);
+                */
             } else {
                 printf("error: %.*s: %s\n", (int)(pathend - pathstart), pathstart, p.errmsg);
                 pat.unalloc();

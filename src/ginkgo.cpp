@@ -32,6 +32,7 @@
 #include "text_editor.h"
 #include "svf_gain.h"
 #include "http_fetch.h"
+#include "extvector.h"
 
 #define RESW 1920
 #define RESH 1080
@@ -99,7 +100,7 @@ GLuint gl_create_texture(int filter_mode, int wrap_mode) {
 static void setup_framebuffers_and_textures(GLuint *texFPRT, GLuint *fbo, int num_bloom_mips) {
     for (int i = 0; i < 2 + num_bloom_mips; ++i) {
         glGenFramebuffers(1, &fbo[i]);
-        texFPRT[i] = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
+        texFPRT[i] = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_BORDER);
         glBindTexture(GL_TEXTURE_2D, texFPRT[i]);
         int resw = (i < 2) ? RESW : (RESW >> (i - 1));
         int resh = (i < 2) ? RESH : (RESH >> (i - 1));
@@ -205,8 +206,6 @@ const char *kFS_fat = SHADER(
 
 const char *kVS = SHADER(
 out vec2 v_uv; 
-uniform ivec2 uScreenPx;
-
 void main() {
     vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
     v_uv = p;
@@ -224,10 +223,11 @@ uniform ivec2 uScreenPx;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
 uniform sampler2D uSky;
-uniform vec3 c_across;
+uniform vec3 c_right;
 uniform vec3 c_up;
 uniform vec3 c_fwd;
 uniform vec3 c_pos;
+uniform vec3 c_lookat;
 float square(float x) { return x * x; }
 vec2 wave_read(float x, int y_base) {
     int ix = int(x);
@@ -247,6 +247,15 @@ vec2 rnd_disc_cauchy() {
     vec2 h = rnd2() * vec2(6.28318530718, 3.1 / 2.);
     h.y = tan(h.y);
     return h.y * vec2(sin(h.x), cos(h.x));
+}
+// sphere of size ra centered at origin
+vec2 sphere_intersect( in vec3 ro, in vec3 rd, float ra ) {
+    float b = dot( ro, rd );
+    vec3 qc = ro - b*rd;
+    float h = ra*ra - dot( qc, qc );
+    if( h<0.0 ) return vec2(-1.0); // no intersection
+    h = sqrt( h );
+    return vec2( -b-h, -b+h );
 }
 // user code follows
 );
@@ -295,6 +304,7 @@ const char *kFS_ui = SHADER(
     uniform sampler2D uFont; 
     uniform usampler2D uText; 
     uniform sampler2D uBloom;
+    uniform vec2 uARadjust;
 
     vec3 aces(vec3 x) {
         const float a=2.51;
@@ -315,9 +325,11 @@ const char *kFS_ui = SHADER(
     vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * 0.25; }
 
     void main() {
-        vec3 rendercol= texture(uFP, v_uv).rgb;
-        vec3 bloomcol= texture(uBloom, v_uv).rgb;
-        //rendercol += bloomcol * 0.5;
+        // adjust for aspect ratio
+        vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
+        vec3 rendercol= texture(uFP, user_uv).rgb;
+        vec3 bloomcol= texture(uBloom, user_uv).rgb;
+        rendercol += bloomcol * 0.1;
         rendercol = max(vec3(0.), rendercol);
         float grey = dot(rendercol, vec3(0.2126 * 1.5, 0.7152 * 1.5, 0.0722 * 1.5));
 
@@ -885,10 +897,19 @@ static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, GLu
         bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
         bind_texture_to_slot(user_pass, 3, "uSky", texsky, GL_LINEAR);
 
-        glUniform3f(glGetUniformLocation(user_pass, "c_across"), 1.f, 0.f, 0.f);
-        glUniform3f(glGetUniformLocation(user_pass, "c_up"), 0.f, 1.f, 0.f);
-        glUniform3f(glGetUniformLocation(user_pass, "c_fwd"), 0.f, 0.f, 1.f);
-        glUniform3f(glGetUniformLocation(user_pass, "c_pos"), 0.f, 0.f, 0.f);
+        
+        float4 c_pos = { sinf(iTime * 1.1f) * 5.f, 1.f, cosf(iTime * 1.1f) * -5.f, 1.f };
+        float4 c_lookat = { 0.f, 0.f, 0.f, 1.f };
+        float4 c_up = { 0.f, 1.f, 0.f, 0.f };
+        float fov = M_PI * 0.25f;
+        float4 c_fwd = normalize(c_lookat - c_pos) / tanf(fov * 0.5f) * 0.5f;
+        float4 c_right = normalize(cross( c_up, c_fwd));
+        c_up = normalize(cross(c_fwd, c_right));
+        glUniform3f(glGetUniformLocation(user_pass, "c_right"), c_right.x, c_right.y, c_right.z);
+        glUniform3f(glGetUniformLocation(user_pass, "c_up"), c_up.x, c_up.y, c_up.z);
+        glUniform3f(glGetUniformLocation(user_pass, "c_fwd"), c_fwd.x, c_fwd.y, c_fwd.z);
+        glUniform3f(glGetUniformLocation(user_pass, "c_pos"), c_pos.x, c_pos.y, c_pos.z);
+        glUniform3f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z);
 
         draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
         unbind_textures_from_slots(4);
@@ -938,6 +959,17 @@ static void render_ui_pass(GLuint ui_pass, GLuint *texFPRT, GLuint texFont, GLui
     glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
     glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
     glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
+
+    float output_ar = fbw / float(fbh);
+    float input_ar = RESW / float(RESH);
+    float scale = output_ar / input_ar;
+    if (scale>1.f) { // output is wider than input - black bars at sides
+        glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), scale, 1.f);
+    } else { // black bars at top and bottom
+        glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), 1.f, 1.f / scale);
+    }
+
+
 
     float f_cursor_x = curE->cursor_x * curE->font_width;
     float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
@@ -1005,7 +1037,7 @@ int get_sky(const char *key) {
 
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
-
+    
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
 

@@ -6,12 +6,20 @@
 //        
 #define PI 3.141592f
 vec3 skycol(vec3 d_norm) {
-    return texture(uSky, vec2(atan(d_norm.x,d_norm.z)*(0.5/PI)+iTime*0.01, 0.5-asin(d_norm.y)*(1./PI))).xyz;
+    return texture(uSky, vec2(atan(d_norm.x,d_norm.z)*(0.5/PI), 0.5-asin(d_norm.y)*(1./PI))).xyz;
 }
 
 vec3 pixel(vec2 uv) { 
-    vec3 rd = c_fwd + (v_uv.x-0.5)*(16./9.)*c_across + (v_uv.y-0.5)*c_up;
+    vec3 rd = c_fwd + (v_uv.x-0.5)*(16./9.)*c_right + (v_uv.y-0.5)*c_up;
+    vec3 ro = c_pos;
     rd=normalize(rd);
+
+    vec2 sph_t = sphere_intersect(ro, rd, 1);
+    if (sph_t.x>0.) {
+        vec3 hit = ro+sph_t.x * rd;
+        return normalize(hit)*0.5+0.5;
+    }
+
     return skycol(rd)*0.1;
 /*
     uv-=0.5;

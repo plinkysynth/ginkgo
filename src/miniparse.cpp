@@ -674,10 +674,10 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             pattern_t pat = parse_pattern(&p);
             if (p.err <= 0) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
-                /*
-                pretty_print_nodes(pattern_start, s, &pat);
                 pat.key = make_cstring_from_span(pathstart, pathend, 0);
                 stbds_shputs(patterns_map, pat);
+                /*
+                pretty_print_nodes(pattern_start, s, &pat);
                 hap_t dst[64], tmp[64];
                 hap_span_t haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
                 pretty_print_haps(haps, 0.f, 4.f);

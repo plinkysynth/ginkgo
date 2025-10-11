@@ -291,7 +291,7 @@ int count_leading_spaces(EditorState *E, int start_idx) {
 
 static inline bool isseparator(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ';' || c == ',' || c == ':' || c == '.' || c == '(' ||
-           c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '\'' || c == '\"' || c == '`';
+           c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '\'' || c == '\"' || c == '`' || c=='=' || c=='<' || c=='>';
 }
 static inline bool isnewline(char c) { return c == '\n' || c == '\r'; }
 

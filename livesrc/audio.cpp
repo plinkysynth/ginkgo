@@ -1,7 +1,7 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern [c1 d1 e1 f1 g1] :[0 1 2 3 4]
+/fancy_pattern [c a f e]
 
 /bpm 120
 

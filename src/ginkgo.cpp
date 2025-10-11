@@ -217,17 +217,23 @@ out vec4 o_color;
 in vec2 v_uv; 
 uniform uint iFrame;
 uniform float iTime; 
-uint seed; 
+uvec4 seed; 
 uniform sampler2D uFP; 
 uniform ivec2 uScreenPx;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
 uniform sampler2D uSky;
-uniform vec3 c_right;
-uniform vec3 c_up;
-uniform vec3 c_fwd;
-uniform vec3 c_pos;
-uniform vec3 c_lookat;
+uniform mat4 c_cam2world;
+uniform mat4 c_cam2world_old;
+uniform vec4 c_lookat;
+uvec4 pcg4d() {
+    uvec4 v = seed * 1664525u + 1013904223u;
+    v.x += v.y*v.w; v.y += v.z*v.x; v.z += v.x*v.y; v.w += v.y*v.z;
+    v ^= v >> 16u;
+    v.x += v.y*v.w; v.y += v.z*v.x; v.z += v.x*v.y; v.w += v.y*v.z;
+    seed += v;
+    return v;
+}
 float square(float x) { return x * x; }
 vec2 wave_read(float x, int y_base) {
     int ix = int(x);
@@ -239,14 +245,25 @@ vec2 wave_read(float x, int y_base) {
 vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * (1.f/128.f); }
 
 float saturate(float x) { return clamp(x, 0.0, 1.0); }
-uint pcg_next() { return seed = seed * 747796405u + 2891336453u; } 
-float rnd() { return float((pcg_next())) / 4294967296.0; } 
-vec2 rnd2() { return vec2(rnd(), rnd()); } 
-vec3 rnd3() { return vec3(rnd(), rnd(), rnd()); } 
-vec2 rnd_disc_cauchy() {
-    vec2 h = rnd2() * vec2(6.28318530718, 3.1 / 2.);
+vec4 rnd4() { return vec4(pcg4d()) * (1.f / 4294967296.f); }
+vec2 rnd_disc_cauchy(vec2 z) {
+    vec2 h = z * vec2(6.28318530718, 3.1 / 2.);
     h.y = tan(h.y);
     return h.y * vec2(sin(h.x), cos(h.x));
+}
+vec2 rnd_disc(vec2 z) {
+    vec2 h = z * vec2(6.28318530718, 3.1 / 2.);
+    h.y = sqrt(h.y);
+    return h.y * vec2(sin(h.x), cos(h.x));
+}
+vec3 rnd_dir(vec2 zz) {
+    float z = 1.f - zz.x * 2.f;
+    float a = zz.y * 6.28318530718;
+    float r = sqrt(1.f - z * z);
+    return vec3(r * cos(a), r * sin(a), z);
+}
+vec3 rnd_dir_cos(vec3 n, vec2 zz) {
+    return normalize(n+rnd_dir(zz)*0.9999f);
 }
 // sphere of size ra centered at origin
 vec2 sphere_intersect( in vec3 ro, in vec3 rd, float ra ) {
@@ -263,7 +280,7 @@ vec2 sphere_intersect( in vec3 ro, in vec3 rd, float ra ) {
 const char *kFS_user_suffix = SHADER_NO_VERSION(
     void main() {
         vec2 fragCoord = gl_FragCoord.xy;
-        seed = uint(uint(fragCoord.x) * uint(1973) + uint(fragCoord.y) * uint(9277) + uint(iFrame) * uint(23952683)) | uint(1);
+        seed = uvec4(uint(fragCoord.x), uint(fragCoord.y), uint(iFrame) , uint(23952683));
         o_color = vec4(pixel(v_uv), 1.0);
     });
 
@@ -329,7 +346,7 @@ const char *kFS_ui = SHADER(
         vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
         vec3 rendercol= texture(uFP, user_uv).rgb;
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
-        rendercol += bloomcol * 0.1;
+        rendercol += bloomcol * 0.3;
         rendercol = max(vec3(0.), rendercol);
         float grey = dot(rendercol, vec3(0.2126 * 1.5, 0.7152 * 1.5, 0.0722 * 1.5));
 
@@ -620,6 +637,8 @@ static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
 
 static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     // printf("char: %d\n", codepoint);
+    if (ui_alpha_target < 0.5)
+        return;
     editor_key(win, curE, codepoint);
     curE->need_scroll_update = true;
 }
@@ -881,7 +900,7 @@ static void unbind_textures_from_slots(int num_slots) {
 
 // Render pass functions
 static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, GLuint texsky, uint32_t iFrame, double iTime,
-                             GLuint vao, GLuint texFont, GLuint texText) {
+                             GLuint vao, GLuint texFont, GLuint texText, GLFWwindow *win) {
     if (!user_pass) {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo[iFrame % 2]);
         glViewport(0, 0, RESW, RESH);
@@ -898,18 +917,45 @@ static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, GLu
         bind_texture_to_slot(user_pass, 3, "uSky", texsky, GL_LINEAR);
 
         
-        float4 c_pos = { sinf(iTime * 1.1f) * 5.f, 1.f, cosf(iTime * 1.1f) * -5.f, 1.f };
-        float4 c_lookat = { 0.f, 0.f, 0.f, 1.f };
-        float4 c_up = { 0.f, 1.f, 0.f, 0.f };
+        float theta = (0.5f - G->mx / fbw) * TAU;
+        float phi = (0.5f - G->my / fbh) * PI;
+        float focal_distance = 5.f;
+        float rc = focal_distance * cosf(phi);
+        
         float fov = M_PI * 0.25f;
-        float4 c_fwd = normalize(c_lookat - c_pos) / tanf(fov * 0.5f) * 0.5f;
+        static float4 c_pos = { 0.f, 0.f, 5.f, 1.f }; // pos
+        float4 c_lookat = c_pos + float4{ cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 1.f }; // pos
+        float4 c_up = { 0.f, 1.f, 0.f, 0.f }; // up
+        float4 c_fwd = normalize(c_lookat - c_pos);
         float4 c_right = normalize(cross( c_up, c_fwd));
+        if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
+            c_pos += c_fwd * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS) {
+            c_pos -= c_fwd * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS) {
+            c_pos -= c_right * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS) {
+            c_pos += c_right * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS) {
+            c_pos += c_up * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS) {
+            c_pos -= c_up * 0.1f;
+        }
         c_up = normalize(cross(c_fwd, c_right));
-        glUniform3f(glGetUniformLocation(user_pass, "c_right"), c_right.x, c_right.y, c_right.z);
-        glUniform3f(glGetUniformLocation(user_pass, "c_up"), c_up.x, c_up.y, c_up.z);
-        glUniform3f(glGetUniformLocation(user_pass, "c_fwd"), c_fwd.x, c_fwd.y, c_fwd.z);
-        glUniform3f(glGetUniformLocation(user_pass, "c_pos"), c_pos.x, c_pos.y, c_pos.z);
-        glUniform3f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z);
+        static float4 c_cam2world_old[4];
+        float4 c_cam2world[4] = { c_right, c_up, c_fwd, c_pos };
+        if (!dot(c_cam2world_old[0], c_cam2world_old[0])) {
+            memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
+        }
+        glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
+        glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
+        memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
+        glUniform4f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
 
         draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
         unbind_textures_from_slots(4);
@@ -986,9 +1032,16 @@ GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mod
     void *img = NULL;
     int hdr = stbi_is_hdr(fname);
     if (hdr) {
+
         img = stbi_loadf(fname, &w, &h, &n, 4);
         if (!img)
             die("failed to load hdr texture", fname);
+        float *fimg = (float *)img;
+        #define MAX_FLOAT16 65504.f
+        for (int i=0;i<w*h*4;i++) {
+            if (fimg[i] >= MAX_FLOAT16 || isinf(fimg[i]))
+                fimg[i] = MAX_FLOAT16;
+        }
     } else {
         img = stbi_load(fname, &w, &h, &n, 4);
         if (!img)
@@ -997,18 +1050,65 @@ GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mod
     GLuint tex = gl_create_texture(filter_mode, wrap_mode);
     glTexImage2D(GL_TEXTURE_2D, 0, hdr ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, img);
     if (hdr) {
+        int nummips = 8;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, nummips-1);
+        float4 *srcmip = (float4 *)img;
+        assert(size_t(img) % 16 == 0);
+        float4 *dstmipmem[2] = {
+            (float4*)malloc(w/4*h/4*4*sizeof(float)),
+            (float4*)malloc(w/2*h/2*4*sizeof(float))};
+        for (int mip=1;mip<nummips;++mip) {
+            float4 *dstmip = dstmipmem[mip%2];
+            int srcw = w >> (mip-1);
+            int srch = h >> (mip-1);
+            int mipw = w >> mip;
+            int miph = h >> mip;
+            for (int y=0;y<miph;y++) {
+                float yweights[6] = { 0.25, 0.5, 1., 1., 0.5, 0.25};
+                for (int yy=0;yy<6;++yy) {
+                    yweights[yy] *= max(0.f,sinf((y*2+yy-2+0.5f)*PI/srch));
+                }
+                for (int x=0;x<mipw;x++) {
+                    float4 tot = {0.f,0.f,0.f,0.f};
+                    for (int yy=-2;yy<4;++yy) {
+                        int ysrc = clamp(y*2+yy,0,srch-1)*srcw;
+                        float weight = yweights[yy+2]; // half arsed attempt to account for the stretch - this rectangular kernel aint right but hey. its ok.
+                        tot += srcmip[x*2+ysrc] * weight;
+                        tot += srcmip[x*2+1+ysrc] * weight;
+                        weight*=0.5f;
+                        tot += srcmip[((x*2+2)&(srcw-1))+ysrc] * weight;
+                        tot += srcmip[((x*2-1)&(srcw-1))+ysrc] * weight;
+                        weight*=0.5f;
+                        tot += srcmip[((x*2+3)&(srcw-1))+ysrc] * weight;
+                        tot += srcmip[((x*2-2)&(srcw-1))+ysrc] * weight;
+                    }
+                    tot*=1.f/tot.w;
+                    dstmip[x+y*mipw] = tot;
+                }
+            }
+            // set it to opengl
+            glTexImage2D(GL_TEXTURE_2D, mip, GL_RGBA16F, mipw, miph, 0, GL_RGBA, GL_FLOAT, dstmip);
+            srcmip = dstmip;
+        }
+        free(dstmipmem[0]);
+        free(dstmipmem[1]);
     }
     stbi_image_free(img);
+
     check_gl("load texture");
     glBindTexture(GL_TEXTURE_2D, 0);
     return tex;
 }
 
-struct {
+struct sky_t {
     char *key;
     const char *value;
+    int texture;
 } *skies = NULL;
 
 int get_sky(const char *key) {
@@ -1026,13 +1126,16 @@ int get_sky(const char *key) {
         }
         printf("loaded list of %d skies\n", (int)stbds_shlen(skies));
     }
-    const char *url = stbds_shget(skies, key);
+    sky_t *sky = stbds_shgetp(skies, key);
+    if (sky->texture)
+        return sky->texture;
+    const char *url = sky->value;
     if (!url)
         return 0;
     const char *fname = fetch_to_cache(url, 1);
     if (!fname)
         return 0;
-    return load_texture(fname);
+    return sky->texture = load_texture(fname);
 }
 
 int main(int argc, char **argv) {
@@ -1074,7 +1177,6 @@ int main(int argc, char **argv) {
     // stbi_uc *fontPixels = stbi_load("assets/font_sdf.png", &fw, &fh, &fc, 4);
     texFont = load_texture("assets/font_sdf.png");
 
-    GLuint skytex = get_sky("industrial_wooden_attic");
 
     texText = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, TMW, TMH, 0, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, NULL);
@@ -1138,7 +1240,27 @@ int main(int argc, char **argv) {
 
         glDisable(GL_DEPTH_TEST);
         editor_update(curE, win);
-        render_user_pass(user_pass, fbo, texFPRT, skytex, iFrame, iTime, vao, texFont, texText);
+        const char *s = shader_tab.str;
+        const char *e = shader_tab.str + stbds_arrlen(shader_tab.str);
+        stbds_arrpush(shader_tab.str,0);
+        const char *sky_name = strstr(s, "// sky ");
+        stbds_arrpop(shader_tab.str);
+        static uint32_t skytex = 0;
+        if (sky_name) {
+            s=sky_name+6;
+            while (s < e && *s != '\n' && isspace(*s))
+                ++s;
+            const char *spans=s;
+            while (s < e && *s != '\n' && !isspace(*s)) ++s;
+            sky_name = temp_cstring_from_span(spans, s);
+            if (sky_name) {
+                int newtex = get_sky(sky_name);
+                if (newtex)
+                    skytex = newtex;
+            }
+        }
+
+        render_user_pass(user_pass, fbo, texFPRT, skytex, iFrame, iTime, vao, texFont, texText, win);
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, vao);
         render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, iTime, vao, ui_alpha);

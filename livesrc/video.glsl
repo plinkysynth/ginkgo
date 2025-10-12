@@ -4,21 +4,21 @@
 // \__ \ | | | (_| | (_| |  __/ |   
 // |___/_| |_|\__,_|\__,_|\___|_|   
 
-// sky urban_alley_01
-// sky blouberg_sunrise_1
 // sky venice_sunset
-// sky urban_street_01
-// sky studio_small_09
 // sky poolbeg
+// sky studio_small_09
+// sky urban_alley_01
 // sky sunny_vondelpark
+// sky blouberg_sunrise_1
+// sky urban_street_01
 // sky wasteland_clouds
 // sky university_workshop        
 // first sky wins
 
 #define PI 3.141592f
-const float exposure = 0.5;
+const float exposure = 0.7;
 const float aperture = 0.05;
-float fov = 0.7;
+float fov = 0.3;
         
 const float F0 = 0.02;
 float schlickF(float cosTheta, float F0){
@@ -42,20 +42,30 @@ vec3 pixel(vec2 uv) {
         vec2 fov2 = vec2(fov * 16./9., fov);
         vec2 uv = (v_uv - 0.5) * fov2 + (r4.xy-0.5) * 1.f/1080.;
         // choose a point on the focal plane, assuming camera at origin
-        float focal_distance = c_lookat.w;
+        float focal_distance = 10.;//c_lookat.w;
         vec3 rt = mat[2].xyz * focal_distance + uv.x * mat[0].xyz * focal_distance + uv.y * mat[1].xyz * focal_distance;
         // choose a point on the lens
         vec2 lensuv = rnd_disc(r4.zw)*aperture;
-        vec3 ro = mat[0].xyz * lensuv.x + mat[1].xyz * lensuv.y;
+        float anamorphic = 0.66;
+        vec3 ro = mat[0].xyz * lensuv.x * anamorphic + mat[1].xyz * lensuv.y;
         vec3 rd = rt-ro;
         ro+=mat[3].xyz; // add in camera pos
         rd=normalize(rd);
         vec3 thpt = vec3(exposure / (1.+2.*dot(uv,uv)));
-        vec2 sph_t = sphere_intersect(ro, rd, 1);
+        float maxt=1000.;
+        vec3 hit_sphere_pos=vec3(0.);
+        for (int i = 0; i < 4; ++i) {
+            vec4 sphere_rad = texelFetch(uSpheres, i*3);
+            vec2 sph_t = sphere_intersect(ro - sphere_rad.xyz, rd, sphere_rad.w);
+            if (sph_t.x > 0. && sph_t.x < maxt) {
+                maxt = sph_t.x;
+                hit_sphere_pos = sphere_rad.xyz;
+            }
+        }
         float skylod = 0.f;
-        if (sph_t.x>0.) {
-            vec3 hit = ro+sph_t.x * rd;
-            vec3 n = normalize(hit);
+        if (maxt<1000.0f) {
+            vec3 hit = ro+maxt * rd;
+            vec3 n = normalize(hit - hit_sphere_pos);
             r4 = rnd4();
             bool isspec = schlickF(-dot(n, rd), F0) > r4.z;
             if (isspec) n=reflect(rd,n)*30.;
@@ -68,11 +78,12 @@ vec3 pixel(vec2 uv) {
             }
         }
         vec3 c = skycol(rd,skylod)*thpt;
-        c*=5./(5+c); // firefly supression?
+        
+        c*=1./(1.+dot(c,vec3(0.01))); // firefly supression?
         o += c;
     }
     o *= 1./16.;
-    o=5.*o/(5.-o); // re-expand
+    o=o/(1.-dot(o,vec3(0.01))); // re-expand
     
     return mix(o, texture(uFP,v_uv).xyz, 0.);
     return o;

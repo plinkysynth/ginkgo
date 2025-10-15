@@ -98,13 +98,13 @@ GLuint gl_create_texture(int filter_mode, int wrap_mode) {
     return tex;
 }
 
-static void setup_framebuffers_and_textures(GLuint *texFPRT, GLuint *fbo, int num_bloom_mips) {
-    for (int i = 0; i < 2 + num_bloom_mips; ++i) {
+static void setup_framebuffers_and_textures(GLuint *texFPRT, GLuint *fbo, int num_bloom_mips, int num_fprts) {
+    for (int i = 0; i < num_fprts + num_bloom_mips; ++i) {
         glGenFramebuffers(1, &fbo[i]);
         texFPRT[i] = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_BORDER);
         glBindTexture(GL_TEXTURE_2D, texFPRT[i]);
-        int resw = (i < 2) ? RESW : (RESW >> (i - 1));
-        int resh = (i < 2) ? RESH : (RESH >> (i - 1));
+        int resw = (i < num_fprts) ? RESW : (RESW >> (i - num_fprts+1));
+        int resh = (i < num_fprts) ? RESH : (RESH >> (i - num_fprts+1));
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, resw, resh, 0, GL_RGBA, GL_FLOAT, NULL);
         check_gl("alloc fpRT");
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -228,6 +228,7 @@ uniform samplerBuffer uSpheres;
 uniform mat4 c_cam2world;
 uniform mat4 c_cam2world_old;
 uniform vec4 c_lookat;
+uniform float fov;
 uvec4 pcg4d() {
     uvec4 v = seed * 1664525u + 1013904223u;
     v.x += v.y*v.w; v.y += v.z*v.x; v.z += v.x*v.y; v.w += v.y*v.z;
@@ -283,7 +284,7 @@ const char *kFS_user_suffix = SHADER_NO_VERSION(
     void main() {
         vec2 fragCoord = gl_FragCoord.xy;
         seed = uvec4(uint(fragCoord.x), uint(fragCoord.y), uint(iFrame) , uint(23952683));
-        o_color = vec4(pixel(v_uv), 1.0);
+        o_color = pixel(v_uv);
     });
 
 const char *kFS_bloom = SHADER(
@@ -306,6 +307,63 @@ const char *kFS_bloom = SHADER(
         o_color = c0 * fade;
     }
 ); 
+
+const char *kFS_taa = SHADER(
+    uniform ivec2 uScreenPx; 
+    in vec2 v_uv;
+    uniform sampler2D uFP; 
+    uniform sampler2D uFP_prev;
+    out vec4 o_color; 
+    uniform float fov;
+    uniform mat4 c_cam2world;
+    uniform mat4 c_cam2world_old;
+    
+    void main() {
+        vec2 fov2 = vec2(fov * 16./9., fov);
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        vec4 newcol_depth = texelFetch(uFP, pixel, 0);
+        float depth = 1.f / newcol_depth.w;
+        vec3 mincol = newcol_depth.xyz;
+        vec3 maxcol = newcol_depth.xyz;
+        //vec3 avgcol = newcol_depth.xyz;
+        vec3 c;
+        c=texelFetch(uFP, pixel + ivec2(-1, 1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        c=texelFetch(uFP, pixel + ivec2( 0, 1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        c=texelFetch(uFP, pixel + ivec2( 1, 1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        c=texelFetch(uFP, pixel + ivec2(-1, 0), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        c=texelFetch(uFP, pixel + ivec2( 1, 0), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        c=texelFetch(uFP, pixel + ivec2(-1,-1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        c=texelFetch(uFP, pixel + ivec2( 0,-1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        c=texelFetch(uFP, pixel + ivec2( 1,-1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        vec3 o = newcol_depth.xyz;
+        // o=o*o;
+        // mincol=mincol*mincol;
+        // maxcol=maxcol*maxcol;
+        
+        //avgcol *= 1.f/9.f;
+        // reproject old frame
+        vec2 uv = (v_uv - 0.5) * fov2;
+        // todo - why do we need these normalizes, the matrix should be orthonormal!
+        vec3 rd_new = normalize(normalize(c_cam2world[2].xyz) + uv.x * normalize(c_cam2world[0].xyz) + uv.y * normalize(c_cam2world[1].xyz));
+        vec3 hit = c_cam2world[3].xyz + rd_new * depth;
+        hit -= c_cam2world_old[3].xyz;
+        float ww = 1. / dot(hit, normalize(c_cam2world_old[2].xyz));
+        float uu = ww * dot(hit, normalize(c_cam2world_old[0].xyz)) / fov2.x + 0.5;
+        float vv = ww * dot(hit, normalize(c_cam2world_old[1].xyz)) / fov2.y + 0.5;    
+        if (uu<=0. || vv<=0. || uu>=1. || vv>=1. || ww<=0. || isnan(ww)) 
+        {
+            // no history.
+        } else {
+            vec3 history = texture(uFP_prev, vec2(uu,vv)).xyz;
+            float believe_history = 0.95f;
+            history = max(history, mincol);
+            history = min(history, maxcol);
+            o = mix(o, history, believe_history);
+        }
+        //o.xyz = o.xyz / (1.0-min(0.99f,dot(o.xyz,vec3(0.01)))); // re-expand
+        o_color = vec4(o, 1.f);
+    }
+);
 
 const char *kFS_ui = SHADER(
     float saturate(float x) { return clamp(x, 0.0, 1.0); }
@@ -454,14 +512,14 @@ const char *kFS_ui = SHADER(
 
 EditorState audio_tab = {.fname = "livesrc/audio.cpp", .is_shader = false};
 EditorState shader_tab = {.fname = "livesrc/video.glsl", .is_shader = true};
-EditorState *curE = &audio_tab;
+EditorState *curE = &shader_tab;
 float ui_alpha = 0.f;
-float ui_alpha_target = 1.f;
+float ui_alpha_target = 0.f;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 static float retina = 1.0f;
 
-GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0;
-GLuint vs = 0, fs_ui = 0, fs_bloom = 0;
+GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0;
+GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0;
 GLuint pbos[3];
 int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
@@ -559,8 +617,11 @@ static void set_tab(EditorState *newE) {
     curE = newE;
 }
 
+static uint32_t last_mods = 0;
+
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
     // printf("key: %d\n", key);
+    last_mods = mods;
     EditorState *E = curE;
     if (action != GLFW_PRESS && action != GLFW_REPEAT)
         return;
@@ -900,11 +961,67 @@ static void unbind_textures_from_slots(int num_slots) {
     }
 }
 
+
+static float4 c_cam2world_old[4];
+static float4 c_cam2world[4];
+static float4 c_pos= {0.f, 2.f, 10.f, 1.f};                                                           // pos;
+static float4 c_lookat;
+static float fov = 0.4f;
+static float focal_distance = 5.f;
+
+void update_camera(GLFWwindow *win) {
+    memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
+    static float cam_mx = 0.f;
+    static float cam_my = 0.f;
+    if (ui_alpha_target < 0.5) {
+        cam_mx = 0.5f - G->mx / fbw - 0.25f;
+        cam_my = 0.5f - G->my / fbh;
+    }
+    float theta = cam_mx * TAU;
+    float phi = cam_my * PI;
+    
+    float rc = focal_distance * cosf(phi);
+
+    
+    c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 1.f}; // pos
+    float4 c_up = {0.f, 1.f, 0.f, 0.f};                                                                    // up
+    float4 c_fwd = normalize(c_lookat - c_pos);
+    float4 c_right = normalize(cross(c_up, c_fwd));
+    if (ui_alpha_target < 0.5) {
+        if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
+            c_pos += c_fwd * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS) {
+            c_pos -= c_fwd * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS) {
+            c_pos -= c_right * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS) {
+            c_pos += c_right * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS) {
+            c_pos += c_up * 0.1f;
+        }
+        if (glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS) {
+            c_pos -= c_up * 0.1f;
+        }
+    }
+    c_up = normalize(cross(c_fwd, c_right));
+    c_cam2world[0] = c_right;
+    c_cam2world[1] = c_up;
+    c_cam2world[2] = c_fwd;
+    c_cam2world[3] = c_pos;
+    if (!dot(c_cam2world_old[0], c_cam2world_old[0])) {
+        memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
+    }
+}
+
 // Render pass functions
 static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, GLuint texsky, uint32_t iFrame, double iTime,
-                             GLuint vao, GLuint texFont, GLuint texText, GLuint spheretbotex, GLFWwindow *win) {
+                             GLuint vao, GLuint texFont, GLuint texText, GLuint spheretbotex) {
     if (!user_pass) {
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo[iFrame % 2]);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo[2]);
         glViewport(0, 0, RESW, RESH);
         glClearColor(0.f, 0.f, 0.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -920,69 +1037,46 @@ static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, GLu
         glUniform1i(glGetUniformLocation(user_pass, "uSpheres"), 4);
         glActiveTexture(GL_TEXTURE4);
         glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
-        
-        float theta = (0.5f - G->mx / fbw - 0.25) * TAU;
-        float phi = (0.5f - G->my / fbh) * PI;
-        float focal_distance = 5.f;
-        float rc = focal_distance * cosf(phi);
 
-        float fov = M_PI * 0.25f;
-        static float4 c_pos = {0.f, 0.f, 10.f, 1.f};                                                            // pos
-        float4 c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 1.f}; // pos
-        float4 c_up = {0.f, 1.f, 0.f, 0.f};                                                                    // up
-        float4 c_fwd = normalize(c_lookat - c_pos);
-        float4 c_right = normalize(cross(c_up, c_fwd));
-        /*
-            if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
-                c_pos += c_fwd * 0.1f;
-            }
-            if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS) {
-                c_pos -= c_fwd * 0.1f;
-            }
-            if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS) {
-                c_pos -= c_right * 0.1f;
-            }
-            if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS) {
-                c_pos += c_right * 0.1f;
-            }
-            if (glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS) {
-                c_pos += c_up * 0.1f;
-            }
-            if (glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS) {
-                c_pos -= c_up * 0.1f;
-            }
-        */
-        c_up = normalize(cross(c_fwd, c_right));
-        static float4 c_cam2world_old[4];
-        float4 c_cam2world[4] = {c_right, c_up, c_fwd, c_pos};
-        if (!dot(c_cam2world_old[0], c_cam2world_old[0])) {
-            memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
-        }
         glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
         glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
-        memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
         glUniform4f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
+        glUniform1f(glGetUniformLocation(user_pass, "fov"), fov);
 
-        draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
+        draw_fullscreen_pass(fbo[2], RESW, RESH, vao);
         unbind_textures_from_slots(4);
         glActiveTexture(GL_TEXTURE4);
         glBindTexture(GL_TEXTURE_BUFFER, 0);
     }
 }
 
-static void render_bloom_downsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, int num_bloom_mips,
+static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int num_fprts, uint32_t iFrame, GLuint vao) {
+    glUseProgram(taa_pass);
+    bind_texture_to_slot(taa_pass, 0, "uFP", texFPRT[2], GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    bind_texture_to_slot(taa_pass, 1, "uFP_prev", texFPRT[(iFrame + 1) % 2], GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glUniformMatrix4fv(glGetUniformLocation(taa_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
+    glUniformMatrix4fv(glGetUniformLocation(taa_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
+    glUniform1f(glGetUniformLocation(taa_pass, "fov"), fov);
+    draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
+}
+
+static void render_bloom_downsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, int num_bloom_mips, int num_fprts,
                                     GLuint vao) {
     for (int i = 0; i < num_bloom_mips; ++i) {
         int resw = RESW >> (i + 1);
         int resh = RESH >> (i + 1);
         glUseProgram(bloom_pass);
         set_bloom_uniforms(bloom_pass, resw, resh, BLOOM_KERNEL_SIZE_DOWNSAMPLE, BLOOM_FADE_FACTOR);
-        bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i ? (i + 1) : (iFrame % 2)], GL_LINEAR);
-        draw_fullscreen_pass(fbo[i + 2], resw, resh, vao);
+        bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i ? (i + num_fprts-1) : (iFrame % 2)], GL_LINEAR);
+        draw_fullscreen_pass(fbo[i + num_fprts], resw, resh, vao);
     }
 }
 
-static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, int num_bloom_mips, GLuint vao) {
+static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, int num_bloom_mips, int num_fprts, GLuint vao) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glBlendFunc(GL_DST_ALPHA, GL_ONE);
@@ -993,19 +1087,22 @@ static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPR
         int resh = RESH >> (i + 1);
         glUseProgram(bloom_pass);
         set_bloom_uniforms(bloom_pass, resw, resh, BLOOM_KERNEL_SIZE_UPSAMPLE, BLOOM_FADE_FACTOR * BLOOM_SPIKEYNESS);
-        bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i + 2 + 1], GL_LINEAR);
-        draw_fullscreen_pass(fbo[i + 2], resw, resh, vao);
+        bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i + num_fprts + 1], GL_LINEAR);
+        draw_fullscreen_pass(fbo[i + num_fprts], resw, resh, vao);
     }
     glDisable(GL_BLEND);
 }
 
 static void render_ui_pass(GLuint ui_pass, GLuint *texFPRT, GLuint texFont, GLuint texText, uint32_t iFrame, EditorState *curE,
-                           int fbw, int fbh, double iTime, GLuint vao, float ui_alpha) {
+                           int fbw, int fbh, int num_fprts, double iTime, GLuint vao, float ui_alpha) {
     glUseProgram(ui_pass);
     bind_texture_to_slot(ui_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    
     bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
     bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
-    bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[2], GL_LINEAR);
+    bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[num_fprts], GL_LINEAR);
 
     glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
     glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
@@ -1056,7 +1153,7 @@ GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mod
     GLuint tex = gl_create_texture(filter_mode, wrap_mode);
     glTexImage2D(GL_TEXTURE_2D, 0, hdr ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, img);
     if (hdr) {
-        int nummips = 8;
+        int nummips = 6;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -1172,7 +1269,6 @@ typedef struct sphere_t {
 #define MAX_SPHERES 256
 sphere_t spheres[MAX_SPHERES];
 
-
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
 
@@ -1192,10 +1288,13 @@ int main(int argc, char **argv) {
     vs = compile_shader(NULL, GL_VERTEX_SHADER, kVS);
     fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_ui);
     fs_bloom = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_bloom);
+    fs_taa = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_taa);
     ui_pass = link_program(vs, fs_ui);
     bloom_pass = link_program(vs, fs_bloom);
+    taa_pass = link_program(vs, fs_taa);
     glDeleteShader(fs_ui);
     glDeleteShader(fs_bloom);
+    glDeleteShader(fs_taa);
     GLuint vs_fat = compile_shader(NULL, GL_VERTEX_SHADER, kVS_fat);
     GLuint fs_fat = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_fat);
     GLuint fat_prog = link_program(vs_fat, fs_fat);
@@ -1217,10 +1316,11 @@ int main(int argc, char **argv) {
     check_gl("alloc text tex");
     glBindTexture(GL_TEXTURE_2D, 0);
 
-#define NUM_BLOOM_MIPS 3
-    GLuint texFPRT[2 + NUM_BLOOM_MIPS];
-    GLuint fbo[2 + NUM_BLOOM_MIPS];
-    setup_framebuffers_and_textures(texFPRT, fbo, NUM_BLOOM_MIPS);
+#define NUM_BLOOM_MIPS 4
+#define NUM_FPRTS 3
+    GLuint texFPRT[NUM_FPRTS + NUM_BLOOM_MIPS];
+    GLuint fbo[NUM_FPRTS + NUM_BLOOM_MIPS];
+    setup_framebuffers_and_textures(texFPRT, fbo, NUM_BLOOM_MIPS, NUM_FPRTS);
 
     glGenBuffers(3, pbos);
     for (int i = 0; i < 3; ++i) {
@@ -1242,8 +1342,8 @@ int main(int argc, char **argv) {
     check_gl("init fat line buffer post");
 
     // sphere init
-    GLuint spheretbotex; 
-    glGenTextures(1,&spheretbotex); 
+    GLuint spheretbotex;
+    glGenTextures(1, &spheretbotex);
 
     GLuint spheretbos[2];
     glGenBuffers(2, spheretbos);
@@ -1251,10 +1351,14 @@ int main(int argc, char **argv) {
 
     for (int i = 0; i < MAX_SPHERES; i++) {
         uint2 xy = unmorton2(i);
-        spheres[i].pos_rad = float4{(float)xy.x, (float)xy.y, 0.f, 0.25f};
-        spheres[i].oldpos_rad = float4{(float)xy.x, (float)xy.y, 0.f, 0.25f};
+        spheres[i].pos_rad = float4{(float)xy.x, 0.f, (float)xy.y, 0.25f};
+        spheres[i].oldpos_rad = float4{(float)xy.x, 0.f, (float)xy.y, 0.25f};
         spheres[i].colour = float4{0.5f, 0.6f, 0.7f, 0.f};
     }
+    //spheres[0].pos_rad = float4{1.5f,-10.5f,1.5f,10.f};
+    spheres[0].colour = float4{0.6f, 0.6f, 0.6f, 0.f};
+    spheres[3].colour = float4{0.f, 0.f, 0.f, 0.f};
+    spheres[7].colour = float4{1.f, 0.2f, 0.1f, 10.f};
 
     double t0 = glfwGetTime();
     glfwSetKeyCallback(win, key_callback);
@@ -1293,18 +1397,20 @@ int main(int argc, char **argv) {
 
         glBindBuffer(GL_TEXTURE_BUFFER, spheretbos[iFrame % 2]);
         glBufferData(GL_TEXTURE_BUFFER, MAX_SPHERES * sizeof(sphere_t), nullptr, GL_STREAM_DRAW); // orphan
-        void* p = glMapBufferRange(GL_TEXTURE_BUFFER, 0, MAX_SPHERES * sizeof(sphere_t),
-            GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT|GL_MAP_UNSYNCHRONIZED_BIT);
-        spheres[0].pos_rad.w = fabsf(sinf(iTime)) * 0.5f;
+        void *p = glMapBufferRange(GL_TEXTURE_BUFFER, 0, MAX_SPHERES * sizeof(sphere_t),
+                                   GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+        //spheres[0].pos_rad.w = fabsf(sinf(iTime)) * 0.5f;
         memcpy(p, spheres, MAX_SPHERES * sizeof(sphere_t));
         glUnmapBuffer(GL_TEXTURE_BUFFER);
         glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
-        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, spheretbos[iFrame % 2]);  
-        render_user_pass(user_pass, fbo, texFPRT, skytex, iFrame, iTime, vao, texFont, texText, spheretbotex, win);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, spheretbos[iFrame % 2]);
+        update_camera(win);
+        render_user_pass(user_pass, fbo, texFPRT, skytex, iFrame, iTime, vao, texFont, texText, spheretbotex);
         glBindBuffer(GL_TEXTURE_BUFFER, 0);
-        render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, vao);
-        render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, vao);
-        render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, iTime, vao, ui_alpha);
+        render_taa_pass(taa_pass, fbo, texFPRT, NUM_FPRTS, iFrame, vao);
+        render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
+        render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
+        render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, NUM_FPRTS, iTime, vao, ui_alpha);
 
 #define MOUSE_LEN 8
 #define MOUSE_MASK (MOUSE_LEN - 1)
@@ -1370,6 +1476,7 @@ int main(int argc, char **argv) {
 
         // pump wave load requests
         pump_wave_load_requests_main_thread();
+        //usleep(100000);
     }
     ma_device_stop(&dev);
     ma_device_uninit(&dev);
@@ -1377,8 +1484,8 @@ int main(int argc, char **argv) {
     glDeleteVertexArrays(1, &vao);
     glDeleteTextures(1, &texText);
     glDeleteTextures(1, &texFont);
-    glDeleteTextures(2 + NUM_BLOOM_MIPS, texFPRT);
-    glDeleteFramebuffers(2 + NUM_BLOOM_MIPS, fbo);
+    glDeleteTextures(NUM_FPRTS + NUM_BLOOM_MIPS, texFPRT);
+    glDeleteFramebuffers(NUM_FPRTS + NUM_BLOOM_MIPS, fbo);
     glDeleteProgram(ui_pass);
     glDeleteBuffers(3, pbos);
 

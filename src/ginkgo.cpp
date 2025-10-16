@@ -223,12 +223,25 @@ uniform sampler2D uFP;
 uniform ivec2 uScreenPx;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
+
+uniform float scroll_y; 
+uniform vec4 cursor; 
+uniform float ui_alpha;
+uniform ivec2 uFontPx;
+uniform int status_bar_size;
+uniform sampler2D uBloom;
+uniform vec2 uARadjust;
+
+
 uniform sampler2D uSky;
 uniform samplerBuffer uSpheres;
 uniform mat4 c_cam2world;
 uniform mat4 c_cam2world_old;
 uniform vec4 c_lookat;
 uniform float fov;
+// uniform sampler2D uPaperDiff;
+// uniform sampler2D uPaperDisp;
+// uniform sampler2D uPaperNorm;
 uvec4 pcg4d() {
     uvec4 v = seed * 1664525u + 1013904223u;
     v.x += v.y*v.w; v.y += v.z*v.x; v.z += v.x*v.y; v.w += v.y*v.z;
@@ -276,6 +289,44 @@ vec2 sphere_intersect( in vec3 ro, in vec3 rd, float ra ) {
     if( h<0.0 ) return vec2(-1.0); // no intersection
     h = sqrt( h );
     return vec2( -b-h, -b+h );
+}
+vec4 get_text_pixel(vec2 fpixel, ivec2 ufontpx, float grey, float contrast, float fatness) {
+    ivec2 cell = ivec2(fpixel) / ufontpx; 
+    uvec4 char_attrib = texelFetch(uText, cell, 0);
+    int ascii = int(char_attrib.r);
+    vec4 fg = vec4(1.0), bg = vec4(1.0);
+    fg.x = float(char_attrib.b & 15u) * (1.f / 15.f);
+    fg.y = float(char_attrib.g >> 4u) * (1.f / 15.f);
+    fg.z = float(char_attrib.g & 15u) * (1.f / 15.f);
+    bg.x = float(char_attrib.a >> 4) * (1.f / 15.f);
+    bg.y = float(char_attrib.a & 15u) * (1.f / 15.f);
+    bg.z = float(char_attrib.b >> 4) * (1.f / 15.f);
+    vec2 cellpix = vec2(fpixel - cell * ufontpx + 0.5f) / vec2(ufontpx);
+    vec2 fontpix=vec2(cellpix.x*0.75f+0.125f + (ascii & 15), cellpix.y*0.75f+0.125f + (ascii >> 4)-2) * vec2(1./16.,1./6.);
+    float sdf_level = 0.f;
+    float aa = ufontpx.x * contrast;
+    if (ascii<128) {
+        sdf_level = texture(uFont, fontpix).r - fatness;
+    } else if (ascii<128+16) {
+        // vertical bar:
+        sdf_level = 4.f * (cellpix.y -1.f + float(ascii-128+1)*(1.f/16.f)); // bar graph
+    } else {
+        // horizontal slider tick:
+        sdf_level = 0.2f - 4.f * abs(cellpix.y-0.5f);
+        sdf_level=max(sdf_level, 0.5f - 2.f * abs(cellpix.x+0.25f-float(ascii-(128+16))*1.f/8.f));
+    }
+    float fontlvl = (ascii >= 32) ? sqrt(saturate(sdf_level * aa + 0.5)) : 0.0;
+    if (bg.x <= 1.f/15.f && bg.y <= 1.f/15.f && bg.z <= 1.f/15.f) {
+        bg.w = bg.x * 4.f;
+        bg.xyz = vec3(0.f);
+        // if (grey > 0.5) {
+        //     fg.xyz = vec3(1.) - fg.xyz;
+        // }    
+    }
+    if (ascii != 0) {
+        bg.w=max(grey, bg.w);
+    }
+    return mix(bg, fg, fontlvl);
 }
 // user code follows
 );
@@ -347,9 +398,9 @@ const char *kFS_taa = SHADER(
         vec3 rd_new = normalize(normalize(c_cam2world[2].xyz) + uv.x * normalize(c_cam2world[0].xyz) + uv.y * normalize(c_cam2world[1].xyz));
         vec3 hit = c_cam2world[3].xyz + rd_new * depth;
         hit -= c_cam2world_old[3].xyz;
-        float ww = 1. / dot(hit, normalize(c_cam2world_old[2].xyz));
-        float uu = ww * dot(hit, normalize(c_cam2world_old[0].xyz)) / fov2.x + 0.5;
-        float vv = ww * dot(hit, normalize(c_cam2world_old[1].xyz)) / fov2.y + 0.5;    
+        float ww = 1. / dot(hit, (c_cam2world_old[2].xyz));
+        float uu = ww * dot(hit, (c_cam2world_old[0].xyz)) / fov2.x + 0.5;
+        float vv = ww * dot(hit, (c_cam2world_old[1].xyz)) / fov2.y + 0.5;    
         if (uu<=0. || vv<=0. || uu>=1. || vv>=1. || ww<=0. || isnan(ww)) 
         {
             // no history.
@@ -365,24 +416,7 @@ const char *kFS_taa = SHADER(
     }
 );
 
-const char *kFS_ui = SHADER(
-    float saturate(float x) { return clamp(x, 0.0, 1.0); }
-    uniform ivec2 uScreenPx; 
-    uniform float iTime; 
-    uniform float scroll_y; 
-    uniform vec4 cursor; 
-    uniform float ui_alpha;
-    out vec4 o_color; 
-    in vec2 v_uv;
-
-    uniform ivec2 uFontPx;
-    uniform int status_bar_size;
-    uniform sampler2D uFP; 
-    uniform sampler2D uFont; 
-    uniform usampler2D uText; 
-    uniform sampler2D uBloom;
-    uniform vec2 uARadjust;
-
+const char *kFS_ui_suffix = SHADER_NO_VERSION(
     vec3 aces(vec3 x) {
         const float a=2.51;
         const float b=0.03;
@@ -391,16 +425,16 @@ const char *kFS_ui = SHADER(
         const float e=0.14;
         return clamp((x*(a*x+b)) / (x*(c*x+d)+e), 0.0, 1.0);
     }
-    vec2 wave_read(float x, int y_base) {
-        int ix = int(x);
-        vec2 s0 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
-        ix++;
-        vec2 s1 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
-        return mix(s0, s1, fract(x));
-    }
+    // vec2 wave_read(float x, int y_base) {
+    //     int ix = int(x);
+    //     vec2 s0 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
+    //     ix++;
+    //     vec2 s1 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
+    //     return mix(s0, s1, fract(x));
+    // }
 
-    vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * 0.25; }
-
+    // vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * 0.25; }
+    
     void main() {
         // adjust for aspect ratio
         vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
@@ -408,7 +442,7 @@ const char *kFS_ui = SHADER(
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
         rendercol += bloomcol * 0.3;
         rendercol = max(vec3(0.), rendercol);
-        float grey = dot(rendercol, vec3(0.2126 * 1.5, 0.7152 * 1.5, 0.0722 * 1.5));
+        float grey = dot(rendercol, vec3(0.2126 * 1., 0.7152 * 1., 0.0722 * 1.));
 
         vec2 pix = v_uv * vec2(uScreenPx.x, 2048.f);
         float fftx = uScreenPx.x - pix.x;
@@ -443,9 +477,9 @@ const char *kFS_ui = SHADER(
                 uvec4 xyscope = texelFetch(uText, ivec2(idx & 511, (256-20) + (idx >> 9)), 0);
                 beamcol = vec3(float(xyscope.x + xyscope.y * 256u) * vec3(0.00004,0.00008,0.00006));
             }
-            if (grey > 0.5) {
-                beamcol = -beamcol * 2.;
-            }
+            // if (grey > 0.5) {
+            //     beamcol = -beamcol * 2.;
+            // }
             rendercol += max(vec3(0.),beamcol);
         }
         rendercol.rgb = sqrt(aces(rendercol.rgb));
@@ -459,42 +493,8 @@ const char *kFS_ui = SHADER(
             int TMH = 256;
             fpixel.y = (fpixel.y - status_bar_y) + uFontPx.y * (TMH-21);
         }
-
-        ivec2 pixel = ivec2(fpixel);
-        ivec2 cell = pixel / uFontPx; 
-        uvec4 char_attrib = texelFetch(uText, cell, 0);
-        int ascii = int(char_attrib.r);
-        vec4 fg = vec4(1.0), bg = vec4(1.0);
-        fg.x = float(char_attrib.b & 15u) * (1.f / 15.f);
-        fg.y = float(char_attrib.g >> 4u) * (1.f / 15.f);
-        fg.z = float(char_attrib.g & 15u) * (1.f / 15.f);
-        bg.x = float(char_attrib.a >> 4) * (1.f / 15.f);
-        bg.y = float(char_attrib.a & 15u) * (1.f / 15.f);
-        bg.z = float(char_attrib.b >> 4) * (1.f / 15.f);
-        if (bg.x <= 1.f/15.f && bg.y <= 1.f/15.f && bg.z <= 1.f/15.f) {
-            bg.w = bg.x * 4.f;
-            bg.xyz = vec3(0.f);
-            if (grey > 0.5) {
-                fg.xyz = vec3(1.) - fg.xyz;
-            }    
-        }
-        
-        vec2 cellpix = vec2(pixel - cell * uFontPx + 0.5f) / vec2(uFontPx);
-        vec2 fontpix=vec2(cellpix.x + (ascii & 15), cellpix.y + (ascii >> 4)-2) * vec2(1./16.,1./6.);
-        float sdf_level = 0.f;
-        float aa = uFontPx.x / 2.f;
-        if (ascii<128) {
-            sdf_level = texture(uFont, fontpix).r - 0.5f;
-        } else if (ascii<128+16) {
-            // vertical bar:
-            sdf_level = 4.f * (cellpix.y -1.f + float(ascii-128+1)*(1.f/16.f)); // bar graph
-        } else {
-            // horizontal slider tick:
-            sdf_level = 0.2f - 4.f * abs(cellpix.y-0.5f);
-            sdf_level=max(sdf_level, 0.5f - 2.f * abs(cellpix.x+0.25f-float(ascii-(128+16))*1.f/8.f));
-        }
-        float fontlvl = (ascii >= 32) ? sqrt(saturate(sdf_level * aa + 0.5)) : 0.0;
-        vec4 fontcol = mix(bg, fg, fontlvl);
+        vec4 fontcol = get_text_pixel(fpixel, uFontPx, grey, 0.5f, 0.5f);
+     
         vec2 fcursor = vec2(cursor.x, cursor.y) - fpixel;
         vec2 fcursor_prev = vec2(cursor.z, cursor.w) - fpixel;
         vec2 cursor_delta = fcursor_prev - fcursor;
@@ -502,7 +502,7 @@ const char *kFS_ui = SHADER(
         fcursor += cursor_delta * cursor_t;
         if (fcursor.x >= -2.f && fcursor.x <= 2.f && fcursor.y >= -float(uFontPx.y) && fcursor.y <= 0.f) {
             float cursor_alpha = 1.f - cursor_t * cursor_t;
-            float cursor_col = (grey > 0.5) ? 0. : 1.;    
+            float cursor_col = 1.f; // (grey > 0.5) ? 0. : 1.;    
             fontcol = mix(fontcol, vec4(vec3(cursor_col), 1.), cursor_alpha);
         }
         fontcol*=ui_alpha;
@@ -983,28 +983,29 @@ void update_camera(GLFWwindow *win) {
     float rc = focal_distance * cosf(phi);
 
     
-    c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 1.f}; // pos
+    c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 0.f}; // pos
     float4 c_up = {0.f, 1.f, 0.f, 0.f};                                                                    // up
     float4 c_fwd = normalize(c_lookat - c_pos);
     float4 c_right = normalize(cross(c_up, c_fwd));
     if (ui_alpha_target < 0.5) {
+        const float speed = 0.03f;
         if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
-            c_pos += c_fwd * 0.1f;
+            c_pos += c_fwd * speed;
         }
         if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS) {
-            c_pos -= c_fwd * 0.1f;
+            c_pos -= c_fwd * speed;
         }
         if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS) {
-            c_pos -= c_right * 0.1f;
+            c_pos -= c_right * speed;
         }
         if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS) {
-            c_pos += c_right * 0.1f;
+            c_pos += c_right * speed;
         }
         if (glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS) {
-            c_pos += c_up * 0.1f;
+            c_pos += c_up * speed;
         }
         if (glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS) {
-            c_pos -= c_up * 0.1f;
+            c_pos -= c_up * speed;
         }
     }
     c_up = normalize(cross(c_fwd, c_right));
@@ -1012,43 +1013,16 @@ void update_camera(GLFWwindow *win) {
     c_cam2world[1] = c_up;
     c_cam2world[2] = c_fwd;
     c_cam2world[3] = c_pos;
+    // printf("%f %f %f %f\n", c_cam2world[0].x, c_cam2world[0].y, c_cam2world[0].z, c_cam2world[0].w);
+    // printf("%f %f %f %f\n", c_cam2world[1].x, c_cam2world[1].y, c_cam2world[1].z, c_cam2world[1].w);
+    // printf("%f %f %f %f\n", c_cam2world[2].x, c_cam2world[2].y, c_cam2world[2].z, c_cam2world[2].w);
+    // printf("%f %f %f %f\n", c_cam2world[3].x, c_cam2world[3].y, c_cam2world[3].z, c_cam2world[3].w);
+    // printf("\n");
     if (!dot(c_cam2world_old[0], c_cam2world_old[0])) {
         memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
     }
 }
 
-// Render pass functions
-static void render_user_pass(GLuint user_pass, GLuint *fbo, GLuint *texFPRT, GLuint texsky, uint32_t iFrame, double iTime,
-                             GLuint vao, GLuint texFont, GLuint texText, GLuint spheretbotex) {
-    if (!user_pass) {
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo[2]);
-        glViewport(0, 0, RESW, RESH);
-        glClearColor(0.f, 0.f, 0.f, 1.f);
-        glClear(GL_COLOR_BUFFER_BIT);
-    } else {
-        glUseProgram(user_pass);
-        glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), RESW, RESH);
-        glUniform1f(glGetUniformLocation(user_pass, "iTime"), (float)iTime);
-        glUniform1ui(glGetUniformLocation(user_pass, "iFrame"), iFrame);
-        bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
-        bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
-        bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
-        bind_texture_to_slot(user_pass, 3, "uSky", texsky, GL_LINEAR);
-        glUniform1i(glGetUniformLocation(user_pass, "uSpheres"), 4);
-        glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
-
-        glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
-        glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
-        glUniform4f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
-        glUniform1f(glGetUniformLocation(user_pass, "fov"), fov);
-
-        draw_fullscreen_pass(fbo[2], RESW, RESH, vao);
-        unbind_textures_from_slots(4);
-        glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_BUFFER, 0);
-    }
-}
 
 static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int num_fprts, uint32_t iFrame, GLuint vao) {
     glUseProgram(taa_pass);
@@ -1093,42 +1067,6 @@ static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPR
     glDisable(GL_BLEND);
 }
 
-static void render_ui_pass(GLuint ui_pass, GLuint *texFPRT, GLuint texFont, GLuint texText, uint32_t iFrame, EditorState *curE,
-                           int fbw, int fbh, int num_fprts, double iTime, GLuint vao, float ui_alpha) {
-    glUseProgram(ui_pass);
-    bind_texture_to_slot(ui_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    
-    bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
-    bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
-    bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[num_fprts], GL_LINEAR);
-
-    glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
-    glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
-    glUniform1i(glGetUniformLocation(ui_pass, "status_bar_size"), status_bar_color ? 1 : 0);
-    glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
-    glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
-    glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
-
-    float output_ar = fbw / float(fbh);
-    float input_ar = RESW / float(RESH);
-    float scale = output_ar / input_ar;
-    if (scale > 1.f) { // output is wider than input - black bars at sides
-        glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), scale, 1.f);
-    } else { // black bars at top and bottom
-        glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), 1.f, 1.f / scale);
-    }
-
-    float f_cursor_x = curE->cursor_x * curE->font_width;
-    float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
-    glUniform4f(glGetUniformLocation(ui_pass, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
-    curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
-    curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
-
-    draw_fullscreen_pass(0, fbw, fbh, vao);
-    unbind_textures_from_slots(4);
-}
 
 GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mode = GL_CLAMP_TO_EDGE) {
     int w, h, n;
@@ -1285,8 +1223,11 @@ int main(int argc, char **argv) {
     int want_fullscreen = (argc > 1 && (strcmp(argv[1], "--fullscreen") == 0 || strcmp(argv[1], "-f") == 0));
     GLFWwindow *win = gl_init(want_fullscreen);
 
+    size_t n = strlen(kFS_user_prefix) + strlen(kFS_ui_suffix) + 1;
+    char *fs_ui_str = (char*)malloc(n);
+    snprintf(fs_ui_str, n, "%s%s", kFS_user_prefix, kFS_ui_suffix);
     vs = compile_shader(NULL, GL_VERTEX_SHADER, kVS);
-    fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_ui);
+    fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, fs_ui_str);
     fs_bloom = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_bloom);
     fs_taa = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_taa);
     ui_pass = link_program(vs, fs_ui);
@@ -1306,10 +1247,11 @@ int main(int argc, char **argv) {
     try_to_compile_shader(&shader_tab);
     parse_named_patterns_in_c_source(audio_tab.str, audio_tab.str + stbds_arrlen(audio_tab.str));
 
-    // stbi_uc *fontPixels = stbi_load("assets/font_recursive.png", &fw, &fh, &fc, 4);
-    // stbi_uc *fontPixels = stbi_load("assets/font_brutalita.png", &fw, &fh, &fc, 4);
-    // stbi_uc *fontPixels = stbi_load("assets/font_sdf.png", &fw, &fh, &fc, 4);
     texFont = load_texture("assets/font_sdf.png");
+
+    // GLuint paper_diff = load_texture("assets/textures/paper-rough-1-DIFFUSE.png", GL_LINEAR, GL_REPEAT);
+    // GLuint paper_disp = load_texture("assets/textures/paper-rough-1-DISP.png", GL_LINEAR, GL_REPEAT);
+    // GLuint paper_norm = load_texture("assets/textures/paper-rough-1-NORM.png", GL_LINEAR, GL_REPEAT);
 
     texText = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, TMW, TMH, 0, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, NULL);
@@ -1405,13 +1347,83 @@ int main(int argc, char **argv) {
         glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, spheretbos[iFrame % 2]);
         update_camera(win);
-        render_user_pass(user_pass, fbo, texFPRT, skytex, iFrame, iTime, vao, texFont, texText, spheretbotex);
-        glBindBuffer(GL_TEXTURE_BUFFER, 0);
+        //////////////////////// USER PASS
+        if (!user_pass) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo[2]);
+            glViewport(0, 0, RESW, RESH);
+            glClearColor(0.f, 0.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        } else {
+            glUseProgram(user_pass);
+            glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), RESW, RESH);
+            glUniform1f(glGetUniformLocation(user_pass, "iTime"), (float)iTime);
+            glUniform1ui(glGetUniformLocation(user_pass, "iFrame"), iFrame);
+            glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), fbw, fbh);
+            glUniform2i(glGetUniformLocation(user_pass, "uFontPx"), curE->font_width, curE->font_height);
+            glUniform1i(glGetUniformLocation(user_pass, "status_bar_size"), status_bar_color ? 1 : 0);
+            glUniform1f(glGetUniformLocation(user_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
+            glUniform1f(glGetUniformLocation(user_pass, "ui_alpha"), ui_alpha);
+    
+            bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
+            bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
+            bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
+            bind_texture_to_slot(user_pass, 3, "uSky", skytex, GL_LINEAR);
+            // bind_texture_to_slot(user_pass, 4, "uPaperDiff", paper_diff, GL_LINEAR);
+            // bind_texture_to_slot(user_pass, 5, "uPaperDisp", paper_disp, GL_LINEAR);
+            // bind_texture_to_slot(user_pass, 6, "uPaperNorm", paper_norm, GL_LINEAR);
+            glUniform1i(glGetUniformLocation(user_pass, "uSpheres"), 7);
+            glActiveTexture(GL_TEXTURE7);
+            glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
+    
+            glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
+            glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
+            glUniform4f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
+            glUniform1f(glGetUniformLocation(user_pass, "fov"), fov);
+    
+            draw_fullscreen_pass(fbo[2], RESW, RESH, vao);
+            unbind_textures_from_slots(7);
+            glActiveTexture(GL_TEXTURE7);
+            glBindTexture(GL_TEXTURE_BUFFER, 0);
+        }
         render_taa_pass(taa_pass, fbo, texFPRT, NUM_FPRTS, iFrame, vao);
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
-        render_ui_pass(ui_pass, texFPRT, texFont, texText, iFrame, curE, fbw, fbh, NUM_FPRTS, iTime, vao, ui_alpha);
 
+        // ui pass //////////////////
+        glUseProgram(ui_pass);
+        bind_texture_to_slot(ui_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        
+        bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
+        bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
+        bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
+    
+        glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
+        glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
+        glUniform1i(glGetUniformLocation(ui_pass, "status_bar_size"), status_bar_color ? 1 : 0);
+        glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
+        glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
+        glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
+    
+        float output_ar = fbw / float(fbh);
+        float input_ar = RESW / float(RESH);
+        float scale = output_ar / input_ar;
+        if (scale > 1.f) { // output is wider than input - black bars at sides
+            glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), scale, 1.f);
+        } else { // black bars at top and bottom
+            glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), 1.f, 1.f / scale);
+        }
+    
+        float f_cursor_x = curE->cursor_x * curE->font_width;
+        float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
+        glUniform4f(glGetUniformLocation(ui_pass, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
+        curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
+        curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
+    
+        draw_fullscreen_pass(0, fbw, fbh, vao);
+        unbind_textures_from_slots(4);
+        //////////////////////////////
 #define MOUSE_LEN 8
 #define MOUSE_MASK (MOUSE_LEN - 1)
         static float mxhistory[MOUSE_LEN], myhistory[MOUSE_LEN];

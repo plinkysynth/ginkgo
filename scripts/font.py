@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # defaults work for iosevka.ttc
 # other examples:
-# python scripts/font.py --font '/Users/alexe/Downloads/_decterm.ttf' --out assets/font_term.png --size 512 --baseline 480
+# python scripts/font.py --font '/Users/alexe/Downloads/_decterm.ttf' --out assets/font_term.png
+# python scripts/font.py --font '/Users/alexe/Library/Fonts/Iosevka.ttc' --out assets/font_sdf.png --size 360 --baseline 360 --index 54
 
 import argparse, numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import distance_transform_edt as edt
 
-def render_mask(ch, font, W, H, baseline):
+def render_mask(ch, font, W, H, baseline, xofs):
     asc, _ = font.getmetrics()
     img = Image.new('L', (W, H), 0)
-    ImageDraw.Draw(img).text((0, baseline - asc), ch, 255, font=font)
+    ImageDraw.Draw(img).text((xofs, baseline - asc), ch, 255, font=font)
     return (np.asarray(img) >= 128)
 
 def sdf_from_mask(mask):
@@ -43,8 +44,9 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--font', default='/Users/alexe/Library/Fonts/Iosevka.ttc', help='.ttc/.ttf path')
     p.add_argument('--index', type=int, default=-1, help='subfamily index in TTC')
-    p.add_argument('--size', type=int, default=480, help='font size (px)')
-    p.add_argument('--baseline', type=int, default=400, help='baseline y in the 256x512 canvas')
+    p.add_argument('--size', type=int, default=384, help='font size (px)')
+    p.add_argument('--baseline', type=int, default=480, help='baseline y in the 256x512 canvas')
+    p.add_argument('--xofs', type=int, default=48, help='x offset in the 256x512 canvas')
     p.add_argument('--tmp_w', type=int, default=256)
     p.add_argument('--tmp_h', type=int, default=512)
     p.add_argument('--tile_w', type=int, default=32)
@@ -69,7 +71,7 @@ def main():
 
     for i, cp in enumerate(chars):
         ch = chr(cp)
-        mask = render_mask(ch, font, args.tmp_w, args.tmp_h, args.baseline)
+        mask = render_mask(ch, font, args.tmp_w, args.tmp_h, args.baseline, args.xofs)
         sdf = sdf_from_mask(mask)
         sdf_small = resize_sdf(sdf, args.tile_w, args.tile_h)
         tile_u8 = encode_u8(sdf_small, args.spread)

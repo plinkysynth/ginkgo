@@ -21,7 +21,6 @@
 #include "3rdparty/stb_ds.h"
 #include "3rdparty/miniaudio.h"
 #include "3rdparty/pffft.h"
-#include "3rdparty/sj.h"
 #include "ansicols.h"
 #include "ginkgo.h"
 #include <GLFW/glfw3.h>
@@ -34,6 +33,7 @@
 #include "http_fetch.h"
 #include "extvector.h"
 #include "morton.h"
+#include "json.h"
 
 #define RESW 1920
 #define RESH 1080
@@ -406,7 +406,7 @@ const char *kFS_taa = SHADER(
             // no history.
         } else {
             vec3 history = texture(uFP_prev, vec2(uu,vv)).xyz;
-            float believe_history = 0.95f;
+            float believe_history = 0.75f;
             history = max(history, mincol);
             history = min(history, maxcol);
             o = mix(o, history, believe_history);
@@ -510,13 +510,87 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
     });
 // clang-format on
 
-EditorState audio_tab = {.fname = "livesrc/audio.cpp", .is_shader = false};
-EditorState shader_tab = {.fname = "livesrc/video.glsl", .is_shader = true};
+EditorState audio_tab = {.fname = NULL, .is_shader = false};
+EditorState shader_tab = {.fname = NULL, .is_shader = true};
 EditorState *curE = &shader_tab;
 float ui_alpha = 0.f;
 float ui_alpha_target = 0.f;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 static float retina = 1.0f;
+
+static float4 c_cam2world_old[4];
+static float4 c_cam2world[4];
+static float4 c_pos= {0.f, 2.f, 10.f, 1.f};                                                           // pos;
+static float4 c_lookat;
+static float fov = 0.4f;
+static float focal_distance = 5.f;
+
+static void set_tab(EditorState *newE) {
+    ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
+    curE = newE;
+}
+
+static void dump_settings(void) {
+    FILE *f=fopen("settings.json", "w");
+    if (!f) {
+        fprintf(stderr, "Failed to open settings.json for writing\n");
+        return;
+    }
+    fprintf(f, "{\n \"camera\": {\n");
+    fprintf(f, "  \"c_pos\": [%f, %f, %f, %f],\n", c_pos.x, c_pos.y, c_pos.z, c_pos.w);
+    fprintf(f, "  \"c_lookat\": [%f, %f, %f, %f],\n", c_lookat.x, c_lookat.y, c_lookat.z, c_lookat.w);
+    fprintf(f, "  \"fov\": %f,\n", fov);
+    fprintf(f, "  \"focal_distance\": %f\n", focal_distance);
+    fprintf(f, " },\n \"editor\": {\n");
+    fprintf(f, "  \"ui_alpha_target\": %f,\n", ui_alpha_target);
+    fprintf(f, "  \"shader_tab\": \"%s\",\n", shader_tab.fname);
+    fprintf(f, "  \"audio_tab\": \"%s\",\n", audio_tab.fname);
+    fprintf(f, "  \"cur_tab\": \"%s\"\n", curE->fname);
+    fprintf(f, " }\n}\n");
+    fclose(f);
+}
+
+
+
+static void load_settings(void) {
+    char *cur_tab = NULL;
+    sj_Reader r = read_json_file("settings.json");
+    for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
+        if (iter_key_is(&outer, "camera")) {
+            for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
+                if (iter_key_is(&inner, "c_pos")) {
+                    c_pos = iter_val_as_float4(&inner, c_pos);
+                } else if (iter_key_is(&inner, "c_lookat")) {
+                    c_lookat = iter_val_as_float4(&inner, c_lookat);
+                } else if (iter_key_is(&inner, "fov")) {
+                    fov = iter_val_as_float(&inner, fov);
+                } else if (iter_key_is(&inner, "focal_distance")) {
+                    focal_distance = iter_val_as_float(&inner, focal_distance);
+                }
+            }
+        } else if (iter_key_is(&outer, "editor")) {
+            for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
+                if (iter_key_is(&inner, "ui_alpha_target")) {
+                    ui_alpha_target = iter_val_as_float(&inner, ui_alpha_target);
+                } else if (iter_key_is(&inner, "shader_tab")) {
+                    shader_tab.fname = iter_val_as_stbstring(&inner, shader_tab.fname);
+                } else if (iter_key_is(&inner, "audio_tab")) {
+                    audio_tab.fname = iter_val_as_stbstring(&inner, audio_tab.fname);
+                } else if (iter_key_is(&inner, "cur_tab")) {
+                    cur_tab = iter_val_as_stbstring(&inner, cur_tab);
+                }
+            }
+        }
+    }
+    if (strcmp(cur_tab, shader_tab.fname) == 0) {
+        curE = &shader_tab;
+    } else if (strcmp(cur_tab, audio_tab.fname) == 0) {
+        curE = &audio_tab;
+    }
+    stbds_arrfree(cur_tab);
+    free_json(&r);
+    ui_alpha = ui_alpha_target;
+}
 
 GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0;
 GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0;
@@ -612,10 +686,6 @@ GLFWwindow *gl_init(int want_fullscreen) {
     return win;
 }
 
-static void set_tab(EditorState *newE) {
-    ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
-    curE = newE;
-}
 
 static uint32_t last_mods = 0;
 
@@ -962,33 +1032,24 @@ static void unbind_textures_from_slots(int num_slots) {
 }
 
 
-static float4 c_cam2world_old[4];
-static float4 c_cam2world[4];
-static float4 c_pos= {0.f, 2.f, 10.f, 1.f};                                                           // pos;
-static float4 c_lookat;
-static float fov = 0.4f;
-static float focal_distance = 5.f;
 
 void update_camera(GLFWwindow *win) {
     memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
-    static float cam_mx = 0.f;
-    static float cam_my = 0.f;
     if (ui_alpha_target < 0.5) {
-        cam_mx = 0.5f - G->mx / fbw - 0.25f;
-        cam_my = 0.5f - G->my / fbh;
+        float cam_mx = 0.5f - G->mx / fbw - 0.25f;
+        float cam_my = 0.5f - G->my / fbh;
+        float theta = cam_mx * TAU;
+        float phi = cam_my * PI;
+        float rc = focal_distance * cosf(phi);    
+        c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 0.f}; // pos        
     }
-    float theta = cam_mx * TAU;
-    float phi = cam_my * PI;
     
-    float rc = focal_distance * cosf(phi);
-
-    
-    c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 0.f}; // pos
     float4 c_up = {0.f, 1.f, 0.f, 0.f};                                                                    // up
     float4 c_fwd = normalize(c_lookat - c_pos);
     float4 c_right = normalize(cross(c_up, c_fwd));
+    c_up = normalize(cross(c_fwd, c_right));
     if (ui_alpha_target < 0.5) {
-        const float speed = 0.03f;
+        const float speed = 0.1f;
         if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
             c_pos += c_fwd * speed;
         }
@@ -1008,16 +1069,10 @@ void update_camera(GLFWwindow *win) {
             c_pos -= c_up * speed;
         }
     }
-    c_up = normalize(cross(c_fwd, c_right));
     c_cam2world[0] = c_right;
     c_cam2world[1] = c_up;
     c_cam2world[2] = c_fwd;
     c_cam2world[3] = c_pos;
-    // printf("%f %f %f %f\n", c_cam2world[0].x, c_cam2world[0].y, c_cam2world[0].z, c_cam2world[0].w);
-    // printf("%f %f %f %f\n", c_cam2world[1].x, c_cam2world[1].y, c_cam2world[1].z, c_cam2world[1].w);
-    // printf("%f %f %f %f\n", c_cam2world[2].x, c_cam2world[2].y, c_cam2world[2].z, c_cam2world[2].w);
-    // printf("%f %f %f %f\n", c_cam2world[3].x, c_cam2world[3].y, c_cam2world[3].z, c_cam2world[3].w);
-    // printf("\n");
     if (!dot(c_cam2world_old[0], c_cam2world_old[0])) {
         memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
     }
@@ -1179,8 +1234,8 @@ int get_sky(const char *key) {
         sj_Value key, val;
         while (sj_iter_object(&r, outer_obj, &key, &val)) {
             if (val.type == SJ_STRING) {
-                const char *k = make_cstring_from_span(key.start, key.end, 0);
-                const char *v = make_cstring_from_span(val.start, val.end, 0);
+                const char *k = stbstring_from_span(key.start, key.end, 0);
+                const char *v = stbstring_from_span(val.start, val.end, 0);
                 stbds_shput(skies, k, v);
             }
         }
@@ -1198,17 +1253,75 @@ int get_sky(const char *key) {
     return sky->texture = load_texture(fname);
 }
 
-typedef struct sphere_t {
-    float4 pos_rad;
-    float4 oldpos_rad;
-    float4 colour;
-} sphere_t;
+// typedef struct sphere_t {
+//     float4 pos_rad;
+//     float4 oldpos_rad;
+//     float4 colour;
+// } sphere_t;
 
-#define MAX_SPHERES 256
-sphere_t spheres[MAX_SPHERES];
+#define MAX_SPHERES 64 // must be a multiple of 256
+#define NUM_BVH_LEVELS 4
+float4 spheres[MAX_SPHERES*3+(MAX_SPHERES/4+MAX_SPHERES/16+MAX_SPHERES/64+MAX_SPHERES/256)*2];
+
+static inline float4 sphere_bbox_min(float4 pos_rad) {
+    return pos_rad - pos_rad.wwww; // w will be 0, which is fine;
+}
+static inline float4 sphere_bbox_max(float4 pos_rad) {
+    return pos_rad + pos_rad.wwww; // w will be double radius, which is silly.
+}
+
+static void update_spheres(void) {
+    float iTime = G->iTime;
+    for (int i = 0; i < MAX_SPHERES; i++) {
+        int2 xy = (int2)unmorton2(i);
+        spheres[i*3+1] = spheres[i*3+0];
+        float xx = 0.25f * sinf(iTime + xy.y);
+        float zz = 0.25f * sinf(iTime*1.1f + xy.x);
+        float yy= 0.25f * sinf(iTime*1.2f + (xy.x+xy.y));
+        float glo = max(0.f, 30000.f*(sinf(iTime*0.3f + 0.3*(xy.x*xy.y))-0.99f));
+        float ww=0.125f + 0.125f * sinf(iTime*1.3f + (xy.x-xy.y));
+        spheres[i*3+0] = float4{(float)xy.x * 0.5f + xx, yy, (float)xy.y * 0.5f + zz, ww};
+        if (spheres[i*3+1].w<=0.f) spheres[i*3+1] = spheres[i*3+0]; // new sphere.
+        spheres[i*3+2] = float4{0.1f,0.1f,0.1f, glo};
+    }
+    //spheres[0].pos_rad = float4{1.5f,-10.5f,1.5f,10.f};
+    // for (int i= 0; i<10;++i)  {
+    //     spheres[rndint(MAX_SPHERES)*3+2] = float4{0.f, 0.f, 0.f, 0.f};
+    //     spheres[rndint(MAX_SPHERES)*3+2] = float4{1.f, 0.2f, 0.1f, 10.f};
+    // }
+
+    // compute bounding boxes bottom to top
+    // level 0: min/max over motion blurred spheres.
+    float4 *dst = spheres + MAX_SPHERES*3;
+    const float4 *src = spheres;
+    for (int i = 0; i < MAX_SPHERES; i+=4) {
+        float4 minp = min(sphere_bbox_min(src[0]), sphere_bbox_min(src[1]));
+        float4 maxp = max(sphere_bbox_max(src[0]), sphere_bbox_max(src[1]));
+        src+=3;
+        for (int j=1; j<4; j++) {
+            minp = min(minp, min(sphere_bbox_min(src[0]), sphere_bbox_min(src[1])));
+            maxp = max(maxp, max(sphere_bbox_max(src[0]), sphere_bbox_max(src[1])));
+            src+=3;
+        }
+        *dst++ = minp;
+        *dst++ = maxp;
+    }
+    // level 1-n: min/max over child bvh nodes.
+    for (int level = 1; level < NUM_BVH_LEVELS; level++) {
+        int n = MAX_SPHERES>>(level*2+2);
+        for (int i =0; i<n; i++) {
+            *dst++ = min(min(min(src[0], src[2]), src[4]), src[6]);
+            *dst++ = max(max(max(src[1], src[3]), src[5]), src[7]);
+            src+=8;
+        }
+    }
+}    
+
 
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
+    load_settings();
+
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
@@ -1291,16 +1404,6 @@ int main(int argc, char **argv) {
     glGenBuffers(2, spheretbos);
     check_gl("init sphere buffer post");
 
-    for (int i = 0; i < MAX_SPHERES; i++) {
-        uint2 xy = unmorton2(i);
-        spheres[i].pos_rad = float4{(float)xy.x, 0.f, (float)xy.y, 0.25f};
-        spheres[i].oldpos_rad = float4{(float)xy.x, 0.f, (float)xy.y, 0.25f};
-        spheres[i].colour = float4{0.5f, 0.6f, 0.7f, 0.f};
-    }
-    //spheres[0].pos_rad = float4{1.5f,-10.5f,1.5f,10.f};
-    spheres[0].colour = float4{0.6f, 0.6f, 0.6f, 0.f};
-    spheres[3].colour = float4{0.f, 0.f, 0.f, 0.f};
-    spheres[7].colour = float4{1.f, 0.2f, 0.1f, 10.f};
 
     double t0 = glfwGetTime();
     glfwSetKeyCallback(win, key_callback);
@@ -1338,11 +1441,12 @@ int main(int argc, char **argv) {
         }
 
         glBindBuffer(GL_TEXTURE_BUFFER, spheretbos[iFrame % 2]);
-        glBufferData(GL_TEXTURE_BUFFER, MAX_SPHERES * sizeof(sphere_t), nullptr, GL_STREAM_DRAW); // orphan
-        void *p = glMapBufferRange(GL_TEXTURE_BUFFER, 0, MAX_SPHERES * sizeof(sphere_t),
+        glBufferData(GL_TEXTURE_BUFFER, sizeof(spheres), nullptr, GL_STREAM_DRAW); // orphan
+        void *p = glMapBufferRange(GL_TEXTURE_BUFFER, 0, sizeof(spheres),
                                    GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
         //spheres[0].pos_rad.w = fabsf(sinf(iTime)) * 0.5f;
-        memcpy(p, spheres, MAX_SPHERES * sizeof(sphere_t));
+        update_spheres();
+        memcpy(p, spheres, sizeof(spheres));
         glUnmapBuffer(GL_TEXTURE_BUFFER);
         glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, spheretbos[iFrame % 2]);
@@ -1490,6 +1594,8 @@ int main(int argc, char **argv) {
         pump_wave_load_requests_main_thread();
         //usleep(100000);
     }
+
+    dump_settings();
     ma_device_stop(&dev);
     ma_device_uninit(&dev);
 

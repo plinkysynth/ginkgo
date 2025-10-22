@@ -1,3 +1,5 @@
+#pragma once 
+#define _EXT_VECTOR_H
 #include <arm_neon.h>
 typedef float float2 __attribute__((ext_vector_type(2)));
 typedef int int2 __attribute__((ext_vector_type(2)));
@@ -41,3 +43,6 @@ static inline float4 normalize(float4 x) {
 }
 
 static inline float4 cross(float4 a, float4 b) { return (a * b.yzxw - a.yzxw * b).yzxw; }
+
+static inline float4 min(float4 a, float4 b) { return vminq_f32(a, b); }
+static inline float4 max(float4 a, float4 b) { return vmaxq_f32(a, b); }

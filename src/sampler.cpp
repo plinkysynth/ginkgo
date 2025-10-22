@@ -5,7 +5,6 @@
 #include <ctype.h>
 #include <string.h>
 #include "3rdparty/stb_ds.h"
-#include "3rdparty/sj.h"
 #include "3rdparty/miniaudio.h"
 #include "ginkgo.h"
 #include "utils.h"
@@ -13,6 +12,7 @@
 #include "sampler.h"
 #include "ansicols.h"
 #include "http_fetch.h"
+#include "json.h"
 
 const char *trimurl(const char *url) {
     // shorten url for printing
@@ -65,37 +65,22 @@ void load_wave_now(Sound *sound, wave_t *wave) {
     }
 }
 
-bool sj_iter_array_or_object(sj_Reader *r, sj_Value obj, sj_Value *key, sj_Value *val) {
-    if (obj.type == SJ_ARRAY) {
-        *key = (sj_Value){};
-        return sj_iter_array(r, obj, val);
-    } else if (obj.type == SJ_OBJECT)
-        return sj_iter_object(r, obj, key, val);
-    else
-        return false;
-}
 
 int parse_strudel_alias_json(const char *json_url) {
     const char *json_fname = fetch_to_cache(json_url, 1);
-    char *json = load_file(json_fname);
-    sj_Reader r = sj_reader(json, stbds_arrlen(json));
-    sj_Value outer_obj = sj_read(&r);
-    sj_Value soundval, soundkey;
+    sj_Reader r = read_json_file(json_fname);
     int old_num_sounds = num_sounds();
-    while (sj_iter_object(&r, outer_obj, &soundkey, &soundval)) {
-        if (soundval.type == SJ_STRING) {
-            char *long_name = temp_cstring_from_span(soundkey.start, soundkey.end);
-            char *short_name = temp_cstring_from_span(soundval.start, soundval.end);
+    for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
+        if (outer.val.type == SJ_STRING) {
+            char *long_name = stbstring_from_span(outer.val.start, outer.val.end, 0);
+            char *short_name = stbstring_from_span(outer.key.start, outer.key.end, 0);
             // printf("alias %s -> %s\n", long_name, short_name);
             add_alias_init_only(short_name, long_name);
-        } else {
-            fprintf(stderr, "alias json warning: unexpected object type: %.*s %d\n", (int)(soundkey.end - soundkey.start),
-                    soundkey.start, soundval.type);
         }
     }
     printf(COLOR_YELLOW "%s" COLOR_RESET " added " COLOR_GREEN "%d" COLOR_RESET " new aliases\n", trimurl(json_url),
            num_sounds() - old_num_sounds);
-    stbds_arrfree(json);
+    free_json(&r);
     return 1;
 }
 
@@ -104,6 +89,7 @@ static inline bool char_needs_escaping(const char *s, const char *e) {
     return *s==' ' || *s=='#';
     //return !(isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~' || c=='/');
 }
+
 static inline int get_url_length_after_escaping(const char *s, const char *e) {
     int len = e - s;
     for (; s < e; s++)
@@ -131,44 +117,40 @@ static inline const char *escape_url(char *dstbuf, const char *s, const char *e)
 int parse_strudel_json(const char *json_url, const char *sound_prefix, bool eager) {
     int prefix_len = sound_prefix ? strlen(sound_prefix) : 0;
     const char *json_fname = fetch_to_cache(json_url, 1);
-    char *json = load_file(json_fname);
-    sj_Reader r = sj_reader(json, stbds_arrlen(json));
-    sj_Value outer_obj = sj_read(&r);
-    sj_Value soundval, soundkey;
-    sj_Value base = {};
+    sj_Reader r = read_json_file(json_fname);
     int old_num_sounds = num_sounds();
     int wav_count = 0, skip_count = 0;
-    while (sj_iter_object(&r, outer_obj, &soundkey, &soundval)) {
-        if (soundval.type == SJ_STRING) {
-            if (spancmp(soundkey.start, soundkey.end, "_base", NULL) == 0) {
+    sj_Value base = {};
+    for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
+        if (outer.val.type == SJ_STRING) {
+            if (iter_key_is(&outer, "_base")) {
                 // printf("base is %.*s\n", (int)(soundval.end-soundval.start), soundval.start);
-                base = soundval;
+                base = outer.val;
             } else {
-                printf("json warning: unexpected object type: %.*s %d\n", (int)(soundkey.end - soundkey.start), soundval.start,
-                       soundval.type);
+                printf("json warning: unexpected object type: %.*s %d\n", (int)(outer.key.end - outer.key.start), outer.val.start,
+                       outer.val.type);
             }
         } else {
-            int sound_name_len = (soundkey.end - soundkey.start) + prefix_len;
+            int sound_name_len = (outer.key.end - outer.key.start) + prefix_len;
             char sound_name[sound_name_len + 1];
             memcpy(sound_name, sound_prefix, prefix_len);
-            memcpy(sound_name + prefix_len, soundkey.start, soundkey.end - soundkey.start);
+            memcpy(sound_name + prefix_len, outer.key.start, outer.key.end - outer.key.start);
             sound_name[sound_name_len] = 0;
             Sound *sound = get_sound_init_only(sound_name);
-            sj_Value samplekey, sample;
-            for (int i = 0; sj_iter_array_or_object(&r, soundval, &samplekey, &sample); i++) {
+            for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
                 char *url = NULL;
                 int numbase = base.end - base.start;
-                int numurl = get_url_length_after_escaping(sample.start, sample.end);
+                int numurl = get_url_length_after_escaping(inner.val.start, inner.val.end);
                 stbds_arrsetlen(url, numbase + numurl + 1);
                 memcpy(url, base.start, numbase);
                 url[numbase] = 0;
                 if (strncmp(url, "file://", 7) == 0 || strstr(url, "://") == 0) {
-                    memcpy(url + numbase, sample.start, sample.end - sample.start);
-                    url[numbase + (sample.end - sample.start)] = 0;
+                    memcpy(url + numbase, inner.val.start, inner.val.end - inner.val.start);
+                    url[numbase + (inner.val.end - inner.val.start)] = 0;
                 } else {
-                    escape_url(url + numbase, sample.start, sample.end);
+                    escape_url(url + numbase, inner.val.start, inner.val.end);
                 }
-                int midinote = parse_midinote(samplekey.start, samplekey.end, NULL, false);
+                int midinote = parse_midinote(inner.key.start, inner.key.end, NULL, false);
                 // printf("%.*s (%d) -> %s\n", (int)(samplekey.end-samplekey.start), samplekey.start, midinote, url);
                 int j;
                 for (j = 0; j < stbds_arrlen(sound->waves); ++j)
@@ -195,7 +177,7 @@ int parse_strudel_json(const char *json_url, const char *sound_prefix, bool eage
     }
     printf(COLOR_YELLOW "%s" COLOR_RESET ", %d new sounds, added " COLOR_GREEN "%d" COLOR_RESET " waves\n", trimurl(json_url),
            num_sounds() - old_num_sounds, wav_count);
-    stbds_arrfree(json);
+    free_json(&r);
     return 1;
 }
 

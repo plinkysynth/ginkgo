@@ -1,0 +1,14 @@
+{
+ "camera": {
+  "c_pos": [2.474890, -2.464996, 12.455307, 1.000000],
+  "c_lookat": [4.196033, -5.000073, 8.504225, 1.000000],
+  "fov": 0.400000,
+  "focal_distance": 5.000000
+ },
+ "editor": {
+  "ui_alpha_target": 1.000000,
+  "shader_tab": "livesrc/pathtrace.glsl",
+  "audio_tab": "livesrc/audio.cpp",
+  "cur_tab": "livesrc/pathtrace.glsl"
+ }
+}

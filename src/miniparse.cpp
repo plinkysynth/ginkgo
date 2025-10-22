@@ -674,7 +674,7 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             pattern_t pat = parse_pattern(&p);
             if (p.err <= 0) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
-                pat.key = make_cstring_from_span(pathstart, pathend, 0);
+                pat.key = stbstring_from_span(pathstart, pathend, 0);
                 stbds_shputs(patterns_map, pat);
                 /*
                 pretty_print_nodes(pattern_start, s, &pat);

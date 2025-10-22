@@ -137,7 +137,7 @@ edit_op_t apply_edit_op(EditorState *E, edit_op_t op, int update_cursor_idx) {
     int old_select_idx = E->select_idx;
     char *removed_str = NULL;
     if (op.remove_end > op.remove_start) {
-        removed_str = make_cstring_from_span(E->str + op.remove_start, E->str + op.remove_end, 0);
+        removed_str = stbstring_from_span(E->str + op.remove_start, E->str + op.remove_end, 0);
         stbds_arrdeln(E->str, op.remove_start, op.remove_end - op.remove_start);
     }
     int numins = op.insert_str ? strlen(op.insert_str) : 0;
@@ -486,7 +486,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         case GLFW_KEY_X: {
             int se = get_select_start(E);
             int ee = get_select_end(E);
-            char *str = make_cstring_from_span(E->str + se, E->str + ee, 0);
+            char *str = stbstring_from_span(E->str + se, E->str + ee, 0);
             if (str) {
                 glfwSetClipboardString(win, str);
                 stbds_arrfree(str);
@@ -512,7 +512,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
                 ss = xy_to_idx(E, 0, sy);
                 se = xy_to_idx(E, 0x7fffffff, ey);
-                char *str = make_cstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
+                char *str = stbstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
                 int minx = 0x7fffffff;
                 int all_commented = true;
                 int n = se - ss;
@@ -643,7 +643,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 goto insert_character;
             ss = xy_to_idx(E, 0, sy);
             se = xy_to_idx(E, 0x7fffffff, ey);
-            char *str = make_cstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
+            char *str = stbstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
             for (char *c = str; *c;) {
                 if (shift) {
                     // skip up to 4 spaces or a tab.

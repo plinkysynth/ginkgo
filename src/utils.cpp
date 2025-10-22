@@ -6,7 +6,7 @@
 #include "3rdparty/stb_ds.h"
 #include "utils.h"
 
-char *make_cstring_from_span(const char *s, const char *e, int alloc_extra) {
+char *stbstring_from_span(const char *s, const char *e, int alloc_extra) {
     int len = e - s;
     if (len <= 0)
         return NULL;
@@ -18,6 +18,7 @@ char *make_cstring_from_span(const char *s, const char *e, int alloc_extra) {
 }
 
 char *load_file(const char *path) { // returns an stb_ds
+    if (!path) return NULL;
     FILE *f = fopen(path, "r");
     if (!f) {
         fprintf(stderr, "Failed to open file: %s\n", path);

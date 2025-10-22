@@ -1,28 +1,28 @@
 
 {
   "camera": {
-    "c_pos": [0.000000, 2.000000, 10.000000, 1.000000],
-    "c_lookat": [-0.227694, 6.929159, 10.807184, 1.000000],
-    "fov": 0.400000,
+    "c_pos": [6.247538, 1.816651, 1.110346, 1.000000],
+    "c_lookat": [1.485389, 0.693623, 0.080418, 1.000000],
+    "fov": 1.000000,
     "focal_distance": 5.000000
   },
   "editor": {
     "ui_alpha_target": 1.000000,
-    "cur_tab": 0,
+    "cur_tab": 1,
     "tabs": [
       {
-        "fname": "livesrc/blank.glsl",
-        "font_height": 50,
-        "scroll_y": 0.000000,
-        "cursor_idx": 11,
-        "select_idx": 11
-      },
-      {
-        "fname": "livesrc/audio.cpp",
-        "font_height": 24,
+        "fname": "livesrc/orange.glsl",
+        "font_height": 34,
         "scroll_y": 0.000000,
         "cursor_idx": 0,
         "select_idx": 0
+      },
+      {
+        "fname": "livesrc/audio.cpp",
+        "font_height": 36,
+        "scroll_y": 0.000000,
+        "cursor_idx": 89,
+        "select_idx": 89
       }
     ]
   }

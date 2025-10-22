@@ -94,7 +94,7 @@ const char *print_midinote(int note) {
     if (note < 0 || note >= 128)
         return "";
     const static char notenames[12] = {'c', 'c', 'd', 'd', 'e', 'f', 'f', 'g', 'g', 'a', 'a', 'b'};
-    const static char notesharps[12] = {' ', '#', ' ', '#', ' ', ' ', '#', ' ', '#', ' ', '#', ' '};
+    const static char notesharps[12] = {' ', 's', ' ', 's', ' ', ' ', 's', ' ', 's', ' ', 's', ' '};
     buf[0] = notenames[note % 12];
     buf[1] = notesharps[note % 12];
     buf[2] = 0;
@@ -553,7 +553,7 @@ static void update_lengths(pattern_maker_t *p, int node) {
     }
     n->total_length = total_length;
     n->num_children = num_children;
-    if (n->type != N_POLY && n->type != N_LEAF) {
+    if (n->type != N_POLY && n->type != N_LEAF && n->type != N_OP_ELONGATE) {
         n->max_value = max_value;
     }
 }
@@ -580,7 +580,7 @@ void test_minipat(void) {
     // const char *s = "[bd | sd | rim]*8";
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "[- bd sd c4*4 23-25]"; // test divide
+    const char *s = "[c4 _ _ _ _]"; // test divide
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
     //  const char *s = "[bd <hh oh>,rim*<4 8>]";
@@ -594,7 +594,7 @@ void test_minipat(void) {
         printf("error: %s\n", pm.errmsg);
     pretty_print_nodes(s, s + pm.n, &p);
     hap_t tmp[64], dst[64];
-    hap_span_t haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
+    hap_span_t haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.1f, 0.2f);
     pretty_print_haps(haps, 0.f, 4.f);
 
     // char *chart = print_pattern_chart(&p);

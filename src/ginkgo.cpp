@@ -239,6 +239,8 @@ uniform mat4 c_cam2world;
 uniform mat4 c_cam2world_old;
 uniform vec4 c_lookat;
 uniform float fov;
+uniform float focal_distance;
+uniform float aperture;
 // uniform sampler2D uPaperDiff;
 // uniform sampler2D uPaperDisp;
 // uniform sampler2D uPaperNorm;
@@ -290,6 +292,37 @@ vec2 sphere_intersect( in vec3 ro, in vec3 rd, float ra ) {
     h = sqrt( h );
     return vec2( -b-h, -b+h );
 }
+
+float aabb_intersect(vec3 ro, vec3 inv_rd, vec3 boxmin, vec3 boxmax) {
+    vec3 t0 = (boxmin - ro) * inv_rd;
+    vec3 t1 = (boxmax - ro) * inv_rd;
+    vec3 tmin_v = min(t0, t1);
+    vec3 tmax_v = max(t0, t1);
+    float tmin = max(max(tmin_v.x, tmin_v.y), tmin_v.z);
+    float tmax = min(min(tmax_v.x, tmax_v.y), tmax_v.z);
+    // 'carefully' designed so that if we start inside the box, we get a negative value but not inf.
+    // but if we miss or start after the box, we return inf.
+    return (tmin >= tmax || tmax<=0.) ? 1e9 : tmin;
+}
+
+void eyeray(float t, out vec3 ro, out vec3 rd) {
+    vec4 r4 = rnd4();
+    mat4 mat = c_cam2world_old + (c_cam2world - c_cam2world_old) * t;
+    vec2 uv = (v_uv - 0.5) * fov;
+    uv.x *= 16./9.;
+    uv += (r4.xy-0.5) * 1.f/1080.;
+    // choose a point on the focal plane, assuming camera at origin
+    vec3 rt = (mat[2].xyz + uv.x * mat[0].xyz + uv.y * mat[1].xyz) * focal_distance;
+    if (aperture != 0.0) {
+        // choose a point on the lens
+        vec2 lensuv = rnd_disc(r4.zw)*aperture;
+        ro = mat[0].xyz * lensuv.x + mat[1].xyz * lensuv.y;
+    } else ro=vec3(0.);
+    rd = rt-ro;
+    ro+=mat[3].xyz; // add in camera pos
+    rd=normalize(rd);
+}
+
 vec4 get_text_pixel(vec2 fpixel, ivec2 ufontpx, float grey, float contrast, float fatness) {
     ivec2 cell = ivec2(fpixel) / ufontpx; 
     uvec4 char_attrib = texelFetch(uText, cell, 0);
@@ -523,7 +556,7 @@ static float4 c_pos = {0.f, 2.f, 10.f, 1.f}; // pos;
 static float4 c_lookat;
 static float fov = 0.4f;
 static float focal_distance = 5.f;
-
+static float aperture = 0.01f;
 static void set_tab(EditorState *newE) {
     ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
     curE = newE;
@@ -1364,6 +1397,14 @@ static void update_spheres(void) {
     }
 }
 
+inline float atof_default(const char *s, float def) {
+    if (!s) return def;
+    char *end=NULL;
+    float f = strtod(s, &end);
+    if (end == s) return def;
+    return f;
+}
+
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
     bool want_fullscreen = load_settings(argc, argv);
@@ -1371,9 +1412,9 @@ int main(int argc, char **argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
 
-    // void test_minipat(void);
-    // test_minipat();
-    // return 0;
+    void test_minipat(void);
+    test_minipat();
+    //return 0;
 
     ma_device dev;
     init_audio_midi(&dev);
@@ -1470,6 +1511,12 @@ int main(int argc, char **argv) {
         if (want_taa_str && want_taa_str[6] == ' ' && want_taa_str[7] == '0')
             want_taa_str = NULL;
         bool want_taa = want_taa_str != NULL;
+        const char *aperture_str = strstr(s, "// aperture ");
+        if (aperture_str) aperture = atof_default(aperture_str + 11, aperture);
+        const char *focal_distance_str = strstr(s, "// focal_distance ");
+        if (focal_distance_str) focal_distance = atof_default(focal_distance_str + 17, focal_distance);
+        const char *fov_str = strstr(s, "// fov ");
+        if (fov_str) fov = atof_default(fov_str + 7, fov);
         stbds_arrpop(tabs[0].str);
         static uint32_t skytex = 0;
         if (sky_name) {
@@ -1532,6 +1579,8 @@ int main(int argc, char **argv) {
             glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
             glUniform4f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
             glUniform1f(glGetUniformLocation(user_pass, "fov"), fov);
+            glUniform1f(glGetUniformLocation(user_pass, "focal_distance"), focal_distance);
+            glUniform1f(glGetUniformLocation(user_pass, "aperture"), aperture);
 
             draw_fullscreen_pass(fbo[want_taa ? 2 : iFrame % 2], RESW, RESH, vao);
             unbind_textures_from_slots(7);

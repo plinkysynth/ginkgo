@@ -79,11 +79,6 @@ typedef struct Sound {
     int_pair_t *midi_notes; // sorted stb_ds array of pairs <midinote, waveindex>
 } Sound;
 
-typedef struct bump_array_t {
-    int i, n; // n is the high watermark, the data array points at data4 if possible, or allocates in blocks of power of 2
-    float *data;
-    float data4[4];
-} bump_array_t;
 
 static inline int next_pow2(int n) {
     n--;
@@ -95,36 +90,6 @@ static inline int next_pow2(int n) {
     return n + 1;
 }
 
-static noinline void ba_grow(bump_array_t *sa, int newn) {
-    int oldallocsize = next_pow2(sa->n);
-    int newallocsize = next_pow2(newn);
-    if (oldallocsize == newallocsize)
-        return;
-    float *newdata = (newn <= 4) ? sa->data4 : (float *)calloc(newallocsize, sizeof(float));
-    memcpy(newdata, sa->data, sa->n * sizeof(float));
-    // if (sa->data != sa->data4)
-    //     free(sa->data); // let it leak :)
-    sa->data = newdata;
-    sa->n = newn;
-}
-
-static inline float *ba_get(bump_array_t *sa, int count) {
-    int i = sa->i;
-    if (RARE(i + count > sa->n))
-        ba_grow(sa, i + count);
-    sa->i += count;
-    return &sa->data[i];
-}
-static inline float *ba_get_default(bump_array_t *sa, int count, float def) {
-    int i = sa->i;
-    if (RARE(i + count > sa->n)) {
-        ba_grow(sa, i + count);
-        if (count > 0)
-            sa->data[i] = def;
-    }
-    sa->i += count;
-    return &sa->data[i];
-}
 
 typedef struct sound_pair_t {
     char *key;
@@ -143,6 +108,7 @@ typedef struct sound_request_t {
 } sound_request_t;
 
 struct reverb_state_t {
+    float filter_state[16];
     float reverbbuf[65536];
     int reverb_pos;
     int shimmerpos1 = 2000;
@@ -180,9 +146,6 @@ typedef struct basic_state_t {
     sound_pair_t *sounds;
     pattern_t *patterns_map; // stbds_sh
     sound_request_t *load_requests;
-    bump_array_t sliders[16];
-    int sliders_hwm[16];
-    bump_array_t audio_bump;
     reverb_state_t R;
 } basic_state_t;
 
@@ -237,20 +200,17 @@ static inline float update_lfo(float state[2], float sin_dphase) { // quadrature
     return state[1] += (state[0] * sin_dphase);
 }
 
-static inline float lfo(float dphase) {
-    float *state = ba_get_default(&G->audio_bump, 2, 1.f);
+static inline float lfo(float state[2], float dphase) {
     update_lfo(state, dphase);
     return state[1];
 }
 
-static inline const float *lfo2(float dphase) { // quadrature output
-    float *state = ba_get_default(&G->audio_bump, 2, 1.f);
+static inline const float *lfo2(float state[2],float dphase) { // quadrature output
     update_lfo(state, dphase);
     return state;
 }
 
-static inline float slew(float x, float upfac = 1e-5, float downfac = 1e-5) {
-    float *state = ba_get(&G->audio_bump, 1);
+static inline float slew(float state[1],float x, float upfac = 1e-5, float downfac = 1e-5) {
     float old = state[0];
     state[0] = old + (x - old) * ((x > old) ? upfac : downfac);
     return state[0];
@@ -399,47 +359,40 @@ static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc consta
 
 static inline float svf_R(float q) { return 1.f / q; }
 
-static inline float lpf(float x, float fc, float q) {
-    float *state = ba_get(&G->audio_bump, 2);
+static inline float lpf(float state[2], float x, float fc, float q) {
     float y = svf_process_2pole(state, x, svf_g(fc), svf_R(q)).lp;
     return y;
 }
 
-static inline float hpf(float x, float fc, float q) {
-    float *state = ba_get(&G->audio_bump, 2);
+static inline float hpf(float state[2], float x, float fc, float q) {
     return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).hp;
 }
 
-static inline float bpf(float x, float fc, float q) {
-    float *state = ba_get(&G->audio_bump, 2);
+static inline float bpf(float state[2], float x, float fc, float q) {
     return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).bp;
 }
 
 // 4 pole lowpass
-static inline float lpf4(float x, float fc, float q) {
-    float *state = ba_get(&G->audio_bump, 4);
+static inline float lpf4(float state[4], float x, float fc, float q) {
     float g = svf_g(fc), r = svf_R(q);
     x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).lp;
-    return svf_process_2pole(state + 1, x, g, r * SVF_24_R_MUL2).lp;
+    return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).lp;
 }
 
 // 4 pole hipass
-static inline float hpf4(float x, float fc, float q) {
-    float *state = ba_get(&G->audio_bump, 4);
+static inline float hpf4(float state[4], float x, float fc, float q) {
     float g = svf_g(fc), r = svf_R(q);
     x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).hp;
-    return svf_process_2pole(state + 1, x, g, r * SVF_24_R_MUL2).hp;
+    return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).hp;
 }
 
-static inline float peakf(float x, float gain, float fc, float q) {
-    float *state = ba_get(&G->audio_bump, 2);
+static inline float peakf(float state[2], float x, float gain, float fc, float q) {
     float R = svf_R(q);
     svf_output_t o = svf_process_2pole(state, x, svf_g(fc), R);
     return x + (gain - 1.f) * o.bp * R;
 }
 
-static inline float notchf(float x, float fc, float q) {
-    float *state = ba_get(&G->audio_bump, 2);
+static inline float notchf(float state[2], float x, float fc, float q) {
     svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
     return o.lp + o.hp;
 }
@@ -541,10 +494,9 @@ static const float minblep_table[129] = { // minBLEP correction for a unit step 
     -0.000953324f, -0.000495978f, -0.000134058f, 0.000123860f,  0.000276211f,  0.000327791f,  0.000288819f,  0.000173761f,
     0.000000000f};
 
-static inline float sino(float dphase) {
-    float *phase = ba_get(&G->audio_bump, 1);
-    *phase = frac(*phase + dphase);
-    return sinf(TAU * *phase);
+static inline float sino(float state[1], float dphase) {
+    state[0] = frac(state[0] + dphase);
+    return sinf(TAU * state[0]);
 }
 
 static inline float minblep(float phase, float dphase) {
@@ -557,60 +509,54 @@ static inline float minblep(float phase, float dphase) {
     return minblep_table[i] + (minblep_table[i + 1] - minblep_table[i]) * (bleppos - i);
 }
 
-static inline float rndsmooth(float dphase) {
-    float *phase = ba_get(&G->audio_bump, 5);
-    float ph = (*phase + dphase);
-    if (RARE(ph >= 1.f)) {
-        phase[1] = phase[2];
-        phase[2] = phase[3];
-        phase[3] = phase[4];
-        phase[4] = rndt();
+static inline float rndsmooth(float state[5], float dphase) {
+    float ph = state[0] + dphase;
+    if (ph >= 1.f) {
+        state[1] = state[2];
+        state[2] = state[3];
+        state[3] = state[4];
+        state[4] = rndt();
         ph -= 1.f;
     }
-    phase[0] = ph;
-    return catmull_rom(phase[1], phase[2], phase[3], phase[4], ph);
+    state[0] = ph;
+    return catmull_rom(state[1], state[2], state[3], state[4], ph);
 }
 
-static inline float sawo(float dphase) {
-    float *phase = ba_get(&G->audio_bump, 1);
-    float ph = frac(*phase);
+static inline float sawo(float state[1], float dphase) {
+    float ph = frac(state[0]);
     float saw = ph * 2.f - 1.f;
     saw -= 2.f * minblep(ph, dphase);
-    *phase = ph + dphase;
+    state[0] = ph + dphase;
     return saw;
 }
 
-static inline float pwmo(float dphase, float duty) {
-    float *phase = ba_get(&G->audio_bump, 1);
-    float ph = frac(*phase);
+static inline float pwmo(float state[1], float dphase, float duty) {
+    float ph = frac(state[0]);
     float saw = ph * 2.f - 1.f;
     saw -= 2.f * minblep(ph, dphase);
-    *phase = ph + dphase;
+    state[0] = ph + dphase;
     ph = frac(ph + duty);
     saw -= ph * 2.f - 1.f;
     saw += 2.f * minblep(ph, dphase);
     return saw;
 }
 
-static inline float squareo(float dphase) { return pwmo(dphase, 0.5f); }
+static inline float squareo(float state[1], float dphase) { return pwmo(state, dphase, 0.5f); }
 
-static inline float trio(float dphase) {
-    float *phase = ba_get(&G->audio_bump, 2);
-    float ph = *phase = frac(*phase + dphase);
+static inline float trio(float state[2], float dphase) {
+    float ph = frac(state[0] + dphase);
     float tri = ph * 4.f - 1.f;
     if (tri > 1.f)
         tri = 2.f - tri;
-    return phase[1] += (tri - phase[1]) * 0.25f;
+    return state[1] += (tri - state[1]) * 0.25f;
 }
 
-static inline float sawo_aliased(float dphase) {
-    float *phase = ba_get(&G->audio_bump, 1);
-    float ph = *phase = frac(*phase + dphase);
+static inline float sawo_aliased(float state[1], float dphase) {
+    float ph = frac(state[0] + dphase);
     return 2.f * ph - 1.f;
 }
 
-static inline float lpf1(float x, float f) {
-    float *state = ba_get(&G->audio_bump, 1);
+static inline float lpf1(float state[1], float x, float f) {
     return state[0] += (x - state[0]) * f;
 }
 // static inline float adsr(float gate, float attack, float decay, float sustain, float release) {
@@ -674,37 +620,37 @@ static inline float midi2dphase(float midi) { return exp2f((midi - 150.232644862
 
 typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G, stereo *audio, int frames, int reloaded);
 
-static inline float do_slider(int slider_idx, basic_state_t *G, int myline, float def) {
+static inline float do_slider(float state[2],int slider_idx, int myline, float def) {
     slider_idx &= 15;
     myline &= 255;
-    float *value_line = ba_get_default(&G->sliders[slider_idx], 2, def);
-    value_line[1] = myline - 1; // we count lines from 0
-    return value_line[0];
+    if (!state[1]) state[0] = def;
+    state[1] = myline; // we count lines from 0
+    return state[0];
 }
 
-#define S_(slider_idx, def) do_slider(slider_idx, (basic_state_t *)G, __LINE__, def)
-#define S0(def) S_(0, def)
-#define S1(def) S_(1, def)
-#define S2(def) S_(2, def)
-#define S3(def) S_(3, def)
-#define S4(def) S_(4, def)
-#define S5(def) S_(5, def)
-#define S6(def) S_(6, def)
-#define S7(def) S_(7, def)
-#define S8(def) S_(8, def)
-#define S9(def) S_(9, def)
-#define S10(def) S_(10, def)
-#define S11(def) S_(11, def)
-#define S12(def) S_(12, def)
-#define S13(def) S_(13, def)
-#define S14(def) S_(14, def)
-#define S15 S_(15, def)
-#define SA S_(10, def)
-#define SB S_(11, def)
-#define SC S_(12, def)
-#define SD S_(13, def)
-#define SE S_(14, def)
-#define SF S_(15, def)
+#define S_(state, slider_idx, def) do_slider(state, slider_idx, __LINE__, def)
+#define S0(state, def) S_(state, 0, def)
+#define S1(state, def) S_(state, 1, def)
+#define S2(state, def) S_(state, 2, def)
+#define S3(state, def) S_(state, 3, def)
+#define S4(state, def) S_(state, 4, def)
+#define S5(state, def) S_(state, 5, def)
+#define S6(state, def) S_(state, 6, def)
+#define S7(state, def) S_(state, 7, def)
+#define S8(state, def) S_(state, 8, def)
+#define S9(state, def) S_(state, 9, def)
+#define S10(state, def) S_(state, 10, def)
+#define S11(state, def) S_(state, 11, def)
+#define S12(state, def) S_(state, 12, def)
+#define S13(state, def) S_(state, 13, def)
+#define S14(state, def) S_(state, 14, def)
+#define S15(state, def) S_(state, 15, def)
+#define SA S_(state, 10, def)
+#define SB S_(state, 11, def)
+#define SC S_(state, 12, def)
+#define SD S_(state, 13, def)
+#define SE S_(state, 14, def)
+#define SF S_(state, 15, def)
 #define LOG(...)                                                                                                                   \
     {                                                                                                                              \
         static int count = 0;                                                                                                      \
@@ -739,10 +685,6 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
     G = (basic_state_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
     int dt_q32 = G->playing ? G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)) : 0; // on the order of 22000
     for (int i = 0; i < frames; i++) {
-        // reset the per-sample bump allocators
-        for (int slider_idx = 0; slider_idx < 16; slider_idx++)
-            G->sliders[slider_idx].i = 0;
-        G->audio_bump.i = 0;
         probe = {};
         audio[i] = do_sample(audio[i]);
         audio[i + frames] = probe;
@@ -751,10 +693,6 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
         G->t=G->t_q32*(1./4294967296.);
         G->reloaded = 0;
     }
-    // remember the high watermark for the sliders
-    for (int slider_idx = 0; slider_idx < 16; slider_idx++)
-        G->sliders_hwm[slider_idx] = G->sliders[slider_idx].i;
-
     return G;
 }
 

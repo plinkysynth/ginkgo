@@ -168,7 +168,7 @@ static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { 
 
 
 stereo reverb(stereo inp) {
-    float *state = ba_get(&G->audio_bump, 8 + 8); // 8 for filters, 8 for 4x stereo output samples
+    float *state = G->R.filter_state;
     stereo *state2 = (stereo *)(state + 8);
     ////////////////////////// 4x DOWNSAMPLE
     inp = (stereo){
@@ -203,9 +203,6 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
     if (reloaded) {
         init_basic_state();
         (*init_state)();
-    }
-    if (!_G->audio_bump.data) {
-        ba_grow(&_G->audio_bump, 65536);
     }
     // update bpm
     if (_G->patterns_map) {
@@ -285,11 +282,18 @@ void test_conv_reverb(void) {
     fwrite(convblock_fft, 2 * CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2, f);
     fclose(f);
 }
-
+typedef struct voice_state_t {
+    int key;
+    float phase;
+    float dphase;
+    float duty;
+    float gate;
+    float env;
+} voice_state_t;
 float test_patterns(void) {
-    static hap_t haps[8], tmp[8];
-    static hap_span_t hs;
+    
     static hap_time from,to;
+    static voice_state_t *voices;
     if ((G->sampleidx % 96)==0 && G->patterns_map) {
         pattern_t *p = &G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
         if (!p->key) return 0.f;
@@ -299,24 +303,34 @@ float test_patterns(void) {
             printf("resetting from %f to %f\n", from, to);
             from = to - 1.f/100.;
         }
-        //printf("%f\n", to);
-        if (G->playing)
-            hs=p->make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
-        else 
-            hs = {};
-        pretty_print_haps(hs, from, to);
-    }
-    float rv=0.f;
-    static float phases[8]={};    
-    for (hap_t *h = hs.s; h < hs.e; h++) {
-        if (h->valid_params & (1 << P_NOTE)) {
-            float age = (from - h->t0);
-            if (age>=0.f) 
-            {
-                float duty = h->get_param(P_NUMBER, 4.f)*0.125f + 0.0625f;
-                rv += pwmo(midi2dphase(h->params[P_NOTE]), duty) * exp2f(-age*8.f);
+        for (int i=stbds_hmlen(voices); i-->0; ) {
+            voice_state_t *v = &voices[i];
+            v->gate = 0;
+        }
+        if (G->playing) {
+            hap_t haps[8], tmp[8];
+            hap_span_t hs=p->make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
+            pretty_print_haps(hs, from, to);
+            for (hap_t *h = hs.s; h < hs.e; h++) if (h->valid_params & (1 << P_NOTE)) {
+                voice_state_t *v = stbds_hmgetp_null(voices, h->hapid);
+                if (!v) {
+                    voice_state_t newv = {h->hapid};
+                    v = &stbds_hmputs(voices, newv);
+                    printf("%d voices - new = %d\n", (int)stbds_hmlen(voices), h->hapid);
+                }
+                v->gate = 1.f;
+                v->dphase = midi2dphase(h->params[P_NOTE]);
+                v->duty = h->get_param(P_NUMBER, 4.f)*0.125f + 0.0625f;
             }
         }
+    }
+    float rv=0.f;
+    for (int i=stbds_hmlen(voices); i-->0; ) {
+        voice_state_t *v = &voices[i];
+        rv += pwmo(&v->phase, v->dphase, v->duty) * v->env;
+        v->env += (v->gate - v->env) * ((v->env > v->gate) ? 0.001f : 0.001f );
+        if (v->env < 0.01f && v->gate == 0.f) 
+            stbds_hmdel(voices, v->key);
     }
     return rv;
 }

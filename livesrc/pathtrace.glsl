@@ -14,10 +14,9 @@
 // sky wasteland_clouds
 // sky university_workshop        
 // first sky wins
-
+// taa
 #define PI 3.141592f
 const float exposure = 0.3f;
-const float aperture = 0.01f;
         
 const float F0 = 0.01;
 float schlickF(float cosTheta, float F0){
@@ -28,21 +27,9 @@ float schlickF(float cosTheta, float F0){
 vec3 skycol(vec3 d_norm, float lod) {
     return 10.*smoothstep(0.51,0.52,(d_norm.yyy));
     //return d_norm*0.5+0.5;
-    //return textureLod(uSky, vec2(atan(d_norm.x,d_norm.z)*(0.5/PI), 0.5-asin(d_norm.y)*(1./PI)), lod).xyz;
+    return textureLod(uSky, vec2(atan(d_norm.x,d_norm.z)*(0.5/PI), 0.5-asin(d_norm.y)*(1./PI)), lod).xyz;
     return vec3(max(0,d_norm.y));
     
-}
-
-float aabb_intersect(vec3 ro, vec3 inv_rd, vec3 boxmin, vec3 boxmax) {
-    vec3 t0 = (boxmin - ro) * inv_rd;
-    vec3 t1 = (boxmax - ro) * inv_rd;
-    vec3 tmin_v = min(t0, t1);
-    vec3 tmax_v = max(t0, t1);
-    float tmin = max(max(tmin_v.x, tmin_v.y), tmin_v.z);
-    float tmax = min(min(tmax_v.x, tmax_v.y), tmax_v.z);
-    // 'carefully' designed so that if we start inside the box, we get a negative value but not inf.
-    // but if we miss or start after the box, we return inf.
-    return (tmin >= tmax || tmax<=0.) ? 1e9 : tmin;
 }
 
 bool bvh_intersect(vec3 ro, vec3 inv_rd, int i, float maxt) {
@@ -52,31 +39,18 @@ bool bvh_intersect(vec3 ro, vec3 inv_rd, int i, float maxt) {
     return boxhit_t >= maxt;
 }
 
+
 vec4 pixel(vec2 uv) { 
     vec3 o=vec3(0.);
     vec4 r4=rnd4();
     float tofs = r4.x;
     float skylod = 0.f;
     float disparity = 0.f;
-    vec2 fov2 = vec2(fov * 16./9., fov);
-        
-
     for (int smpl = 0; smpl<8;smpl++) {
-        // make the eye ray
-        vec4 r4 = rnd4();
         float t= (smpl+tofs)*(1.f/16.f)+0.5f;
-        mat4 mat = c_cam2world_old + (c_cam2world - c_cam2world_old) * t;
-        vec2 uv = (v_uv - 0.5) * fov2 + (r4.xy-0.5) * 1.f/1080.;
-        // choose a point on the focal plane, assuming camera at origin
-        float focal_distance = 10.;//c_lookat.w;
-        vec3 rt = (mat[2].xyz + uv.x * mat[0].xyz + uv.y * mat[1].xyz) * focal_distance;
-        // choose a point on the lens
-        vec2 lensuv = rnd_disc(r4.zw)*aperture;
-        float anamorphic = 0.66;
-        vec3 ro = mat[0].xyz * lensuv.x * anamorphic + mat[1].xyz * lensuv.y;
-        vec3 rd = rt-ro;
-        ro+=mat[3].xyz; // add in camera pos
-        rd=normalize(rd);
+        vec3 ro,rd;
+        eyeray(t, ro, rd);
+        //return vec4(rd*0.5+0.5,1.);
         vec3 thpt = vec3(exposure / (1.+2.*dot(uv,uv)));
         // trace the path
         const int max_bounce = 4;

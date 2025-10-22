@@ -2,6 +2,10 @@
 #include "hash_literal.h"
 #include "utils.h"
 #include "miniparse.h"
+#include <ctype.h>
+
+int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
+const char *print_midinote(int note);
 
 int fbw, fbh; // current framebuffer size in pixels
 
@@ -27,7 +31,7 @@ typedef struct autocomplete_option_t {
 
 typedef struct EditorState {
     char *str;                                   // stb stretchy buffer
-    const char *fname;                                 // name of the file
+    const char *fname;                           // name of the file
     edit_op_t *edit_ops;                         // stretchy buffer
     autocomplete_option_t *autocomplete_options; // stretchy buffer
     int autocomplete_index;
@@ -72,7 +76,12 @@ typedef struct slider_spec_t {
     float minval, maxval, curval;
 } slider_spec_t;
 
-bool ispartofnumber(char c) { return isdigit(c) || c == '-' || c == '.' || c == '+' || c == 'e' || c == 'E'; }
+bool ispartofnumber(char c) { return isdigit(c) || c == '-' || c == '.' || c == 'e' || c == 'E'; }
+
+static inline bool iswordbreak(char c) {
+    return !isalnum(c) && !ispartofnumber(c);
+}
+static inline bool isnewline(char c) { return c == '\n' || c == '\r'; }
 
 int try_parse_number(const char *str, int n, int idx, float *out, int *out_idx, float default_val) {
     int i = idx;
@@ -80,7 +89,8 @@ int try_parse_number(const char *str, int n, int idx, float *out, int *out_idx, 
         ++i;
     if (i == idx) {
         *out = default_val;
-        *out_idx = idx;
+        if (out_idx)
+            *out_idx = idx;
         return 0;
     }
     char tmp[i - idx + 1];
@@ -90,11 +100,13 @@ int try_parse_number(const char *str, int n, int idx, float *out, int *out_idx, 
     float val = strtof(tmp, &end);
     if (end <= tmp) {
         *out = default_val;
-        *out_idx = i;
+        if (out_idx)
+            *out_idx = i;
         return 0;
     }
     *out = val;
-    *out_idx = end - tmp + idx;
+    if (out_idx)
+        *out_idx = end - tmp + idx;
     return 1;
 }
 
@@ -289,11 +301,29 @@ int count_leading_spaces(EditorState *E, int start_idx) {
     return x;
 }
 
-static inline bool isseparator(char c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ';' || c == ',' || c == ':' || c == '.' || c == '(' ||
-           c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '\'' || c == '\"' || c == '`' || c=='=' || c=='<' || c=='>';
+void find_word_at_idx(EditorState *E, int cursor_idx, int *start_idx, int *end_idx) {
+    int idx, idx2;
+    for (idx = cursor_idx; idx < stbds_arrlen(E->str); ++idx)
+        if (iswordbreak(E->str[idx]))
+            break;
+    for (idx2 = cursor_idx - 1; idx2 >= 0; --idx2)
+        if (iswordbreak(E->str[idx2]))
+            break;
+    *start_idx = idx2 + 1;
+    *end_idx = idx;
 }
-static inline bool isnewline(char c) { return c == '\n' || c == '\r'; }
+
+void find_line_at_idx(EditorState *E, int cursor_idx, int *start_idx, int *end_idx) {
+    int idx, idx2;
+    for (idx = cursor_idx; idx < stbds_arrlen(E->str); ++idx)
+        if (isnewline(E->str[idx]))
+            break;
+    for (idx2 = E->cursor_idx; idx2 >= 0; --idx2)
+        if (isnewline(E->str[idx2]))
+            break;
+    *start_idx = idx2 + 1;
+    *end_idx = idx;
+}
 
 static inline void postpone_autocomplete_show(EditorState *E) { E->autocomplete_show_after = G->iTime + 0.5f; }
 
@@ -315,8 +345,10 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
     }
     if (!E->mouse_dragging_chart) {
         // sliders on the right interaction
+        
         if (E->click_fx >= tmw - 16 && E->click_fx < tmw) {
             for (int slideridx = 0; slideridx < 16; ++slideridx) {
+                /*
                 for (int i = 0; i < G->sliders[slideridx].n; i += 2) {
                     int line = G->sliders[slideridx].data[i + 1];
                     if (line == (int)E->click_fy) {
@@ -326,10 +358,10 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                             float newvalue = clamp(E->click_slider_value + (fx - E->click_fx) / 16.f, 0.f, 1.f);
                             G->sliders[slideridx].data[i] = newvalue;
                         }
-                        //printf("dragging slider on line %d\n", line);
+                        // printf("dragging slider on line %d\n", line);
                         return;
                     }
-                }
+                }*/
             }
         }
         // text editor mouse interaction
@@ -381,27 +413,11 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
             E->cursor_x_target = E->cursor_x;
             if (is_drag < 0 && click_count == 2) {
                 // double click - select word
-                int idx, idx2;
-                for (idx = E->cursor_idx; idx < stbds_arrlen(E->str); ++idx)
-                    if (isseparator(E->str[idx]))
-                        break;
-                for (idx2 = E->cursor_idx; idx2 >= 0; --idx2)
-                    if (isseparator(E->str[idx2]))
-                        break;
-                E->select_idx = idx2 + 1;
-                E->cursor_idx = idx;
+                find_word_at_idx(E, E->cursor_idx, &E->select_idx, &E->cursor_idx);
             }
             if (is_drag < 0 && click_count == 3) {
                 // triple click - select line
-                int idx, idx2;
-                for (idx = E->cursor_idx; idx < stbds_arrlen(E->str); ++idx)
-                    if (isnewline(E->str[idx]))
-                        break;
-                for (idx2 = E->cursor_idx; idx2 >= 0; --idx2)
-                    if (isnewline(E->str[idx2]))
-                        break;
-                E->select_idx = idx2 + 1;
-                E->cursor_idx = idx;
+                find_line_at_idx(E, E->cursor_idx, &E->select_idx, &E->cursor_idx);
             }
         }
     }
@@ -459,6 +475,40 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 
     if (super)
         switch (key & 0xFFFF) {
+        case GLFW_KEY_UP:
+        case GLFW_KEY_DOWN: {
+            int word_start, word_end;
+            int n = stbds_arrlen(E->str);
+            find_word_at_idx(E, E->cursor_idx, &word_start, &word_end);
+            float number = 0.f;
+            int number_idx = 0;
+            const char *end = E->str+word_end;
+            int midinote = parse_midinote(E->str+word_start, E->str+word_end, &end, 0);
+            if (midinote>=0) {
+                midinote += (key & 0xffff) == GLFW_KEY_UP ? 1 : -1;
+                midinote=clamp(midinote, 0, 127);
+                const char *buf = print_midinote(midinote);
+                push_edit_op(E, word_start, word_end, buf, 0);
+                return;
+            } else if (try_parse_number(E->str, n, word_start, &number, &number_idx, 0.f)) {
+                while (word_end > word_start && !ispartofnumber(E->str[word_end-1]))
+                    word_end--;
+                // count decimal places
+                int dp = -1;
+                for (int i = word_start; i < word_end; i++)
+                    if (E->str[i] == '.')
+                        dp = i;
+                int numdp = (dp<0) ? 0 : max(1, word_end - dp - 1);
+                number += powf(10.f, -numdp) * ((key & 0xffff) == GLFW_KEY_UP ? 1.f : -1.f);
+                char buf[32];
+                char fmt[32];
+                snprintf(fmt, sizeof(fmt), "%%0.%df", numdp);
+                snprintf(buf, sizeof(buf), fmt, number);
+                push_edit_op(E, word_start, word_end, buf, 0);
+                return;
+            }
+            break;
+        }
         case GLFW_KEY_MINUS:
             adjust_font_size(E, -1);
             break;
@@ -603,176 +653,176 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         }
     bool autocomplete_valid = !shift && E->autocomplete_options && E->autocomplete_index >= 0 &&
                               E->autocomplete_index < stbds_hmlen(E->autocomplete_options);
-    if (autocomplete_valid && (key=='\t' || key=='\n')) {
+    if (autocomplete_valid && (key == '\t' || key == '\n')) {
         autocomplete_option_t *option = &E->autocomplete_options[E->autocomplete_index];
         int matchfrom = E->cursor_idx - option->matchlen;
         if (matchfrom < 0)
             matchfrom = 0;
         push_edit_op(E, matchfrom, matchfrom + option->matchlen, option->key, 1);
     } else
-    switch (key & 0xFFFF) {
-    case '\b':
-    case GLFW_KEY_BACKSPACE:
-        if (E->find_mode) {
-            int ss = get_select_start(E);
-            int se = get_select_end(E);
-            E->select_idx = ss;
-            E->cursor_idx = max(ss, se - 1);
-            break;
-        } else if (has_selection) {
-            push_edit_op(E, get_select_start(E), get_select_end(E), NULL, 1);
-        } else if (E->cursor_idx > 0) {
-            push_edit_op(E, E->cursor_idx - 1, E->cursor_idx, NULL, 1);
-        }
-        break;
-    case GLFW_KEY_DELETE:
-        if (!E->find_mode) {
-            push_edit_op(E, E->cursor_idx, E->cursor_idx + 1, NULL, 1);
-        }
-        break;
-    // TODO: tab/shift-tab should indent or unindent the whole selection; unless its tab after leading space, in which case its just
-    // an insert.
-    case '\t': {
-        if (E->find_mode) {
-            jump_to_found_text(E, shift, 0);
-        } else {
-            int ss = get_select_start(E);
-            int se = get_select_end(E);
-            int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
-            if (sy == ey && !shift)
-                goto insert_character;
-            ss = xy_to_idx(E, 0, sy);
-            se = xy_to_idx(E, 0x7fffffff, ey);
-            char *str = stbstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
-            for (char *c = str; *c;) {
-                if (shift) {
-                    // skip up to 4 spaces or a tab.
-                    char *nextchar = c;
-                    for (int i = 0; i < 4; ++i, ++nextchar)
-                        if (*nextchar == '\t') {
-                            nextchar++;
-                            break;
-                        } else if (*nextchar != ' ')
-                            break;
-                    memmove(c, nextchar, strlen(nextchar) + 1);
-                } else {
-                    memmove(c + 4, c, strlen(c) + 1);
-                    memset(c, ' ', 4);
-                }
-                while (*c && *c != '\n')
-                    ++c;
-                if (*c == '\n')
-                    ++c;
-            }
-            push_edit_op(E, ss, se, str, 1);
-            E->select_idx = ss;
-            E->cursor_idx = ss + strlen(str);
-            stbds_arrfree(str);
-        }
-        break;
-    }
-    case '\n':
-
-    case ' ' ... '~':
-    insert_character:
-        if (!super && !ctrl) {
+        switch (key & 0xFFFF) {
+        case '\b':
+        case GLFW_KEY_BACKSPACE:
             if (E->find_mode) {
-                jump_to_found_text(E, shift, key);
-            } else {
-                E->autocomplete_show_after = 0.f; // after typing, we can immediately show autocomplete.
-                // delete the selection; insert the character
-                int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
-                char buf[ls + 2];
-                buf[0] = key;
-                memset(buf + 1, ' ', ls);
-                buf[ls + 1] = 0;
-                push_edit_op(E, get_select_start(E), get_select_end(E), buf, 1);
+                int ss = get_select_start(E);
+                int se = get_select_end(E);
+                E->select_idx = ss;
+                E->cursor_idx = max(ss, se - 1);
+                break;
+            } else if (has_selection) {
+                push_edit_op(E, get_select_start(E), get_select_end(E), NULL, 1);
+            } else if (E->cursor_idx > 0) {
+                push_edit_op(E, E->cursor_idx - 1, E->cursor_idx, NULL, 1);
             }
+            break;
+        case GLFW_KEY_DELETE:
+            if (!E->find_mode) {
+                push_edit_op(E, E->cursor_idx, E->cursor_idx + 1, NULL, 1);
+            }
+            break;
+        // TODO: tab/shift-tab should indent or unindent the whole selection; unless its tab after leading space, in which case its
+        // just an insert.
+        case '\t': {
+            if (E->find_mode) {
+                jump_to_found_text(E, shift, 0);
+            } else {
+                int ss = get_select_start(E);
+                int se = get_select_end(E);
+                int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
+                if (sy == ey && !shift)
+                    goto insert_character;
+                ss = xy_to_idx(E, 0, sy);
+                se = xy_to_idx(E, 0x7fffffff, ey);
+                char *str = stbstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
+                for (char *c = str; *c;) {
+                    if (shift) {
+                        // skip up to 4 spaces or a tab.
+                        char *nextchar = c;
+                        for (int i = 0; i < 4; ++i, ++nextchar)
+                            if (*nextchar == '\t') {
+                                nextchar++;
+                                break;
+                            } else if (*nextchar != ' ')
+                                break;
+                        memmove(c, nextchar, strlen(nextchar) + 1);
+                    } else {
+                        memmove(c + 4, c, strlen(c) + 1);
+                        memset(c, ' ', 4);
+                    }
+                    while (*c && *c != '\n')
+                        ++c;
+                    if (*c == '\n')
+                        ++c;
+                }
+                push_edit_op(E, ss, se, str, 1);
+                E->select_idx = ss;
+                E->cursor_idx = ss + strlen(str);
+                stbds_arrfree(str);
+            }
+            break;
         }
-        break;
-    case GLFW_KEY_LEFT:
-        postpone_autocomplete_show(E);
-        if (super) {
-            // same as home
+        case '\n':
+
+        case ' ' ... '~':
+        insert_character:
+            if (!super && !ctrl) {
+                if (E->find_mode) {
+                    jump_to_found_text(E, shift, key);
+                } else {
+                    E->autocomplete_show_after = 0.f; // after typing, we can immediately show autocomplete.
+                    // delete the selection; insert the character
+                    int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
+                    char buf[ls + 2];
+                    buf[0] = key;
+                    memset(buf + 1, ' ', ls);
+                    buf[ls + 1] = 0;
+                    push_edit_op(E, get_select_start(E), get_select_end(E), buf, 1);
+                }
+            }
+            break;
+        case GLFW_KEY_LEFT:
+            postpone_autocomplete_show(E);
+            if (super) {
+                // same as home
+                int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
+                E->cursor_idx = xy_to_idx(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
+            } else if (has_selection && !shift) {
+                E->cursor_idx = get_select_start(E);
+            } else
+                E->cursor_idx = max(0, E->cursor_idx - 1);
+            reset_selection = !shift;
+            break;
+        case GLFW_KEY_RIGHT:
+            postpone_autocomplete_show(E);
+            if (super) {
+                // same as end
+                E->cursor_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
+            } else if (has_selection && !shift) {
+                E->cursor_idx = get_select_end(E);
+            } else
+                E->cursor_idx = min(E->cursor_idx + 1, n);
+            reset_selection = !shift;
+            break;
+
+        case GLFW_KEY_UP:
+            if (E->find_mode) {
+                jump_to_found_text(E, 1, 0);
+                postpone_autocomplete_show(E);
+            } else if (E->autocomplete_options) {
+                E->autocomplete_scroll_y--;
+            } else {
+                postpone_autocomplete_show(E);
+                E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 1);
+                set_target_x = 0;
+                reset_selection = !shift;
+            }
+            break;
+        case GLFW_KEY_DOWN:
+            if (E->find_mode) {
+                jump_to_found_text(E, 0, 0);
+                postpone_autocomplete_show(E);
+            } else if (E->autocomplete_options) {
+                E->autocomplete_scroll_y++;
+            } else {
+                postpone_autocomplete_show(E);
+                E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 1);
+                set_target_x = 0;
+                reset_selection = !shift;
+            }
+            break;
+        case GLFW_KEY_HOME: {
+            postpone_autocomplete_show(E);
             int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
             E->cursor_idx = xy_to_idx(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
-        } else if (has_selection && !shift) {
-            E->cursor_idx = get_select_start(E);
-        } else
-            E->cursor_idx = max(0, E->cursor_idx - 1);
-        reset_selection = !shift;
-        break;
-    case GLFW_KEY_RIGHT:
-        postpone_autocomplete_show(E);
-        if (super) {
-            // same as end
+            reset_selection = !shift;
+            break;
+        }
+        case GLFW_KEY_END:
+            postpone_autocomplete_show(E);
             E->cursor_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
-        } else if (has_selection && !shift) {
-            E->cursor_idx = get_select_end(E);
-        } else
-            E->cursor_idx = min(E->cursor_idx + 1, n);
-        reset_selection = !shift;
-        break;
-
-    case GLFW_KEY_UP:
-        if (E->find_mode) {
-            jump_to_found_text(E, 1, 0);
-            postpone_autocomplete_show(E);
-        } else if (E->autocomplete_options) {
-            E->autocomplete_scroll_y--;
-        } else {
-            postpone_autocomplete_show(E);
-            E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 1);
-            set_target_x = 0;
             reset_selection = !shift;
-        }
-        break;
-    case GLFW_KEY_DOWN:
-        if (E->find_mode) {
-            jump_to_found_text(E, 0, 0);
+            break;
+        case GLFW_KEY_PAGE_UP:
             postpone_autocomplete_show(E);
-        } else if (E->autocomplete_options) {
-            E->autocomplete_scroll_y++;
-        } else {
+            if (E->find_mode) {
+                jump_to_found_text(E, 1, 0);
+            } else {
+                E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 20);
+                set_target_x = 0;
+                reset_selection = !shift;
+            }
+            break;
+        case GLFW_KEY_PAGE_DOWN:
             postpone_autocomplete_show(E);
-            E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 1);
-            set_target_x = 0;
-            reset_selection = !shift;
+            if (E->find_mode) {
+                jump_to_found_text(E, 0, 0);
+            } else {
+                E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 20);
+                set_target_x = 0;
+                reset_selection = !shift;
+            }
+            break;
         }
-        break;
-    case GLFW_KEY_HOME: {
-        postpone_autocomplete_show(E);
-        int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
-        E->cursor_idx = xy_to_idx(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
-        reset_selection = !shift;
-        break;
-    }
-    case GLFW_KEY_END:
-        postpone_autocomplete_show(E);
-        E->cursor_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
-        reset_selection = !shift;
-        break;
-    case GLFW_KEY_PAGE_UP:
-        postpone_autocomplete_show(E);
-        if (E->find_mode) {
-            jump_to_found_text(E, 1, 0);
-        } else {
-            E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 20);
-            set_target_x = 0;
-            reset_selection = !shift;
-        }
-        break;
-    case GLFW_KEY_PAGE_DOWN:
-        postpone_autocomplete_show(E);
-        if (E->find_mode) {
-            jump_to_found_text(E, 0, 0);
-        } else {
-            E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 20);
-            set_target_x = 0;
-            reset_selection = !shift;
-        }
-        break;
-    }
     if (reset_selection) {
         E->select_idx = E->cursor_idx;
         E->find_mode = 0;
@@ -835,7 +885,7 @@ void set_status_bar(uint32_t color, const char *msg, ...) {
     va_start(args, msg);
     vsnprintf(status_bar, sizeof(status_bar) - 1, msg, args);
     va_end(args);
-    //fprintf(stderr, "%s\n", status_bar);
+    // fprintf(stderr, "%s\n", status_bar);
     status_bar_color = color;
     status_bar_time = glfwGetTime();
 }
@@ -1114,7 +1164,6 @@ int horizontal_tick(int x) { // x=0 (4 pixel tick starting from left edge) to x=
     return 128 + 16 + clamp(x + 4, 0, 15);
 }
 
-
 const char *find_line_end_or_comment(const char *s, const char *e) {
     while (s < e) {
         if (*s == '\n')
@@ -1140,7 +1189,7 @@ const char *find_line_end_or_comment(const char *s, const char *e) {
 static inline Sound *get_sound_span(const char *s, const char *e) { return get_sound(temp_cstring_from_span(s, e)); }
 
 autocomplete_option_t autocomplete_score(const char *users, int userlen, int minmatch, const char *option) {
-    autocomplete_option_t rv={option};
+    autocomplete_option_t rv = {option};
     /*
     // find the longest substring of option that starts at 'users'
     for (const char *c = option; *c; c++) {
@@ -1163,24 +1212,30 @@ autocomplete_option_t autocomplete_score(const char *users, int userlen, int min
     }*/
     // try: letters must appear in order...
     const char *src = users;
-    const char *srcend = users+userlen;
+    const char *srcend = users + userlen;
     const char *c = option;
 
-    while (*c && src<srcend) {
-        while (src<srcend && *c && tolower(*src) != tolower(*c)) {
+    while (*c && src < srcend) {
+        while (src < srcend && *c && tolower(*src) != tolower(*c)) {
             ++c;
-            if (src==users) rv.xoffset++;
+            if (src == users)
+                rv.xoffset++;
         }
-        int matchweight=1;
-        while (src<srcend && *c && tolower(*src) == tolower(*c)) {
-            ++c; ++src; rv.value+=matchweight; rv.matchlen++; matchweight+=5;
+        int matchweight = 1;
+        while (src < srcend && *c && tolower(*src) == tolower(*c)) {
+            ++c;
+            ++src;
+            rv.value += matchweight;
+            rv.matchlen++;
+            matchweight += 5;
         }
-        if (src>=srcend || *src!='_') break;
+        if (src >= srcend || *src != '_')
+            break;
         src++;
         rv.matchlen++;
         rv.value++;
     }
-    if (rv.matchlen < minmatch || rv.matchlen==strlen(option))
+    if (rv.matchlen < minmatch || rv.matchlen == strlen(option))
         rv.value = 0;
     return rv;
 }
@@ -1201,11 +1256,12 @@ int code_color(EditorState *E, uint32_t *ptr) {
     float *sliders[TMH] = {};
     int sliderindices[TMH];
     float *new_closest_slider[16] = {};
+    /*
     for (int slideridx = 0; slideridx < 16; ++slideridx) {
         for (int i = 0; i < G->sliders_hwm[slideridx]; i += 2) {
             float *value_line = G->sliders[slideridx].data + i;
             float value = value_line[0];
-            int line = (int)value_line[1];
+            int line = (int)value_line[1] - 1;
             int dist_to_old =
                 new_closest_slider[slideridx] == NULL ? 1000000 : abs((int)new_closest_slider[slideridx][1] - E->cursor_y);
             int dist_to_new = abs(line - E->cursor_y);
@@ -1218,7 +1274,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 sliders[line] = value_line;
             }
         }
-    }
+    }*/
     memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
     int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
@@ -1395,7 +1451,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
         if (h != HASH("include") && !is_space((unsigned)c))
             wasinclude = false;
         float *curve_data = NULL;
-        if (token_is_curve && j>i+2) {
+        if (token_is_curve && j > i + 2) {
             int numdata = j - i - 2;
             curve_data = (float *)alloca(4 * numdata);
             fill_curve_data_from_string(curve_data, t.str + i + 1, numdata);
@@ -1435,11 +1491,15 @@ int code_color(EditorState *E, uint32_t *ptr) {
             }
             if (t.x < TMW && t.y >= 0 && t.y < TMH)
                 t.ptr[t.y * TMW + t.x] = (ccol) | (unsigned char)(ch);
-            if (ch == '\t')
-                t.x = next_tab(t.x - left) + left;
-            else if (ch == '\n' || ch == 0) {
+            if (ch == '\t') {
+                int nextx = next_tab(t.x - left) + left;
+                while (t.x < nextx) {
+                    t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
+                    t.x++;
+                }
+            } else if (ch == '\n' || ch == 0) {
                 // look for an error message
-                int ysc=t.y + E->intscroll;
+                int ysc = t.y + E->intscroll;
                 const char *errline = hmget(E->error_msgs, ysc);
                 if (errline) {
                     uint32_t errcol = C_ERR;
@@ -1452,11 +1512,12 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
                 // fill to the end of the line
-                if (pattern_mode && t.y>=0 && t.y<TMH) {
+                if (pattern_mode && t.y >= 0 && t.y < TMH) {
                     for (; t.x < tmw; t.x++) {
                         t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     }
                 }
+                /*
                 if (t.y >= 0 && t.y < TMH && sliders[t.y]) {
                     int slider_idx = sliderindices[t.y];
                     float value = *sliders[t.y];
@@ -1469,7 +1530,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         int ch = horizontal_tick((int)(value * 127.f) - (x - x1) * 8 - 2);
                         t.ptr[t.y * TMW + x] = col | ch;
                     }
-                }
+                }*/
                 t.x = left;
                 ++t.y;
             } else
@@ -1502,10 +1563,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
         if (hash != cached_compiled_string_hash) {
             cached_compiled_string_hash = hash;
             cached_parser.unalloc();
-            cached_parser = {.s=codes, .n=(int)(codee-codes)};
+            cached_parser = {.s = codes, .n = (int)(codee - codes)};
             pattern_t pat = parse_pattern(&cached_parser);
             if (cached_parser.err <= 0) {
-                cached_haps = pat.make_haps({cached_hap_mem,cached_hap_mem+1024}, {temp_hap_mem,temp_hap_mem+1024}, 0.f, 4.f);
+                cached_haps = pat.make_haps({cached_hap_mem, cached_hap_mem + 1024}, {temp_hap_mem, temp_hap_mem + 1024}, 0.f, 4.f);
             }
         }
         if (!cached_haps.empty()) {
@@ -1525,10 +1586,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
             for (hap_t *h = cached_haps.s; h < cached_haps.e; h++) {
                 if (h->valid_params == 0)
                     continue;
-                row_key key = { 
-                    (h->valid_params & (1 << P_SOUND)) ? (int)h->params[P_SOUND] : -1, 
-                    (h->valid_params & (1 << P_NUMBER)) ? (int)h->params[P_NUMBER] : -1, 
-                    (h->valid_params & (1 << P_NOTE)) ? (int)h->params[P_NOTE] : -1 };
+                row_key key = {(h->valid_params & (1 << P_SOUND)) ? (int)h->params[P_SOUND] : -1,
+                               (h->valid_params & (1 << P_NUMBER)) ? (int)h->params[P_NUMBER] : -1,
+                               (h->valid_params & (1 << P_NOTE)) ? (int)h->params[P_NOTE] : -1};
                 int row_plus_one = stbds_hmget(rows, key);
                 if (!row_plus_one) {
                     row_plus_one = ++numrows;
@@ -1540,18 +1600,20 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         Sound *sound = h->valid_params & (1 << P_SOUND) ? get_sound_by_index(key.sound_idx) : NULL;
                         const char *sound_name = sound ? sound->name : "";
                         char hapstr[64];
-                        char *s=hapstr;
-                        char *e=s+sizeof(hapstr)-1;
-                        s+=snprintf(s, e-s, "%s", sound_name);
+                        char *s = hapstr;
+                        char *e = s + sizeof(hapstr) - 1;
+                        s += snprintf(s, e - s, "%s", sound_name);
                         if (h->valid_params & (1 << P_NUMBER)) {
-                            s+=snprintf(s, e-s, ":%d", key.variant);
+                            s += snprintf(s, e - s, ":%d", key.variant);
                         }
                         if (h->valid_params & (1 << P_NOTE)) {
-                            if (s!=hapstr && s!=e) *s++=' ';
-                            s+=snprintf(s, e-s, "%s", print_midinote(key.midinote));
+                            if (s != hapstr && s != e)
+                                *s++ = ' ';
+                            s += snprintf(s, e - s, "%s", print_midinote(key.midinote));
                         }
-                        if (s!=e) *s++=' ';
-                        print_to_screen(t.ptr, chartx - (s-hapstr), y, 0x11188800, false, "%s", hapstr);
+                        if (s != e)
+                            *s++ = ' ';
+                        print_to_screen(t.ptr, chartx - (s - hapstr), y, 0x11188800, false, "%s", hapstr);
                         print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s", hapstr);
                         for (int x = 0; x < 128; ++x) {
                             uint32_t col = ((x & 31) == 0) ? C_CHART_HILITE : (x & 8) ? C_CHART : C_CHART_HOVER;
@@ -1603,18 +1665,17 @@ int code_color(EditorState *E, uint32_t *ptr) {
         idx_to_xy(E, cursor_token_start_idx, &x, &y);
         y -= E->intscroll;
         if (num_chars_so_far >= 2) { // at least 2 chars
-            
+
             int bestscore = 2;
             char *bestoption = NULL;
 
-
 #define COMPARE_PREFIX(x)                                                                                                          \
     {                                                                                                                              \
-        autocomplete_option_t score = autocomplete_score(token, token_len, num_chars_so_far, x);                                                                       \
-        if (score.value >= 2) {                                                                                                          \
-            stbds_hmputs(E->autocomplete_options, score);                                                                                \
-            if (score.value > bestscore) {                                                                                               \
-                bestscore = score.value;                                                                                                 \
+        autocomplete_option_t score = autocomplete_score(token, token_len, num_chars_so_far, x);                                   \
+        if (score.value >= 2) {                                                                                                    \
+            stbds_hmputs(E->autocomplete_options, score);                                                                          \
+            if (score.value > bestscore) {                                                                                         \
+                bestscore = score.value;                                                                                           \
                 bestoption = (char *)x;                                                                                            \
             }                                                                                                                      \
         }                                                                                                                          \
@@ -1649,8 +1710,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 int avoid_y = y;
                 int unscrolled_besti = stbds_hmgeti(E->autocomplete_options, bestoption);
                 int besti = unscrolled_besti + E->autocomplete_scroll_y;
-                if (besti>=numchoices) besti=numchoices-1;
-                if (besti<0) besti=0;
+                if (besti >= numchoices)
+                    besti = numchoices - 1;
+                if (besti < 0)
+                    besti = 0;
                 E->autocomplete_scroll_y = besti - unscrolled_besti;
                 E->autocomplete_index = besti;
                 y -= besti;
@@ -1663,14 +1726,16 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         autocomplete_option_t *o = &E->autocomplete_options[i];
                         if (o->matchlen == strlen(o->key))
                             continue;
-                        if (y==avoid_y+1) {
-                            int xx = x+left-o->xoffset;
-                            const char *s=token;
-                            const char *e=token+token_len;
-                            for (const char *c=o->key; *c; c++) {
-                                bool match = s<e && (tolower(*c)==tolower(*s));
-                                if (match) s++;
-                                if (xx>=0 && xx<TMW && y>=0 && y<TMH) t.ptr[xx+y*TMW] = (match?C_SELECTION:C_AUTOCOMPLETE) | (unsigned char)(*c);
+                        if (y == avoid_y + 1) {
+                            int xx = x + left - o->xoffset;
+                            const char *s = token;
+                            const char *e = token + token_len;
+                            for (const char *c = o->key; *c; c++) {
+                                bool match = s < e && (tolower(*c) == tolower(*s));
+                                if (match)
+                                    s++;
+                                if (xx >= 0 && xx < TMW && y >= 0 && y < TMH)
+                                    t.ptr[xx + y * TMW] = (match ? C_SELECTION : C_AUTOCOMPLETE) | (unsigned char)(*c);
                                 xx++;
                             }
                         } else {
@@ -1679,7 +1744,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                     y++;
                 }
-            } 
+            }
         }
         // print_to_screen(t.ptr, E->cursor_x, E->cursor_y + 1 - E->intscroll, C_SELECTION, false, "autocomplete popup");
     }
@@ -1757,7 +1822,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
 }
 
 void load_file_into_editor(EditorState *E) {
-    if (E->font_width <=0 || E->font_height <= 0) {
+    if (E->font_width <= 0 || E->font_height <= 0) {
         E->font_width = 12;
         E->font_height = 24;
     }

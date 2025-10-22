@@ -216,7 +216,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
     switch (n->type) {
     case N_LEAF:
         if (merge_repeated_leaves)
-            _append_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid);
+            _append_hap(dst, nodeidx, -1e9, 1e9, hapid); // a forever hap...
         else
             for (int i = floor(a + hap_eps); i < b; ++i) {
                 _append_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
@@ -240,8 +240,17 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
     case N_OP_REPLICATE:
     case N_OP_TIMES:
     case N_OP_DIVIDE: {
-        if (n->first_child < 0 || n->num_children != 2)
+        if (n->first_child < 0)
             break;
+        if (n->num_children == 1) {
+            if (n->type == N_OP_ELONGATE && bfs_min_max_value[nodeidx].v != 0.f) {
+                float speed_scale = 1.f / bfs_min_max_value[nodeidx].v;
+                hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a * speed_scale, b * speed_scale,
+                                              hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
+                _filter_haps(left_haps, speed_scale, a, b, -1e9, 1e9);
+            }
+            break;
+        }
         hap_span_t right_haps = _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, nodeidx), true);
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
             hap_time speed_scale = right_hap->get_param(P_NUMBER, 0.f);

@@ -1,4 +1,5 @@
 CFLAGS  = -fPIC -g -std=c++11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include -Isrc/ -I. -Wno-vla-cxx-extension # -fsanitize=address
+CFLAGS += -Werror
 LDFLAGS = -L/opt/homebrew/opt/glfw/lib -lglfw -lcurl \
           -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework CoreMIDI # -fsanitize=address
 

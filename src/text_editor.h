@@ -1756,8 +1756,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
     return E->num_lines;
 }
 
-void load_file_into_editor(EditorState *E, bool init) {
-    if (init) {
+void load_file_into_editor(EditorState *E) {
+    if (E->font_width <=0 || E->font_height <= 0) {
         E->font_width = 12;
         E->font_height = 24;
     }

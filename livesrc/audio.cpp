@@ -8,6 +8,29 @@ STATE_VERSION(1,  )
 #endif
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 stereo do_sample(stereo inp) {
 	F drums = 0 * sclip(rompler("break_think")*5); 
     F t = test_patterns()*0.2;
@@ -15,3 +38,5 @@ stereo do_sample(stereo inp) {
 	stereo wet=reverb(dry*0.5f);
 	return wet*0.5+dry*1.+drums;
 }
+
+

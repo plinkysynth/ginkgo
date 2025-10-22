@@ -1,14 +1,29 @@
+
 {
- "camera": {
-  "c_pos": [2.474890, -2.464996, 12.455307, 1.000000],
-  "c_lookat": [4.196033, -5.000073, 8.504225, 1.000000],
-  "fov": 0.400000,
-  "focal_distance": 5.000000
- },
- "editor": {
-  "ui_alpha_target": 1.000000,
-  "shader_tab": "livesrc/pathtrace.glsl",
-  "audio_tab": "livesrc/audio.cpp",
-  "cur_tab": "livesrc/pathtrace.glsl"
- }
+  "camera": {
+    "c_pos": [0.000000, 2.000000, 10.000000, 1.000000],
+    "c_lookat": [-0.227694, 6.929159, 10.807184, 1.000000],
+    "fov": 0.400000,
+    "focal_distance": 5.000000
+  },
+  "editor": {
+    "ui_alpha_target": 1.000000,
+    "cur_tab": 0,
+    "tabs": [
+      {
+        "fname": "livesrc/blank.glsl",
+        "font_height": 50,
+        "scroll_y": 0.000000,
+        "cursor_idx": 11,
+        "select_idx": 11
+      },
+      {
+        "fname": "livesrc/audio.cpp",
+        "font_height": 24,
+        "scroll_y": 0.000000,
+        "cursor_idx": 0,
+        "select_idx": 0
+      }
+    ]
+  }
 }

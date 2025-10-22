@@ -103,8 +103,8 @@ static void setup_framebuffers_and_textures(GLuint *texFPRT, GLuint *fbo, int nu
         glGenFramebuffers(1, &fbo[i]);
         texFPRT[i] = gl_create_texture(GL_NEAREST, GL_CLAMP_TO_BORDER);
         glBindTexture(GL_TEXTURE_2D, texFPRT[i]);
-        int resw = (i < num_fprts) ? RESW : (RESW >> (i - num_fprts+1));
-        int resh = (i < num_fprts) ? RESH : (RESH >> (i - num_fprts+1));
+        int resw = (i < num_fprts) ? RESW : (RESW >> (i - num_fprts + 1));
+        int resh = (i < num_fprts) ? RESH : (RESH >> (i - num_fprts + 1));
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, resw, resh, 0, GL_RGBA, GL_FLOAT, NULL);
         check_gl("alloc fpRT");
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -510,9 +510,8 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
     });
 // clang-format on
 
-EditorState audio_tab = {.fname = NULL, .is_shader = false};
-EditorState shader_tab = {.fname = NULL, .is_shader = true};
-EditorState *curE = &shader_tab;
+EditorState tabs[2] = {{.fname = NULL, .is_shader = true}, {.fname = NULL, .is_shader = false}};
+EditorState *curE = tabs;
 float ui_alpha = 0.f;
 float ui_alpha_target = 0.f;
 size_t textBytes = (size_t)(TMW * TMH * 4);
@@ -520,7 +519,7 @@ static float retina = 1.0f;
 
 static float4 c_cam2world_old[4];
 static float4 c_cam2world[4];
-static float4 c_pos= {0.f, 2.f, 10.f, 1.f};                                                           // pos;
+static float4 c_pos = {0.f, 2.f, 10.f, 1.f}; // pos;
 static float4 c_lookat;
 static float fov = 0.4f;
 static float focal_distance = 5.f;
@@ -531,30 +530,57 @@ static void set_tab(EditorState *newE) {
 }
 
 static void dump_settings(void) {
-    FILE *f=fopen("settings.json", "w");
+    FILE *f = fopen("settings.json", "w");
     if (!f) {
         fprintf(stderr, "Failed to open settings.json for writing\n");
         return;
     }
-    fprintf(f, "{\n \"camera\": {\n");
-    fprintf(f, "  \"c_pos\": [%f, %f, %f, %f],\n", c_pos.x, c_pos.y, c_pos.z, c_pos.w);
-    fprintf(f, "  \"c_lookat\": [%f, %f, %f, %f],\n", c_lookat.x, c_lookat.y, c_lookat.z, c_lookat.w);
-    fprintf(f, "  \"fov\": %f,\n", fov);
-    fprintf(f, "  \"focal_distance\": %f\n", focal_distance);
-    fprintf(f, " },\n \"editor\": {\n");
-    fprintf(f, "  \"ui_alpha_target\": %f,\n", ui_alpha_target);
-    fprintf(f, "  \"shader_tab\": \"%s\",\n", shader_tab.fname);
-    fprintf(f, "  \"audio_tab\": \"%s\",\n", audio_tab.fname);
-    fprintf(f, "  \"cur_tab\": \"%s\"\n", curE->fname);
-    fprintf(f, " }\n}\n");
-    fclose(f);
+    json_printer_t jp = {f};
+    json_start_object(&jp, NULL);
+    json_start_object(&jp, "camera");
+    json_print(&jp, "c_pos", c_pos);
+    json_print(&jp, "c_lookat", c_lookat);
+    json_print(&jp, "fov", fov);
+    json_print(&jp, "focal_distance", focal_distance);
+    json_end_object(&jp);
+    json_start_object(&jp, "editor");
+    json_print(&jp, "ui_alpha_target", ui_alpha_target);
+    json_print(&jp, "cur_tab", (int)(curE - tabs));
+    json_start_array(&jp, "tabs");
+    for (int tab = 0; tab < 2; tab++) {
+        EditorState *t = &tabs[tab];
+        json_start_object(&jp, NULL);
+        json_print(&jp, "fname", t->fname);
+        json_print(&jp, "font_height", t->font_height);
+        json_print(&jp, "scroll_y", t->scroll_y);
+        json_print(&jp, "cursor_idx", t->cursor_idx);
+        json_print(&jp, "select_idx", t->select_idx);
+        json_end_object(&jp);
+    }
+    json_end_file(&jp);
 }
 
 
-
-static void load_settings(void) {
-    char *cur_tab = NULL;
-    sj_Reader r = read_json_file("settings.json");
+static bool load_settings(int argc, char **argv) {
+    int cur_tab = 0;
+    bool want_fullscreen = false;
+    const char *settings_fname = "settings.json";
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            if (strcmp(argv[i], "--fullscreen") == 0 || strcmp(argv[i], "-f") == 0) {
+                want_fullscreen = true;
+            }
+            if (strcmp(argv[i], "--settings") == 0 || strcmp(argv[i], "-s") == 0) {
+                settings_fname = argv[i + 1];
+            }
+        } else if (strstr(argv[i], ".glsl"))
+            tabs[0].fname = stbstring_from_span(argv[i], NULL, 0);
+        else if (strstr(argv[i], ".cpp"))
+            tabs[1].fname = stbstring_from_span(argv[i], NULL, 0);
+        else if (strstr(argv[i], ".json"))
+            settings_fname = argv[i];
+    }
+    sj_Reader r = read_json_file(settings_fname);
     for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
         if (iter_key_is(&outer, "camera")) {
             for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
@@ -572,24 +598,47 @@ static void load_settings(void) {
             for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
                 if (iter_key_is(&inner, "ui_alpha_target")) {
                     ui_alpha_target = iter_val_as_float(&inner, ui_alpha_target);
-                } else if (iter_key_is(&inner, "shader_tab")) {
-                    shader_tab.fname = iter_val_as_stbstring(&inner, shader_tab.fname);
-                } else if (iter_key_is(&inner, "audio_tab")) {
-                    audio_tab.fname = iter_val_as_stbstring(&inner, audio_tab.fname);
                 } else if (iter_key_is(&inner, "cur_tab")) {
-                    cur_tab = iter_val_as_stbstring(&inner, cur_tab);
+                    cur_tab = iter_val_as_int(&inner, cur_tab);
+                } else if (iter_key_is(&inner, "tabs")) {
+                    int tabidx = 0;
+                    for (sj_iter_t inner2 = iter_start(inner.r, &inner.val); tabidx < 2 && iter_next(&inner2); tabidx++) {
+                        EditorState *t = &tabs[tabidx];
+                        bool they_set_fname = t->fname != NULL;
+                        for (sj_iter_t inner3 = iter_start(inner2.r, &inner2.val); iter_next(&inner3);) {
+                            if (iter_key_is(&inner3, "font_height")) {
+                                t->font_height = iter_val_as_int(&inner3, t->font_height);
+                            }
+                            if (they_set_fname)
+                                continue; // they specified a new name on the commandline, ignore what we stored.
+                            if (iter_key_is(&inner3, "fname")) {
+                                t->fname = iter_val_as_stbstring(&inner3, t->fname);
+                            } else if (iter_key_is(&inner3, "scroll_y") && t->scroll_y == 0.f) {
+                                t->scroll_y = iter_val_as_float(&inner3, t->scroll_y);
+                            } else if (iter_key_is(&inner3, "cursor_idx") && t->cursor_idx == 0) {
+                                t->cursor_idx = iter_val_as_int(&inner3, t->cursor_idx);
+                            } else if (iter_key_is(&inner3, "select_idx") && t->select_idx == 0) {
+                                t->select_idx = iter_val_as_int(&inner3, t->select_idx);
+                            }
+                        } // tab settings
+                        t->scroll_y_target = t->scroll_y;
+                        t->font_height = clamp(t->font_height, 8, 256);
+                        t->font_width = t->font_height / 2;
+                    }
                 }
             }
         }
     }
-    if (strcmp(cur_tab, shader_tab.fname) == 0) {
-        curE = &shader_tab;
-    } else if (strcmp(cur_tab, audio_tab.fname) == 0) {
-        curE = &audio_tab;
-    }
-    stbds_arrfree(cur_tab);
+    if (tabs[0].fname == NULL)
+        tabs[0].fname = stbstring_from_span("livesrc/blank.glsl", NULL, 0);
+    if (tabs[1].fname == NULL)
+        tabs[1].fname = stbstring_from_span("livesrc/audio.cpp", NULL, 0);
+    if (cur_tab < 0 || cur_tab >= 2)
+        cur_tab = 0;
+    curE = &tabs[cur_tab];
     free_json(&r);
     ui_alpha = ui_alpha_target;
+    return want_fullscreen;
 }
 
 GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0;
@@ -674,7 +723,9 @@ GLFWwindow *gl_init(int want_fullscreen) {
     int ww = want_fullscreen ? vm->width : 1920 / 2;
     int wh = want_fullscreen ? vm->height : 1200 / 2;
 
-    GLFWwindow *win = glfwCreateWindow(ww, wh, "ginkgo", mon, NULL);
+    char winname[1024];
+    snprintf(winname, sizeof(winname), "ginkgo | %s | %s", tabs[0].fname, tabs[1].fname);
+    GLFWwindow *win = glfwCreateWindow(ww, wh, winname, mon, NULL);
     if (!win)
         die("glfwCreateWindow failed");
     glfwGetWindowContentScale(win, &retina, NULL);
@@ -685,7 +736,6 @@ GLFWwindow *gl_init(int want_fullscreen) {
 
     return win;
 }
-
 
 static uint32_t last_mods = 0;
 
@@ -698,10 +748,10 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     if (mods == 0) {
 
         if (key == GLFW_KEY_F1) {
-            set_tab(&shader_tab);
+            set_tab(&tabs[0]);
         }
         if (key == GLFW_KEY_F2) {
-            set_tab(&audio_tab);
+            set_tab(&tabs[1]);
         }
     }
     if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
@@ -1031,8 +1081,6 @@ static void unbind_textures_from_slots(int num_slots) {
     }
 }
 
-
-
 void update_camera(GLFWwindow *win) {
     memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
     if (ui_alpha_target < 0.5) {
@@ -1040,11 +1088,11 @@ void update_camera(GLFWwindow *win) {
         float cam_my = 0.5f - G->my / fbh;
         float theta = cam_mx * TAU;
         float phi = cam_my * PI;
-        float rc = focal_distance * cosf(phi);    
-        c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 0.f}; // pos        
+        float rc = focal_distance * cosf(phi);
+        c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 0.f}; // pos
     }
-    
-    float4 c_up = {0.f, 1.f, 0.f, 0.f};                                                                    // up
+
+    float4 c_up = {0.f, 1.f, 0.f, 0.f}; // up
     float4 c_fwd = normalize(c_lookat - c_pos);
     float4 c_right = normalize(cross(c_up, c_fwd));
     c_up = normalize(cross(c_fwd, c_right));
@@ -1078,7 +1126,6 @@ void update_camera(GLFWwindow *win) {
     }
 }
 
-
 static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int num_fprts, uint32_t iFrame, GLuint vao) {
     glUseProgram(taa_pass);
     bind_texture_to_slot(taa_pass, 0, "uFP", texFPRT[2], GL_LINEAR);
@@ -1093,14 +1140,14 @@ static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int n
     draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
 }
 
-static void render_bloom_downsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, int num_bloom_mips, int num_fprts,
-                                    GLuint vao) {
+static void render_bloom_downsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPRT, uint32_t iFrame, int num_bloom_mips,
+                                    int num_fprts, GLuint vao) {
     for (int i = 0; i < num_bloom_mips; ++i) {
         int resw = RESW >> (i + 1);
         int resh = RESH >> (i + 1);
         glUseProgram(bloom_pass);
         set_bloom_uniforms(bloom_pass, resw, resh, BLOOM_KERNEL_SIZE_DOWNSAMPLE, BLOOM_FADE_FACTOR);
-        bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i ? (i + num_fprts-1) : (iFrame % 2)], GL_LINEAR);
+        bind_texture_to_slot(bloom_pass, 0, "uFP", texFPRT[i ? (i + num_fprts - 1) : (iFrame % 2)], GL_LINEAR);
         draw_fullscreen_pass(fbo[i + num_fprts], resw, resh, vao);
     }
 }
@@ -1121,7 +1168,6 @@ static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPR
     }
     glDisable(GL_BLEND);
 }
-
 
 GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mode = GL_CLAMP_TO_EDGE) {
     int w, h, n;
@@ -1261,7 +1307,7 @@ int get_sky(const char *key) {
 
 #define MAX_SPHERES 64 // must be a multiple of 256
 #define NUM_BVH_LEVELS 4
-float4 spheres[MAX_SPHERES*3+(MAX_SPHERES/4+MAX_SPHERES/16+MAX_SPHERES/64+MAX_SPHERES/256)*2];
+float4 spheres[MAX_SPHERES * 3 + (MAX_SPHERES / 4 + MAX_SPHERES / 16 + MAX_SPHERES / 64 + MAX_SPHERES / 256) * 2];
 
 static inline float4 sphere_bbox_min(float4 pos_rad) {
     return pos_rad - pos_rad.wwww; // w will be 0, which is fine;
@@ -1274,54 +1320,53 @@ static void update_spheres(void) {
     float iTime = G->iTime;
     for (int i = 0; i < MAX_SPHERES; i++) {
         int2 xy = (int2)unmorton2(i);
-        spheres[i*3+1] = spheres[i*3+0];
+        spheres[i * 3 + 1] = spheres[i * 3 + 0];
         float xx = 0.25f * sinf(iTime + xy.y);
-        float zz = 0.25f * sinf(iTime*1.1f + xy.x);
-        float yy= 0.25f * sinf(iTime*1.2f + (xy.x+xy.y));
-        float glo = max(0.f, 30000.f*(sinf(iTime*0.3f + 0.3*(xy.x*xy.y))-0.99f));
-        float ww=0.125f + 0.125f * sinf(iTime*1.3f + (xy.x-xy.y));
-        spheres[i*3+0] = float4{(float)xy.x * 0.5f + xx, yy, (float)xy.y * 0.5f + zz, ww};
-        if (spheres[i*3+1].w<=0.f) spheres[i*3+1] = spheres[i*3+0]; // new sphere.
-        spheres[i*3+2] = float4{0.1f,0.1f,0.1f, glo};
+        float zz = 0.25f * sinf(iTime * 1.1f + xy.x);
+        float yy = 0.25f * sinf(iTime * 1.2f + (xy.x + xy.y));
+        float glo = max(0.f, 30000.f * (sinf(iTime * 0.3f + 0.3 * (xy.x * xy.y)) - 0.99f));
+        float ww = 0.125f + 0.125f * sinf(iTime * 1.3f + (xy.x - xy.y));
+        spheres[i * 3 + 0] = float4{(float)xy.x * 0.5f + xx, yy, (float)xy.y * 0.5f + zz, ww};
+        if (spheres[i * 3 + 1].w <= 0.f)
+            spheres[i * 3 + 1] = spheres[i * 3 + 0]; // new sphere.
+        spheres[i * 3 + 2] = float4{0.1f, 0.1f, 0.1f, glo};
     }
-    //spheres[0].pos_rad = float4{1.5f,-10.5f,1.5f,10.f};
-    // for (int i= 0; i<10;++i)  {
-    //     spheres[rndint(MAX_SPHERES)*3+2] = float4{0.f, 0.f, 0.f, 0.f};
-    //     spheres[rndint(MAX_SPHERES)*3+2] = float4{1.f, 0.2f, 0.1f, 10.f};
-    // }
+    // spheres[0].pos_rad = float4{1.5f,-10.5f,1.5f,10.f};
+    //  for (int i= 0; i<10;++i)  {
+    //      spheres[rndint(MAX_SPHERES)*3+2] = float4{0.f, 0.f, 0.f, 0.f};
+    //      spheres[rndint(MAX_SPHERES)*3+2] = float4{1.f, 0.2f, 0.1f, 10.f};
+    //  }
 
     // compute bounding boxes bottom to top
     // level 0: min/max over motion blurred spheres.
-    float4 *dst = spheres + MAX_SPHERES*3;
+    float4 *dst = spheres + MAX_SPHERES * 3;
     const float4 *src = spheres;
-    for (int i = 0; i < MAX_SPHERES; i+=4) {
+    for (int i = 0; i < MAX_SPHERES; i += 4) {
         float4 minp = min(sphere_bbox_min(src[0]), sphere_bbox_min(src[1]));
         float4 maxp = max(sphere_bbox_max(src[0]), sphere_bbox_max(src[1]));
-        src+=3;
-        for (int j=1; j<4; j++) {
+        src += 3;
+        for (int j = 1; j < 4; j++) {
             minp = min(minp, min(sphere_bbox_min(src[0]), sphere_bbox_min(src[1])));
             maxp = max(maxp, max(sphere_bbox_max(src[0]), sphere_bbox_max(src[1])));
-            src+=3;
+            src += 3;
         }
         *dst++ = minp;
         *dst++ = maxp;
     }
     // level 1-n: min/max over child bvh nodes.
     for (int level = 1; level < NUM_BVH_LEVELS; level++) {
-        int n = MAX_SPHERES>>(level*2+2);
-        for (int i =0; i<n; i++) {
+        int n = MAX_SPHERES >> (level * 2 + 2);
+        for (int i = 0; i < n; i++) {
             *dst++ = min(min(min(src[0], src[2]), src[4]), src[6]);
             *dst++ = max(max(max(src[1], src[3]), src[5]), src[7]);
-            src+=8;
+            src += 8;
         }
     }
-}    
-
+}
 
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
-    load_settings();
-
+    bool want_fullscreen = load_settings(argc, argv);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
@@ -1333,11 +1378,10 @@ int main(int argc, char **argv) {
     ma_device dev;
     init_audio_midi(&dev);
 
-    int want_fullscreen = (argc > 1 && (strcmp(argv[1], "--fullscreen") == 0 || strcmp(argv[1], "-f") == 0));
     GLFWwindow *win = gl_init(want_fullscreen);
 
     size_t n = strlen(kFS_user_prefix) + strlen(kFS_ui_suffix) + 1;
-    char *fs_ui_str = (char*)malloc(n);
+    char *fs_ui_str = (char *)malloc(n);
     snprintf(fs_ui_str, n, "%s%s", kFS_user_prefix, kFS_ui_suffix);
     vs = compile_shader(NULL, GL_VERTEX_SHADER, kVS);
     fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, fs_ui_str);
@@ -1355,10 +1399,10 @@ int main(int argc, char **argv) {
     glDeleteShader(fs_fat);
     glDeleteShader(vs_fat);
 
-    load_file_into_editor(&shader_tab, true);
-    load_file_into_editor(&audio_tab, true);
-    try_to_compile_shader(&shader_tab);
-    parse_named_patterns_in_c_source(audio_tab.str, audio_tab.str + stbds_arrlen(audio_tab.str));
+    load_file_into_editor(&tabs[0]);
+    load_file_into_editor(&tabs[1]);
+    try_to_compile_shader(&tabs[0]);
+    parse_named_patterns_in_c_source(tabs[1].str, tabs[1].str + stbds_arrlen(tabs[1].str));
 
     texFont = load_texture("assets/font_sdf.png");
 
@@ -1404,7 +1448,6 @@ int main(int argc, char **argv) {
     glGenBuffers(2, spheretbos);
     check_gl("init sphere buffer post");
 
-
     double t0 = glfwGetTime();
     glfwSetKeyCallback(win, key_callback);
     glfwSetCharCallback(win, char_callback);
@@ -1419,11 +1462,15 @@ int main(int argc, char **argv) {
 
         glDisable(GL_DEPTH_TEST);
         editor_update(curE, win);
-        const char *s = shader_tab.str;
-        const char *e = shader_tab.str + stbds_arrlen(shader_tab.str);
-        stbds_arrpush(shader_tab.str, 0);
+        const char *s = tabs[0].str;
+        const char *e = tabs[0].str + stbds_arrlen(tabs[0].str);
+        stbds_arrpush(tabs[0].str, 0);
         const char *sky_name = strstr(s, "// sky ");
-        stbds_arrpop(shader_tab.str);
+        const char *want_taa_str = strstr(s, "// taa");
+        if (want_taa_str && want_taa_str[6] == ' ' && want_taa_str[7] == '0')
+            want_taa_str = NULL;
+        bool want_taa = want_taa_str != NULL;
+        stbds_arrpop(tabs[0].str);
         static uint32_t skytex = 0;
         if (sky_name) {
             s = sky_name + 6;
@@ -1440,20 +1487,22 @@ int main(int argc, char **argv) {
             }
         }
 
-        glBindBuffer(GL_TEXTURE_BUFFER, spheretbos[iFrame % 2]);
-        glBufferData(GL_TEXTURE_BUFFER, sizeof(spheres), nullptr, GL_STREAM_DRAW); // orphan
-        void *p = glMapBufferRange(GL_TEXTURE_BUFFER, 0, sizeof(spheres),
-                                   GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
-        //spheres[0].pos_rad.w = fabsf(sinf(iTime)) * 0.5f;
-        update_spheres();
-        memcpy(p, spheres, sizeof(spheres));
-        glUnmapBuffer(GL_TEXTURE_BUFFER);
-        glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
-        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, spheretbos[iFrame % 2]);
+        if (want_taa) { // TODO: only update spheres if they wanted them
+            glBindBuffer(GL_TEXTURE_BUFFER, spheretbos[iFrame % 2]);
+            glBufferData(GL_TEXTURE_BUFFER, sizeof(spheres), nullptr, GL_STREAM_DRAW); // orphan
+            void *p = glMapBufferRange(GL_TEXTURE_BUFFER, 0, sizeof(spheres),
+                                       GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+            // spheres[0].pos_rad.w = fabsf(sinf(iTime)) * 0.5f;
+            update_spheres();
+            memcpy(p, spheres, sizeof(spheres));
+            glUnmapBuffer(GL_TEXTURE_BUFFER);
+            glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
+            glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, spheretbos[iFrame % 2]);
+        }
         update_camera(win);
         //////////////////////// USER PASS
         if (!user_pass) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbo[2]);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo[want_taa ? 2 : iFrame % 2]);
             glViewport(0, 0, RESW, RESH);
             glClearColor(0.f, 0.f, 0.f, 1.f);
             glClear(GL_COLOR_BUFFER_BIT);
@@ -1467,7 +1516,7 @@ int main(int argc, char **argv) {
             glUniform1i(glGetUniformLocation(user_pass, "status_bar_size"), status_bar_color ? 1 : 0);
             glUniform1f(glGetUniformLocation(user_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
             glUniform1f(glGetUniformLocation(user_pass, "ui_alpha"), ui_alpha);
-    
+
             bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
             bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
             bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
@@ -1478,18 +1527,19 @@ int main(int argc, char **argv) {
             glUniform1i(glGetUniformLocation(user_pass, "uSpheres"), 7);
             glActiveTexture(GL_TEXTURE7);
             glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
-    
+
             glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
             glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
             glUniform4f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
             glUniform1f(glGetUniformLocation(user_pass, "fov"), fov);
-    
-            draw_fullscreen_pass(fbo[2], RESW, RESH, vao);
+
+            draw_fullscreen_pass(fbo[want_taa ? 2 : iFrame % 2], RESW, RESH, vao);
             unbind_textures_from_slots(7);
             glActiveTexture(GL_TEXTURE7);
             glBindTexture(GL_TEXTURE_BUFFER, 0);
         }
-        render_taa_pass(taa_pass, fbo, texFPRT, NUM_FPRTS, iFrame, vao);
+        if (want_taa)
+            render_taa_pass(taa_pass, fbo, texFPRT, NUM_FPRTS, iFrame, vao);
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
 
@@ -1498,18 +1548,18 @@ int main(int argc, char **argv) {
         bind_texture_to_slot(ui_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-        
+
         bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
         bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
         bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
-    
+
         glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
         glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
         glUniform1i(glGetUniformLocation(ui_pass, "status_bar_size"), status_bar_color ? 1 : 0);
         glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
         glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
         glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
-    
+
         float output_ar = fbw / float(fbh);
         float input_ar = RESW / float(RESH);
         float scale = output_ar / input_ar;
@@ -1518,13 +1568,13 @@ int main(int argc, char **argv) {
         } else { // black bars at top and bottom
             glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), 1.f, 1.f / scale);
         }
-    
+
         float f_cursor_x = curE->cursor_x * curE->font_width;
         float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
         glUniform4f(glGetUniformLocation(ui_pass, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
         curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
         curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
-    
+
         draw_fullscreen_pass(0, fbw, fbh, vao);
         unbind_textures_from_slots(4);
         //////////////////////////////
@@ -1579,10 +1629,10 @@ int main(int argc, char **argv) {
         // poll for changes in the audio file
         static time_t last = 0;
         struct stat st;
-        if (stat(audio_tab.fname, &st) == 0 && st.st_mtime != last) {
+        if (stat(tabs[1].fname, &st) == 0 && st.st_mtime != last) {
             last = st.st_mtime;
-            try_to_compile_audio(audio_tab.fname, &audio_tab.last_compile_log);
-            parse_error_log(&audio_tab);
+            try_to_compile_audio(tabs[1].fname, &tabs[1].last_compile_log);
+            parse_error_log(&tabs[1]);
         }
 
         double t = G->t;
@@ -1592,7 +1642,7 @@ int main(int argc, char **argv) {
 
         // pump wave load requests
         pump_wave_load_requests_main_thread();
-        //usleep(100000);
+        // usleep(100000);
     }
 
     dump_settings();

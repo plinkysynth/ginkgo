@@ -7,8 +7,9 @@
 #include "utils.h"
 
 char *stbstring_from_span(const char *s, const char *e, int alloc_extra) {
+    if (s && !e) e = s + strlen(s);
     int len = e - s;
-    if (len <= 0)
+    if (len < 0)
         return NULL;
     char *cstr = NULL;
     stbds_arrsetlen(cstr, len + 1 + alloc_extra);

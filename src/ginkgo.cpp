@@ -1414,6 +1414,7 @@ int main(int argc, char **argv) {
 
     void test_minipat(void);
     test_minipat();
+    
     //return 0;
 
     ma_device dev;

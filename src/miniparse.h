@@ -16,6 +16,7 @@ enum EValueType : int8_t { // for Node.value_type
     VT_NUMBER = P_NUMBER,
     VT_NOTE = P_NOTE,
     VT_SOUND = P_SOUND,
+    VT_SCALE = P_SCALEBITS,
 };
 
 
@@ -41,7 +42,9 @@ typedef struct hap_t {
     uint32_t valid_params; // which params have been assigned for this hap.
     int hapid;
     float params[P_LAST];
-    float get_param(int param, float default_value) { return valid_params & (1 << param) ? params[param] : default_value; } 
+    int scale_bits;
+    inline float get_param(int param, float default_value) const { return valid_params & (1 << param) ? params[param] : default_value; } 
+    bool has_param(int param) const { return valid_params & (1 << param); }
 } hap_t;
 
 typedef struct hap_span_t {

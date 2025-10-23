@@ -1,7 +1,7 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern [[c3 _ c2 -] - d3 -  f3 - c6 f5 c4 ]
+/fancy_pattern [0 1 2 3] : [cmaj * 4]
 
 
 

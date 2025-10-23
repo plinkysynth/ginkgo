@@ -251,7 +251,8 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
     return group_node;
 }
 
-int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix) {
+int parse_midinote(const char *s, const char *e, const char **end,
+                   int allow_p_prefix) { // if you dont speify *end, midi note must fill all of s-e
     if (allow_p_prefix && e > s + 2 && s[0] == 'P' && s[1] == '_') {
         s += 2;
     }
@@ -306,12 +307,25 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
     return 1;
 }
 
-static inline EValueType parse_number_or_note_or_sound(const char *s, const char *e, float *out) {
-    int note = parse_midinote(s, e, 0, 0);
+static inline EValueType parse_number_or_note_or_sound(const char *s, const char *e, float *out, float *out2) {
+    const char *midiend = NULL;
+    int note = parse_midinote(s, e, &midiend, 0);
     if (note >= 0) {
-        *out = note;
-        return VT_NOTE;
-    } else if (parse_number(s, e, 0, out)) {
+        if (midiend == e) {
+            *out = note;
+            return VT_NOTE;
+        }
+        // the midi note didnt use up the whole token; could it be a chord name?
+        int scale_len = e - midiend;
+#define X(scale_name, scale_bits)                                                                                                  \
+    if (scale_len == strlen(scale_name) && strncmp(midiend, scale_name, scale_len) == 0) {                                         \
+        *out2 = note;                                                                                                              \
+        *out = scale_bits;                                                                                                         \
+        return VT_SCALE;                                                                                                           \
+    }
+#include "scales.h"
+    }
+    if (parse_number(s, e, 0, out)) {
         return VT_NUMBER;
     }
     int sound_idx;
@@ -331,11 +345,16 @@ static inline EValueType parse_value(const char *s, const char *e, float *minval
     const char *dash = s + 1;
     while (dash < e && *dash != '-')
         dash++;
-    EValueType type1 = parse_number_or_note_or_sound(s, dash, minval);
+    EValueType type1 = parse_number_or_note_or_sound(s, dash, minval, maxval);
     if (type1 == VT_NONE)
         return VT_NONE;
+    if (type1 == VT_SCALE) {
+        // scale uses both minval and maxval to represent the root & chord type!
+        return type1;
+    }
     if (dash != e) {
-        EValueType type2 = parse_number_or_note_or_sound(dash + 1, e, maxval);
+        float dummy;
+        EValueType type2 = parse_number_or_note_or_sound(dash + 1, e, maxval, &dummy);
         if (type2 != type1)
             return VT_NONE;
     } else
@@ -553,7 +572,10 @@ static void update_lengths(pattern_maker_t *p, int node) {
     }
     n->total_length = total_length;
     n->num_children = num_children;
-    if (n->type != N_POLY && n->type != N_LEAF && n->type != N_OP_ELONGATE) {
+    // leaf nodes dont want to overwrite their max value with the max of their children (real data is there!)
+    // poly nodes use it as a hack for the % figure.
+    // single child elongate nodes use it as a count to elongate by.
+    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF) {
         n->max_value = max_value;
     }
 }
@@ -580,7 +602,7 @@ void test_minipat(void) {
     // const char *s = "[bd | sd | rim]*8";
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "[c4 _ _ _ _]"; // test divide
+    const char *s = "[0 1] : [cmaj * 2]"; // test divide
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
     //  const char *s = "[bd <hh oh>,rim*<4 8>]";
@@ -594,8 +616,8 @@ void test_minipat(void) {
         printf("error: %s\n", pm.errmsg);
     pretty_print_nodes(s, s + pm.n, &p);
     hap_t tmp[64], dst[64];
-    hap_span_t haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.1f, 0.2f);
-    pretty_print_haps(haps, 0.f, 4.f);
+    hap_span_t haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0, 1);
+    pretty_print_haps(haps, 0.f, 1.f);
 
     // char *chart = print_pattern_chart(&p);
     // printf("%s\n", chart);
@@ -620,10 +642,11 @@ const char *find_end_of_pattern(const char *s, const char *e) {
         while (s < e && *s != '\n')
             ++s; // find new line
         if (s + 3 < e && s[0] == '\n' && s[1] == '/' && s[2] != '/')
-            return s;                  // its a new path
+            return s; // its a new path
         if (s + 2 < e && s[0] == '\n' && s[1] == '#')
             return s; // its a line starting '#'
-        if (s<e) ++s;
+        if (s < e)
+            ++s;
     }
     return s;
 }

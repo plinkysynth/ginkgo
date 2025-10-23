@@ -11,161 +11,154 @@
 basic_state_t dummy_state;
 basic_state_t *_BG = &dummy_state;
 
-void init_basic_state(void) {
-    _BG->bpm = 120.f;
-}
+void init_basic_state(void) { _BG->bpm = 120.f; }
 
 #define RVMASK 65535
 
-static float k_reverb_fade = 240  / 256.f; // 240 originally
+static float k_reverb_fade = 240 / 256.f; // 240 originally
 static float k_reverb_shim = 120 / 256.f;
-static float k_reverb_wob = 0.3333f; // amount of wobble
-static const float lforate1 = 1.f / 32777.f * 9.4f;// * 2.f; // speed of wobble
-static const float lforate2 = 1.3f / 32777.f * 3.15971f;// * 2.f; // speed of wobble
+static float k_reverb_wob = 0.3333f;                     // amount of wobble
+static const float lforate1 = 1.f / 32777.f * 9.4f;      // * 2.f; // speed of wobble
+static const float lforate2 = 1.3f / 32777.f * 3.15971f; // * 2.f; // speed of wobble
 
-
-
-static inline float LINEARINTERPRV(const float* buf, int basei, float wobpos) { // read buf[basei-wobpos>>12] basically
-	basei -= (int)wobpos;
-	wobpos-=floorf(wobpos);
-	float a0 = buf[basei & RVMASK];
-	float a1 = buf[(basei - 1) & RVMASK];
-	return ((a0 * (1.f - wobpos) + a1 * wobpos));
+static inline float LINEARINTERPRV(const float *buf, int basei, float wobpos) { // read buf[basei-wobpos>>12] basically
+    basei -= (int)wobpos;
+    wobpos -= floorf(wobpos);
+    float a0 = buf[basei & RVMASK];
+    float a1 = buf[(basei - 1) & RVMASK];
+    return ((a0 * (1.f - wobpos) + a1 * wobpos));
 }
 
-
-    stereo plinky_reverb(stereo input) {
-        reverb_state_t *R = &G->R;
-        float *reverbbuf = R->reverbbuf;
-        int i = R->reverb_pos;
-        float outl = 0, outr = 0;
-        float wob = update_lfo(R->aplfo, lforate1) * k_reverb_wob;
-        float apwobpos = (wob + 1.f) * 64.f;
-        wob = update_lfo(R->aplfo2, lforate2)  * k_reverb_wob;
-        float delaywobpos = (wob + 1.f) * 64.f;
-    #define RVDIV /2
-    #define CHECKACC // assert(acc>=-32768 && acc<32767);
-    #define AP(len) { \
-            int j = (i + len RVDIV) & RVMASK; \
-            float d = reverbbuf[j]; \
-            acc -= d *0.5f; \
-            reverbbuf[i] = (acc); \
-            acc = (acc *0.5f) + d; \
-            i = j; \
-            CHECKACC \
-        }
-    #define AP_WOBBLE(len, wobpos) { \
-            int j = (i + len RVDIV) & RVMASK;\
-            float d = LINEARINTERPRV(reverbbuf, j, wobpos); \
-            acc -= d * 0.5f; \
-            reverbbuf[i] = (acc); \
-            acc = (acc * 0.5f) + d; \
-            i = j; \
-            CHECKACC \
-        }
-    #define DELAY(len) { \
-            int j = (i + len RVDIV) & RVMASK; \
-            reverbbuf[i] = (acc); \
-            acc = reverbbuf[j]; \
-            i = j; \
-            CHECKACC \
-        }
-    #define DELAY_WOBBLE(len, wobpos) { \
-            int j = (i + len RVDIV) & RVMASK; \
-            reverbbuf[i] = (acc); \
-            acc = LINEARINTERPRV(reverbbuf, j, wobpos); \
-            i=j; \
-            CHECKACC \
-        }
-            
-        float acc = ((input.l));
-        AP(142);
-        AP(379);
-        acc += (input.r);
-        AP(107);
-    //	float reinject2 = acc;
-        AP(277);
-        float reinject = acc;
-        
-        acc += R->fb1;
-        AP_WOBBLE(672, apwobpos);
-        AP(1800);
-        DELAY(4453);
-    
-        if (1) {
-            // shimmer - we can read from up to about 2000 samples ago
-    
-            // Brief shimmer walkthrough:
-            // - We walk backwards through the reverb buffer with 2 indices: shimmerpos1 and shimmerpos2.
-            //   - shimmerpos1 is the *previous* shimmer position.
-            //   - shimmerpos2 is the *current* shimmer position.
-            //   - Note that we add these to i (based on reverbpos), which is also walking backwards
-            //     through the buffer.
-            // - shimmerfade controls the crossfade between the shimmer from shimmerpos1 and shimmerpos2.
-            //   - When shimmerfade == 0, shimmerpos1 (the old shimmer) is chosen.
-            //   - When shimmerfade == SHIMMER_FADE_LEN - 1, shimmerpos2 (the new shimmer) is chosen.
-            //   - For everything in-between, we linearly interpolate (crossfade).
-            //   - When we hit the end of the fade, we reset shimmerpos2 to a random new position and set
-            //     shimmerpos1 to the old shimmerpos2.
-            // - dshimmerfade controls the speed at which we fade.
-    
-            #define SHIMMER_FADE_LEN 32768
-            R->shimmerfade += R->dshimmerfade;
-    
-            if (R->shimmerfade >= SHIMMER_FADE_LEN) {
-                R->shimmerfade -= SHIMMER_FADE_LEN;
-    
-                R->shimmerpos1 = R->shimmerpos2;
-                R->shimmerpos2 = (rand() & 4095) + 8192;
-                R->dshimmerfade = (rand() & 7) + 8; // somewhere between SHIMMER_FADE_LEN/2048 and SHIMMER_FADE_LEN/4096 ie 8 and 16
-            }
-    
-            // L = shimmer from shimmerpos1, R = shimmer from shimmerpos2
-            stereo shim1 = STEREO(reverbbuf[(i + R->shimmerpos1) & RVMASK], reverbbuf[(i + R->shimmerpos2) & RVMASK]);
-            stereo shim2 = STEREO(reverbbuf[(i + R->shimmerpos1 + 1) & RVMASK], reverbbuf[(i + R->shimmerpos2 + 1) & RVMASK]);
-            stereo shim = (shim1+shim2);
-    
-            // Fixed point crossfade:
-            float shimo = shim.l * ((SHIMMER_FADE_LEN - 1) - R->shimmerfade) +
-                                    shim.r * R->shimmerfade;
-            shimo *= 1.f/SHIMMER_FADE_LEN;  // Divide by SHIMMER_FADE_LEN
-    
-            // Apply user-selected shimmer amount.
-            // Tone down shimmer amount.
-            shimo *= k_reverb_shim * 0.25f;
-        
-            acc += shimo;
-            outl = shimo;
-            outr = shimo;
-    
-            R->shimmerpos1--;
-            R->shimmerpos2--;
-        }
-    
-    
-        const static float k_reverb_color = 0.95f;
-        R->lpf += (((acc * k_reverb_fade)) - R->lpf) * k_reverb_color;
-        R->dc += (R->lpf - R->dc) * 0.005f;
-        acc = (R->lpf - R->dc);
-        outl += acc;
-    
-        acc += reinject;
-        AP_WOBBLE(908, delaywobpos);
-        AP(2656);
-        DELAY(3163);
-        R->lpf2+= (((acc * k_reverb_fade) ) - R->lpf2) * k_reverb_color;
-        acc = (R->lpf2);
-    
-        outr += acc;
-    
-        R->reverb_pos = (R->reverb_pos - 1) & RVMASK;
-        R->fb1=(acc*k_reverb_fade);
-        return STEREO(outl, outr);
-        
-    
+stereo plinky_reverb(stereo input) {
+    reverb_state_t *R = &G->R;
+    float *reverbbuf = R->reverbbuf;
+    int i = R->reverb_pos;
+    float outl = 0, outr = 0;
+    float wob = update_lfo(R->aplfo, lforate1) * k_reverb_wob;
+    float apwobpos = (wob + 1.f) * 64.f;
+    wob = update_lfo(R->aplfo2, lforate2) * k_reverb_wob;
+    float delaywobpos = (wob + 1.f) * 64.f;
+#define RVDIV / 2
+#define CHECKACC // assert(acc>=-32768 && acc<32767);
+#define AP(len)                                                                                                                    \
+    {                                                                                                                              \
+        int j = (i + len RVDIV) & RVMASK;                                                                                          \
+        float d = reverbbuf[j];                                                                                                    \
+        acc -= d * 0.5f;                                                                                                           \
+        reverbbuf[i] = (acc);                                                                                                      \
+        acc = (acc * 0.5f) + d;                                                                                                    \
+        i = j;                                                                                                                     \
+        CHECKACC                                                                                                                   \
     }
-    
+#define AP_WOBBLE(len, wobpos)                                                                                                     \
+    {                                                                                                                              \
+        int j = (i + len RVDIV) & RVMASK;                                                                                          \
+        float d = LINEARINTERPRV(reverbbuf, j, wobpos);                                                                            \
+        acc -= d * 0.5f;                                                                                                           \
+        reverbbuf[i] = (acc);                                                                                                      \
+        acc = (acc * 0.5f) + d;                                                                                                    \
+        i = j;                                                                                                                     \
+        CHECKACC                                                                                                                   \
+    }
+#define DELAY(len)                                                                                                                 \
+    {                                                                                                                              \
+        int j = (i + len RVDIV) & RVMASK;                                                                                          \
+        reverbbuf[i] = (acc);                                                                                                      \
+        acc = reverbbuf[j];                                                                                                        \
+        i = j;                                                                                                                     \
+        CHECKACC                                                                                                                   \
+    }
+#define DELAY_WOBBLE(len, wobpos)                                                                                                  \
+    {                                                                                                                              \
+        int j = (i + len RVDIV) & RVMASK;                                                                                          \
+        reverbbuf[i] = (acc);                                                                                                      \
+        acc = LINEARINTERPRV(reverbbuf, j, wobpos);                                                                                \
+        i = j;                                                                                                                     \
+        CHECKACC                                                                                                                   \
+    }
 
+    float acc = ((input.l));
+    AP(142);
+    AP(379);
+    acc += (input.r);
+    AP(107);
+    //	float reinject2 = acc;
+    AP(277);
+    float reinject = acc;
+
+    acc += R->fb1;
+    AP_WOBBLE(672, apwobpos);
+    AP(1800);
+    DELAY(4453);
+
+    if (1) {
+        // shimmer - we can read from up to about 2000 samples ago
+
+        // Brief shimmer walkthrough:
+        // - We walk backwards through the reverb buffer with 2 indices: shimmerpos1 and shimmerpos2.
+        //   - shimmerpos1 is the *previous* shimmer position.
+        //   - shimmerpos2 is the *current* shimmer position.
+        //   - Note that we add these to i (based on reverbpos), which is also walking backwards
+        //     through the buffer.
+        // - shimmerfade controls the crossfade between the shimmer from shimmerpos1 and shimmerpos2.
+        //   - When shimmerfade == 0, shimmerpos1 (the old shimmer) is chosen.
+        //   - When shimmerfade == SHIMMER_FADE_LEN - 1, shimmerpos2 (the new shimmer) is chosen.
+        //   - For everything in-between, we linearly interpolate (crossfade).
+        //   - When we hit the end of the fade, we reset shimmerpos2 to a random new position and set
+        //     shimmerpos1 to the old shimmerpos2.
+        // - dshimmerfade controls the speed at which we fade.
+
+#define SHIMMER_FADE_LEN 32768
+        R->shimmerfade += R->dshimmerfade;
+
+        if (R->shimmerfade >= SHIMMER_FADE_LEN) {
+            R->shimmerfade -= SHIMMER_FADE_LEN;
+
+            R->shimmerpos1 = R->shimmerpos2;
+            R->shimmerpos2 = (rand() & 4095) + 8192;
+            R->dshimmerfade = (rand() & 7) + 8; // somewhere between SHIMMER_FADE_LEN/2048 and SHIMMER_FADE_LEN/4096 ie 8 and 16
+        }
+
+        // L = shimmer from shimmerpos1, R = shimmer from shimmerpos2
+        stereo shim1 = STEREO(reverbbuf[(i + R->shimmerpos1) & RVMASK], reverbbuf[(i + R->shimmerpos2) & RVMASK]);
+        stereo shim2 = STEREO(reverbbuf[(i + R->shimmerpos1 + 1) & RVMASK], reverbbuf[(i + R->shimmerpos2 + 1) & RVMASK]);
+        stereo shim = (shim1 + shim2);
+
+        // Fixed point crossfade:
+        float shimo = shim.l * ((SHIMMER_FADE_LEN - 1) - R->shimmerfade) + shim.r * R->shimmerfade;
+        shimo *= 1.f / SHIMMER_FADE_LEN; // Divide by SHIMMER_FADE_LEN
+
+        // Apply user-selected shimmer amount.
+        // Tone down shimmer amount.
+        shimo *= k_reverb_shim * 0.25f;
+
+        acc += shimo;
+        outl = shimo;
+        outr = shimo;
+
+        R->shimmerpos1--;
+        R->shimmerpos2--;
+    }
+
+    const static float k_reverb_color = 0.95f;
+    R->lpf += (((acc * k_reverb_fade)) - R->lpf) * k_reverb_color;
+    R->dc += (R->lpf - R->dc) * 0.005f;
+    acc = (R->lpf - R->dc);
+    outl += acc;
+
+    acc += reinject;
+    AP_WOBBLE(908, delaywobpos);
+    AP(2656);
+    DELAY(3163);
+    R->lpf2 += (((acc * k_reverb_fade)) - R->lpf2) * k_reverb_color;
+    acc = (R->lpf2);
+
+    outr += acc;
+
+    R->reverb_pos = (R->reverb_pos - 1) & RVMASK;
+    R->fb1 = (acc * k_reverb_fade);
+    return STEREO(outl, outr);
+}
 
 stereo reverb(stereo inp) {
     float *state = G->R.filter_state;
@@ -193,13 +186,15 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
         // printf("CLEARING STATE\n");
         basic_state_t *oldg = _G;
         _G = (basic_state_t *)calloc(1, state_size);
-        if (oldg) memcpy(_G, oldg, sizeof(basic_state_t)); // preserve the basic state...
+        if (oldg)
+            memcpy(_G, oldg, sizeof(basic_state_t)); // preserve the basic state...
         // ...but update the version number and size.
         _G->_ver = version;
         _G->_size = state_size;
     }
     _G->reloaded = reloaded;
-    G = _G; // set global variable for user code. nb the dll and the main program have their own copies of G. dsp() ends up setting the dll copy from the main process copy.
+    G = _G; // set global variable for user code. nb the dll and the main program have their own copies of G. dsp() ends up setting
+            // the dll copy from the main process copy.
     if (reloaded) {
         init_basic_state();
         (*init_state)();
@@ -210,7 +205,7 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
         if (bpm_pattern && bpm_pattern->key) {
             hap_t haps[8];
             hap_t tmp[8];
-            hap_span_t hs=bpm_pattern->make_haps({haps,haps+8}, {tmp,tmp+8}, _G->t, _G->t+hap_eps);
+            hap_span_t hs = bpm_pattern->make_haps({haps, haps + 8}, {tmp, tmp + 8}, _G->t, _G->t + hap_eps);
             if (hs.s < hs.e) {
                 float newbpm = hs.s->get_param(P_NUMBER, _G->bpm);
                 if (newbpm > 20.f && newbpm < 400.f && newbpm != _G->bpm) {
@@ -219,19 +214,20 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
                 }
             }
         }
-    } 
+    }
     return _G;
 }
 
-
 wave_t *request_wave_load(Sound *sound, int index) {
-    if (!G) return NULL;
+    if (!G)
+        return NULL;
     if (sound->name[1] == 0 && (sound->name[0] == '~' || sound->name[0] == '-')) {
         return NULL; // never try to load the rest
     }
     spin_lock(&G->load_request_cs);
     sound_request_key_t key = {sound, index};
-    stbds_hmput(G->load_requests, key, 0); // TODO: its unsafe to use the pointer to w, as the list of waves may get resized. I think this is ok so long as we dont load sample packs mid session.
+    stbds_hmput(G->load_requests, key, 0); // TODO: its unsafe to use the pointer to w, as the list of waves may get resized. I
+                                           // think this is ok so long as we dont load sample packs mid session.
     spin_unlock(&G->load_request_cs);
     return NULL;
 }
@@ -239,7 +235,7 @@ wave_t *request_wave_load(Sound *sound, int index) {
 // conv ir block sizes are 256, 512, 1024, 2048...
 #define CONV_IR_NUM_BLOCK_SIZES 5
 #define CONV_IR_MIN_BLOCK_SIZE 256 // fft sizes are double the block size (zero pad), and complex (*2 again)
-#define CONV_IR_MAX_BLOCK_SIZE (CONV_IR_MIN_BLOCK_SIZE<<(CONV_IR_NUM_BLOCK_SIZES-1))
+#define CONV_IR_MAX_BLOCK_SIZE (CONV_IR_MIN_BLOCK_SIZE << (CONV_IR_NUM_BLOCK_SIZES - 1))
 
 inline stereo complexmul(stereo a, stereo b, float scale) {
     return STEREO((a.l * b.l - a.r * b.r) * scale, (a.l * b.r + a.r * b.l) * scale);
@@ -247,37 +243,39 @@ inline stereo complexmul(stereo a, stereo b, float scale) {
 
 // building blocks for conv reverb
 void test_conv_reverb(void) {
-    PFFFT_Setup *fft_setup[CONV_IR_NUM_BLOCK_SIZES]={};
-    static float *fft_work=0;
+    PFFFT_Setup *fft_setup[CONV_IR_NUM_BLOCK_SIZES] = {};
+    static float *fft_work = 0;
     if (!fft_setup[0]) {
-        fft_work = (float*)malloc(CONV_IR_MAX_BLOCK_SIZE * 4 * sizeof(float));
+        fft_work = (float *)malloc(CONV_IR_MAX_BLOCK_SIZE * 4 * sizeof(float));
         for (int i = 0; i < CONV_IR_NUM_BLOCK_SIZES; i++) {
-            fft_setup[i] = pffft_new_setup(CONV_IR_MIN_BLOCK_SIZE << (i+1), PFFFT_COMPLEX);
+            fft_setup[i] = pffft_new_setup(CONV_IR_MIN_BLOCK_SIZE << (i + 1), PFFFT_COMPLEX);
         }
     }
-    stereo *testblock = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
-    float e= 1.f;
-    for (int i=0; i <CONV_IR_MAX_BLOCK_SIZE; i++) { testblock[i] = STEREO(sinf(i*i*0.0001f)*e,rndn() * e * 0.25f); e*=0.999f; }
+    stereo *testblock = (stereo *)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    float e = 1.f;
+    for (int i = 0; i < CONV_IR_MAX_BLOCK_SIZE; i++) {
+        testblock[i] = STEREO(sinf(i * i * 0.0001f) * e, rndn() * e * 0.25f);
+        e *= 0.999f;
+    }
 
-    stereo *irblock = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    stereo *irblock = (stereo *)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
     irblock[1000].l = 1.f;
 
-    stereo *irblock_fft = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
-    stereo *testblock_fft = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
-    stereo *convblock_fft = (stereo*)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
-    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)irblock, (float*)irblock_fft, fft_work, PFFFT_FORWARD);
-    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)testblock, (float*)testblock_fft, fft_work, PFFFT_FORWARD);
-    pffft_zconvolve_accumulate(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)irblock_fft, (float*)testblock_fft, (float*)convblock_fft, 1.f / (CONV_IR_MAX_BLOCK_SIZE*2.f));
-    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES-1], (float*)convblock_fft, (float*)convblock_fft, fft_work, PFFFT_BACKWARD);
+    stereo *irblock_fft = (stereo *)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    stereo *testblock_fft = (stereo *)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    stereo *convblock_fft = (stereo *)calloc(CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2 * 2);
+    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES - 1], (float *)irblock, (float *)irblock_fft, fft_work, PFFFT_FORWARD);
+    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES - 1], (float *)testblock, (float *)testblock_fft, fft_work, PFFFT_FORWARD);
+    pffft_zconvolve_accumulate(fft_setup[CONV_IR_NUM_BLOCK_SIZES - 1], (float *)irblock_fft, (float *)testblock_fft,
+                               (float *)convblock_fft, 1.f / (CONV_IR_MAX_BLOCK_SIZE * 2.f));
+    pffft_transform(fft_setup[CONV_IR_NUM_BLOCK_SIZES - 1], (float *)convblock_fft, (float *)convblock_fft, fft_work,
+                    PFFFT_BACKWARD);
 
-
-
-
-    FILE *f=fopen("testblock.wav","wb");
+    FILE *f = fopen("testblock.wav", "wb");
     write_wav_header(f, CONV_IR_MAX_BLOCK_SIZE * 2, 48000, 2);
     fwrite(testblock, 2 * CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2, f);
     fclose(f);
-    f=fopen("testblock2.wav","wb");
+    f = fopen("testblock2.wav", "wb");
     write_wav_header(f, CONV_IR_MAX_BLOCK_SIZE * 2, 48000, 2);
     fwrite(convblock_fft, 2 * CONV_IR_MAX_BLOCK_SIZE, sizeof(float) * 2, f);
     fclose(f);
@@ -291,45 +289,50 @@ typedef struct voice_state_t {
     float env;
 } voice_state_t;
 float test_patterns(void) {
-    
-    static hap_time from,to;
+
+    static hap_time from, to;
     static voice_state_t *voices;
-    if ((G->sampleidx % 96)==0 && G->patterns_map) {
+    if ((G->sampleidx % 96) == 0 && G->patterns_map) {
         pattern_t *p = &G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
-        if (!p->key) return 0.f;
-        from=to;
+        if (!p->key)
+            return 0.f;
+        from = to;
         to = G->t;
-        if (to-from > 1./10. || to-from<0.) {
+        if (to - from > 1. / 10. || to - from < 0.) {
             printf("resetting from %f to %f\n", from, to);
-            from = to - 1.f/100.;
+            from = to - 1.f / 100.;
         }
-        for (int i=stbds_hmlen(voices); i-->0; ) {
+        for (int i = stbds_hmlen(voices); i-- > 0;) {
             voice_state_t *v = &voices[i];
             v->gate = 0;
         }
         if (G->playing) {
             hap_t haps[8], tmp[8];
-            hap_span_t hs=p->make_haps({haps,haps+8}, {tmp,tmp+8}, from, to);
+            hap_span_t hs = p->make_haps({haps, haps + 8}, {tmp, tmp + 8}, from, to);
             pretty_print_haps(hs, from, to);
-            for (hap_t *h = hs.s; h < hs.e; h++) if (h->valid_params & (1 << P_NOTE)) {
-                voice_state_t *v = stbds_hmgetp_null(voices, h->hapid);
-                if (!v) {
-                    voice_state_t newv = {h->hapid};
-                    v = &stbds_hmputs(voices, newv);
-                    printf("%d voices - new = %d\n", (int)stbds_hmlen(voices), h->hapid);
+            for (hap_t *h = hs.s; h < hs.e; h++) {
+                if (h->valid_params & (1 << P_NOTE)) {
+                    int note = (int)h->params[P_NOTE];
+                    float number = h->get_param(P_NUMBER, 0.f);
+                    voice_state_t *v = stbds_hmgetp_null(voices, h->hapid);
+                    if (!v) {
+                        voice_state_t newv = {h->hapid};
+                        v = &stbds_hmputs(voices, newv);
+                        printf("%d voices - new = %d\n", (int)stbds_hmlen(voices), h->hapid);
+                    }
+                    v->gate = 1.f;
+                    v->dphase = midi2dphase(note);
+                    v->duty = h->get_param(P_NUMBER, 4.f) * 0.125f + 0.0625f;
                 }
-                v->gate = 1.f;
-                v->dphase = midi2dphase(h->params[P_NOTE]);
-                v->duty = h->get_param(P_NUMBER, 4.f)*0.125f + 0.0625f;
             }
         }
     }
-    float rv=0.f;
-    for (int i=stbds_hmlen(voices); i-->0; ) {
+    float rv = 0.f;
+    for (int i = stbds_hmlen(voices); i-- > 0;) {
         voice_state_t *v = &voices[i];
         rv += pwmo(&v->phase, v->dphase, v->duty) * v->env;
-        v->env += (v->gate - v->env) * ((v->env > v->gate) ? 0.001f : 0.001f );
-        if (v->env < 0.01f && v->gate == 0.f) 
+        v->env += (v->gate - v->env) * ((v->env > v->gate) ? 0.001f : 0.001f);
+        if (v->env < 0.01f && v->gate == 0.f)
             stbds_hmdel(voices, v->key);
     }
     return rv;

@@ -1650,21 +1650,33 @@ int code_color(EditorState *E, uint32_t *ptr) {
 
     E->autocomplete_index = 0;
     stbds_hmfree(E->autocomplete_options);
-    if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after) {
+    if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after && cursor_token_start_idx < cursor_token_end_idx) {
         // autocomplete popup
         const char *token = &t.str[cursor_token_start_idx];
         int pm = E->cursor_in_pattern_area;
-        if (token[0] == '"') {
+        if ( token[0] == '"') {
             token++;
             cursor_token_start_idx++;
             pm = true;
+        }
+        bool include_chord_names = false;
+        if (pm) {
+            // if the start of the token parses as a midi note, then skip forward
+            const char *noteend=NULL;
+            const char *tokenend = &t.str[cursor_token_end_idx];
+            int note = parse_midinote(token, tokenend, &noteend, 0);
+            if (note>=0 && noteend < tokenend) {
+                token = noteend;
+                cursor_token_start_idx = token - t.str;
+                include_chord_names = true;
+            }
         }
         int token_len = cursor_token_end_idx - cursor_token_start_idx;
         int num_chars_so_far = E->cursor_idx - cursor_token_start_idx;
         int x, y;
         idx_to_xy(E, cursor_token_start_idx, &x, &y);
         y -= E->intscroll;
-        if (num_chars_so_far >= 2) { // at least 2 chars
+        if (num_chars_so_far >= 2 || include_chord_names) { // at least 2 chars
 
             int bestscore = 2;
             char *bestoption = NULL;
@@ -1694,6 +1706,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
         COMPARE_PREFIX(#x);
 #include "tokens.h"
             if (pm) {
+                if (include_chord_names) {
+                    #define X(scale_name, scale_bits) COMPARE_PREFIX(scale_name);
+                    #include "scales.h"
+                }
                 int n = num_sounds();
                 for (int i = 0; i < n; ++i) {
                     char *name = G->sounds[i].key;

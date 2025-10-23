@@ -1,5 +1,6 @@
-CFLAGS  = -fPIC -g -std=c++11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include -Isrc/ -I. -Wno-vla-cxx-extension # -fsanitize=address
-CFLAGS += -Werror
+CXXFLAGS  = -fPIC -g -std=c++11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include -Isrc/ -I. -Wno-vla-cxx-extension # -fsanitize=address
+CXXFLAGS += -Werror
+CXXFLAGS += -fstandalone-debug -gdwarf-4 -fno-omit-frame-pointer
 LDFLAGS = -L/opt/homebrew/opt/glfw/lib -lglfw -lcurl \
           -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework CoreMIDI # -fsanitize=address
 
@@ -12,13 +13,13 @@ LIB_OBJ := $(patsubst src/%.cpp,build/%.o,$(LIB_SRC))
 DEP     := $(APP_OBJ:.o=.d) $(LIB_OBJ:.o=.d)
 
 ginkgo: $(APP_OBJ) build/$(LIB_NAME)
-	$(CC) -o $@ $(APP_OBJ) build/$(LIB_NAME) $(LDFLAGS)
+	$(CXX) -o $@ $(APP_OBJ) build/$(LIB_NAME) $(LDFLAGS)
 
 build/$(LIB_NAME): $(LIB_OBJ) | build
 	ar rcs $@ $^
 
 build/%.o: src/%.cpp | build
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 build:
 	mkdir -p $@

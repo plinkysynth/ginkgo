@@ -14,4 +14,5 @@ X(P_S, "sus", 1.f, 0, 1)
 X(P_R, "rel", 0.f, 0, 1)
 X(P_VOLUME, "vol", 1.f, 0, 1)
 X(P_PAN, "pan", 0.f, -1.f, 1.f)
+X(P_SCALEBITS, "scale", 0.f, 0.f, (float)(1<<24))
 #undef X

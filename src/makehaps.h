@@ -173,12 +173,14 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
     }
 }
 
-//
-int pattern_t::_apply_values(hap_span_t &dst, hap_span_t tmp, hap_t *structure_hap, int value_node_idx, filter_cb_t filter_cb,
+
+int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, hap_t *structure_hap, int value_node_idx, filter_cb_t filter_cb,
                              value_cb_t value_cb, size_t context) {
     hap_time t0 = structure_hap->t0;
+    hap_t tmp_mem[tmp_size]; 
+    hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
     hap_span_t value_haps =
-        _make_haps(tmp, tmp, value_node_idx, t0, t0 + hap_eps, hash2_pcg(structure_hap->hapid, value_node_idx), true);
+        _make_haps(tmp, tmp_size, value_node_idx, t0, t0 + hap_eps, hash2_pcg(structure_hap->hapid, value_node_idx), true);
     int count = 0;
     int structure_hapid = structure_hap->hapid;
     if (value_haps.empty()) {
@@ -250,7 +252,7 @@ static inline int scale_index_to_note(int scalebits, int root, int index) {
     return note;
 }
 
-hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, hap_time a, hap_time b, int hapid,
+hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap_time a, hap_time b, int hapid,
                                  bool merge_repeated_leaves) {
     if (nodeidx < 0 || a > b)
         return {};
@@ -277,7 +279,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
             break;
         for (int childidx = 0; childidx < n->num_children; ++childidx) {
             int child = n->first_child + childidx;
-            _make_haps(dst, tmp, child, a * speed_scale, b * speed_scale, hash2_pcg(hapid, childidx), merge_repeated_leaves);
+            _make_haps(dst, tmp_size, child, a * speed_scale, b * speed_scale, hash2_pcg(hapid, childidx), merge_repeated_leaves);
         }
         _filter_haps({rv.s, dst.s}, speed_scale, a, b, floor(a + hap_eps), ceil(b - hap_eps));
         break;
@@ -291,13 +293,15 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
         if (n->num_children == 1) {
             if (n->type == N_OP_ELONGATE && bfs_min_max_value[nodeidx].v != 0.f) {
                 hap_time speed_scale = 1.0 / bfs_min_max_value[nodeidx].v;
-                hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a * speed_scale, b * speed_scale,
+                hap_span_t left_haps = _make_haps(dst, tmp_size, n->first_child, a * speed_scale, b * speed_scale,
                                                   hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
                 _filter_haps(left_haps, speed_scale, a, b, -1e9, 1e9);
             }
             break;
         }
-        hap_span_t right_haps = _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, nodeidx), true);
+        hap_t tmp_mem[tmp_size];
+        hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
+        hap_span_t right_haps = _make_haps(tmp, tmp_size, n->first_child + 1, a, b, hash2_pcg(hapid, nodeidx), true);
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
             hap_time speed_scale = right_hap->get_param(P_NUMBER, 0.f);
             if (speed_scale <= 0.f)
@@ -308,7 +312,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
                 speed_scale = 1.0 / speed_scale;
             hap_time from = (n->type == N_OP_ELONGATE) ? -1e9 : right_hap->t0;
             hap_time to = (n->type == N_OP_ELONGATE) ? 1e9 : right_hap->t1;
-            hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, max(from, a) * speed_scale, min(to, b) * speed_scale,
+            hap_span_t left_haps = _make_haps(dst, tmp_size, n->first_child, max(from, a) * speed_scale, min(to, b) * speed_scale,
                                               hash2_pcg(hapid, right_hap->hapid), merge_repeated_leaves);
             _filter_haps(left_haps, speed_scale, a, b, from, to);
         }
@@ -319,18 +323,18 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
             break;
         for (int i = floor(a + hap_eps); i < b; ++i) {
             int childidx = (hash2_pcg(hapid, i)) % n->num_children;
-            _make_haps(dst, tmp, n->first_child + childidx, i, i + 1, hash2_pcg(hapid, i), merge_repeated_leaves);
+            _make_haps(dst, tmp_size, n->first_child + childidx, i, i + 1, hash2_pcg(hapid, i), merge_repeated_leaves);
         }
         break;
     }
     case N_OP_IDX: { // take structure from the left; value(s) from the right. copy as needed
         if (n->num_children < 2)
             break;
-        hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
+        hap_span_t left_haps = _make_haps(dst, tmp_size, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
             // the : operator is quite flexible for applying scales to notes or numbers.
             _apply_values(
-                dst, tmp, left_hap, n->first_child + 1, nullptr,
+                dst, tmp_size, left_hap, n->first_child + 1, nullptr,
                 [](hap_t *target, hap_t *right_hap, size_t param_idx) {
                     if (!right_hap || !right_hap->valid_params)
                         return;
@@ -376,10 +380,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
         if (n->num_children < 2)
             break;
         {
-            hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
+            hap_span_t left_haps = _make_haps(dst, tmp_size, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
             for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
                 _apply_values(
-                    dst, tmp, left_hap, n->first_child + 1, nullptr,
+                    dst, tmp_size, left_hap, n->first_child + 1, nullptr,
                     [](hap_t *target, hap_t *right_hap, size_t param_idx) {
                         if (!right_hap || !(right_hap->valid_params & (1 << param_idx)))
                             return;
@@ -392,11 +396,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
         break;
 
     case N_OP_DEGRADE: {
-        hap_span_t left_haps = _make_haps(dst, tmp, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
+        hap_span_t left_haps = _make_haps(dst, tmp_size, n->first_child, a, b, hash2_pcg(hapid, nodeidx), merge_repeated_leaves);
         int value_node_idx = (n->num_children > 1) ? n->first_child + 1 : -1;
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
             _apply_values(
-                dst, tmp, left_hap, value_node_idx,
+                dst, tmp_size, left_hap, value_node_idx,
                 [](hap_t *target, hap_t *right_hap, int new_hapid) {
                     float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
                     if (value >= 1.f)
@@ -434,7 +438,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
                 // but we also clip it to the extent of this part of the cat (from-to)
                 // in that way, large query ranges dont return multiple copies of the children
                 // but also, small query ranges propagate down the callstack to keep things fast.
-                hap_span_t newhaps = _make_haps(dst, tmp, childnode, max(child_a, from) - tofs, min(child_b, to) - tofs,
+                hap_span_t newhaps = _make_haps(dst, tmp_size, childnode, max(child_a, from) - tofs, min(child_b, to) - tofs,
                                                 hash2_pcg(hapid, childidx + loopidx * n->num_children), merge_repeated_leaves);
                 for (hap_t *src_hap = newhaps.s; src_hap < newhaps.e; src_hap++) {
                     src_hap->t0 = (src_hap->t0 + tofs) / speed_scale;
@@ -456,12 +460,17 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, hap_span_t &tmp, int nodeidx, 
         if (n->num_children < 3)
             break;
         // TODO make we can shorten this by making use of apply_steps repeatedly. maybe! but this is more explicit for now...
-        hap_span_t left_haps = _make_haps(tmp, tmp, n->first_child, a, b, hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
-        hap_span_t setsteps_haps = _make_haps(tmp, tmp, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true);
-        hap_span_t numsteps_haps = _make_haps(tmp, tmp, n->first_child + 2, a, b, hash2_pcg(hapid, n->first_child + 2), true);
+        hap_t tmp_mem[4 * tmp_size];
+        hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
+        hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
+        hap_span_t tmp2 = {tmp_mem + 2 * tmp_size, tmp_mem + 3 * tmp_size};
+        hap_span_t tmp3 = {tmp_mem + 3 * tmp_size, tmp_mem + 4 * tmp_size};
+        hap_span_t left_haps = _make_haps(tmp0, tmp_size, n->first_child, a, b, hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
+        hap_span_t setsteps_haps = _make_haps(tmp1, tmp_size, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true);
+        hap_span_t numsteps_haps = _make_haps(tmp2, tmp_size, n->first_child + 2, a, b, hash2_pcg(hapid, n->first_child + 2), true);
         hap_span_t rot_haps = {};
         if (n->num_children > 3)
-            rot_haps = _make_haps(tmp, tmp, n->first_child + 3, a, b, hash2_pcg(hapid, n->first_child + 3), true);
+            rot_haps = _make_haps(tmp3, tmp_size, n->first_child + 3, a, b, hash2_pcg(hapid, n->first_child + 3), true);
         if (rot_haps.empty())
             rot_haps = {};
         for (hap_t *numsteps_hap = numsteps_haps.s; numsteps_hap < numsteps_haps.e; numsteps_hap++) {

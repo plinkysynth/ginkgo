@@ -204,8 +204,7 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
         pattern_t *bpm_pattern = stbds_shgetp(_G->patterns_map, "/bpm");
         if (bpm_pattern && bpm_pattern->key) {
             hap_t haps[8];
-            hap_t tmp[8];
-            hap_span_t hs = bpm_pattern->make_haps({haps, haps + 8}, {tmp, tmp + 8}, _G->t, _G->t + hap_eps);
+            hap_span_t hs = bpm_pattern->make_haps({haps, haps + 8}, 8, _G->t, _G->t + hap_eps);
             if (hs.s < hs.e) {
                 float newbpm = hs.s->get_param(P_NUMBER, _G->bpm);
                 if (newbpm > 20.f && newbpm < 400.f && newbpm != _G->bpm) {
@@ -307,8 +306,8 @@ float test_patterns(void) {
             v->gate = 0;
         }
         if (G->playing) {
-            hap_t haps[8], tmp[8];
-            hap_span_t hs = p->make_haps({haps, haps + 8}, {tmp, tmp + 8}, from, to);
+            hap_t haps[8];
+            hap_span_t hs = p->make_haps({haps, haps + 8}, 8, from, to);
             pretty_print_haps(hs, from, to);
             for (hap_t *h = hs.s; h < hs.e; h++) {
                 if (h->valid_params & (1 << P_NOTE)) {

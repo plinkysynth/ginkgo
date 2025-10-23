@@ -1555,7 +1555,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
         static uint32_t cached_compiled_string_hash = 0;
         static pattern_maker_t cached_parser = {};
         static hap_t cached_hap_mem[1024];
-        static hap_t temp_hap_mem[1024];
         static hap_span_t cached_haps = {};
         const char *codes = t.str + code_start_idx;
         const char *codee = t.str + code_end_idx;
@@ -1566,7 +1565,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             cached_parser = {.s = codes, .n = (int)(codee - codes)};
             pattern_t pat = parse_pattern(&cached_parser);
             if (cached_parser.err <= 0) {
-                cached_haps = pat.make_haps({cached_hap_mem, cached_hap_mem + 1024}, {temp_hap_mem, temp_hap_mem + 1024}, 0.f, 4.f);
+                cached_haps = pat.make_haps({cached_hap_mem, cached_hap_mem + 256}, 256, 0.f, 4.f);
             }
         }
         if (!cached_haps.empty()) {

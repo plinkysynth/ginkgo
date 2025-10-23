@@ -615,8 +615,8 @@ void test_minipat(void) {
     if (pm.errmsg)
         printf("error: %s\n", pm.errmsg);
     pretty_print_nodes(s, s + pm.n, &p);
-    hap_t tmp[64], dst[64];
-    hap_span_t haps = p.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0, 1);
+    hap_t dst[64];
+    hap_span_t haps = p.make_haps({dst, dst + 64}, 64, 0, 1);
     pretty_print_haps(haps, 0.f, 1.f);
 
     // char *chart = print_pattern_chart(&p);
@@ -699,12 +699,6 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
                 printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
                 pat.key = stbstring_from_span(pathstart, pathend, 0);
                 stbds_shputs(patterns_map, pat);
-                /*
-                pretty_print_nodes(pattern_start, s, &pat);
-                hap_t dst[64], tmp[64];
-                hap_span_t haps = pat.make_haps({dst, dst + 64}, {tmp, tmp + 64}, 0.f, 4.f);
-                pretty_print_haps(haps, 0.f, 4.f);
-                */
             } else {
                 printf("error: %.*s: %s\n", (int)(pathend - pathstart), pathstart, p.errmsg);
                 pat.unalloc();

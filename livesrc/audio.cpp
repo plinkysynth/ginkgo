@@ -1,7 +1,7 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern [0 1 2 3] : [cmaj * 4]
+/fancy_pattern [c3-c5*16] : <cmaj fmaj a2min gmaj>
 
 
 

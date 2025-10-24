@@ -449,7 +449,32 @@ const char *kFS_taa = SHADER(
     }
 );
 
+const char *kFS_secmon = SHADER(
+    in vec2 v_uv;
+    uniform sampler2D uFP;
+    uniform sampler2D uBloom;
+    uniform vec2 uARadjust;
+    out vec4 o_color;
+    vec3 aces(vec3 x) {
+        const float a=2.51;
+        const float b=0.03;
+        const float c=2.43;
+        const float d=0.59;
+        const float e=0.14;
+        return clamp((x*(a*x+b)) / (x*(c*x+d)+e), 0.0, 1.0);
+    }
+    void main() {
+        vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
+        vec3 rendercol= texture(uFP, user_uv).rgb;
+        vec3 bloomcol= texture(uBloom, user_uv).rgb;
+        rendercol += bloomcol * 0.3;
+        rendercol = max(vec3(0.), rendercol);
+        rendercol.rgb = sqrt(aces(rendercol.rgb));
+        o_color = vec4(rendercol.xyz, 1.0);
+    }
+);
 const char *kFS_ui_suffix = SHADER_NO_VERSION(
+    uniform float fade_render;
     vec3 aces(vec3 x) {
         const float a=2.51;
         const float b=0.03;
@@ -515,7 +540,7 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
             // }
             rendercol += max(vec3(0.),beamcol);
         }
-        rendercol.rgb = sqrt(aces(rendercol.rgb));
+        rendercol.rgb = sqrt(aces(rendercol.rgb)) * fade_render;
 
         vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y);
         // status line doesnt scroll
@@ -594,17 +619,30 @@ static void dump_settings(void) {
 }
 
 
-static bool load_settings(int argc, char **argv) {
+static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_idx) {
     int cur_tab = 0;
-    bool want_fullscreen = false;
     const char *settings_fname = "settings.json";
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
-            if (strcmp(argv[i], "--fullscreen") == 0 || strcmp(argv[i], "-f") == 0) {
-                want_fullscreen = true;
+            if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+                printf(COLOR_YELLOW "Usage: " COLOR_CYAN "ginkgo" COLOR_RESET " [options] [filename]\n");
+                printf("Options:\n");
+                printf(COLOR_YELLOW "  --fullscreen, -f, -e index " COLOR_RESET " - run editor fullscreen on the specified monitor\n");
+                printf(COLOR_YELLOW "  --settings, -s file.json " COLOR_RESET " - load settings from file\n");
+                printf(COLOR_YELLOW "  --secmon, -m, -v index " COLOR_RESET " - use the specified monitor for visuals\n");
+                printf(COLOR_YELLOW "  --help, -h " COLOR_RESET " - show this help message\n");
+                printf("\nif filename is .glsl or .cpp it will be loaded as the first or second tab respectively\n");
+                printf("if filename is .json it will be loaded as the settings file\n");
+                _exit(0);
+            }
+            if (strcmp(argv[i], "--fullscreen") == 0 || strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "-e") == 0) {
+                if (i+1<argc) *primon_idx = atoi(argv[i + 1]); else *primon_idx = 0;
             }
             if (strcmp(argv[i], "--settings") == 0 || strcmp(argv[i], "-s") == 0) {
-                settings_fname = argv[i + 1];
+                if (i+1<argc) settings_fname = argv[i + 1];
+            }
+            if (strcmp(argv[i], "--secmon") == 0 || strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "-v") == 0) {
+                if (i+1<argc) *secmon_idx = atoi(argv[i + 1]); else *secmon_idx = 0;
             }
         } else if (strstr(argv[i], ".glsl"))
             tabs[0].fname = stbstring_from_span(argv[i], NULL, 0);
@@ -671,11 +709,10 @@ static bool load_settings(int argc, char **argv) {
     curE = &tabs[cur_tab];
     free_json(&r);
     ui_alpha = ui_alpha_target;
-    return want_fullscreen;
 }
 
-GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0;
-GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0;
+GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0, secmon_pass = 0;
+GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0, fs_secmon = 0;
 GLuint pbos[3];
 int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
@@ -733,26 +770,45 @@ GLuint try_to_compile_shader(EditorState *E) {
     GLenum e = glGetError(); // clear any errors
     return new_user_pass;
 }
+GLFWwindow *winFS;// fullscreen window for visuals
+GLuint vaoFS = 0;
 
-GLFWwindow *gl_init(int want_fullscreen) {
-    if (!glfwInit())
-        die("glfwInit failed");
+GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
+
+    int count=0; 
+    GLFWmonitor** mons = glfwGetMonitors(&count);
+    GLFWmonitor *actual_primon = glfwGetPrimaryMonitor();
+    GLFWmonitor *primon = NULL;
+    GLFWmonitor* secmon = NULL;
+    if (primon_idx>=0 && primon_idx<count) primon = mons[primon_idx];
+    if (secmon_idx<0 && count>1) {
+        // if more than 1 monitor, default to visuals on the secondary monitor
+        GLFWmonitor *monitor_to_avoid = primon ? primon : actual_primon;
+        for (int i=0;i<count;i++) if (mons[i]!=monitor_to_avoid) { secmon = mons[i]; break; }
+    }
+    if (secmon_idx>=0 && secmon_idx<count) secmon = mons[secmon_idx];
+    if (secmon_idx == primon_idx) secmon = NULL;
+
+    const GLFWvidmode *vm = primon ? glfwGetVideoMode(primon) : NULL;
+    int ww = primon ? vm->width : 1920 / 2;
+    int wh = primon ? vm->height : 1200 / 2;
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, !want_fullscreen);
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, !primon);
 #endif
-
-    GLFWmonitor *mon = want_fullscreen ? glfwGetPrimaryMonitor() : NULL;
-    const GLFWvidmode *vm = want_fullscreen ? glfwGetVideoMode(mon) : NULL;
-    int ww = want_fullscreen ? vm->width : 1920 / 2;
-    int wh = want_fullscreen ? vm->height : 1200 / 2;
+    glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_FALSE);
+    if (primon) {
+        glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+    }
+        
 
     char winname[1024];
     snprintf(winname, sizeof(winname), "ginkgo | %s | %s", tabs[0].fname, tabs[1].fname);
-    GLFWwindow *win = glfwCreateWindow(ww, wh, winname, mon, NULL);
+    GLFWwindow *win = glfwCreateWindow(ww, wh, winname, primon, NULL);
     if (!win)
         die("glfwCreateWindow failed");
     glfwGetWindowContentScale(win, &retina, NULL);
@@ -760,6 +816,26 @@ GLFWwindow *gl_init(int want_fullscreen) {
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+
+    if (secmon) {
+        glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, false);
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+        glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+        glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_FALSE);
+        const GLFWvidmode *vm = glfwGetVideoMode(secmon);
+        int ww = vm->width; // 1920
+        int wh = vm->height; // 1080
+        winFS = glfwCreateWindow(ww, wh, "Ginkgo Visuals", secmon, win); // 'share' = win
+        glfwMakeContextCurrent(winFS);
+        glfwSwapInterval(0);
+        glGenVertexArrays(1, &vaoFS);
+       // glfwSetInputMode(winFS, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+        unsigned char px[4] = {0,0,0,0};
+        GLFWimage img = { .width=1, .height=1, .pixels=px };
+        GLFWcursor* invis = glfwCreateCursor(&img, 0, 0);
+        glfwSetCursor(winFS, invis);
+        glfwMakeContextCurrent(win);
+    }
 
     return win;
 }
@@ -1399,9 +1475,39 @@ inline float atof_default(const char *s, float def) {
     return f;
 }
 
+void set_aradjust(GLuint shader, int fbw, int fbh) {
+    float output_ar = fbw / float(fbh);
+    float input_ar = RESW / float(RESH);
+    float scale = output_ar / input_ar;
+    if (scale > 1.f) { // output is wider than input - black bars at sides
+        glUniform2f(glGetUniformLocation(shader, "uARadjust"), scale, 1.f);
+    } else { // black bars at top and bottom
+        glUniform2f(glGetUniformLocation(shader, "uARadjust"), 1.f, 1.f / scale);
+    }
+    check_gl("set_aradjust");
+}
+
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
-    bool want_fullscreen = load_settings(argc, argv);
+    if (!glfwInit())
+        die("glfwInit failed");
+    int count=0; 
+    GLFWmonitor** mons = glfwGetMonitors(&count);
+    printf(COLOR_CYAN "%d" COLOR_RESET " monitors found\n", count);
+        
+    if (count > 1) {
+        GLFWmonitor *primon = glfwGetPrimaryMonitor();
+        for (int i=0;i<count;i++) {
+            const GLFWvidmode *vm = glfwGetVideoMode(mons[i]);
+            const char *name = glfwGetMonitorName(mons[i]);
+            printf(COLOR_YELLOW "  %d: %dx%d @ %dHz - " COLOR_CYAN "%s" COLOR_RED "%s" COLOR_RESET "\n", i, vm->width, vm->height, vm->refreshRate, name, mons[i] == primon ? " (primary)" : "");
+        }
+    }
+
+
+    int primon_idx = -1;
+    int secmon_idx = -1;
+    load_settings(argc, argv, &primon_idx, &secmon_idx);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
@@ -1411,7 +1517,7 @@ int main(int argc, char **argv) {
     //return 0;
 
 
-    GLFWwindow *win = gl_init(want_fullscreen);
+    GLFWwindow *win = gl_init(primon_idx, secmon_idx);
 
     size_t n = strlen(kFS_user_prefix) + strlen(kFS_ui_suffix) + 1;
     char *fs_ui_str = (char *)malloc(n);
@@ -1420,9 +1526,11 @@ int main(int argc, char **argv) {
     fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, fs_ui_str);
     fs_bloom = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_bloom);
     fs_taa = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_taa);
+    fs_secmon = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_secmon);
     ui_pass = link_program(vs, fs_ui);
     bloom_pass = link_program(vs, fs_bloom);
     taa_pass = link_program(vs, fs_taa);
+    secmon_pass = link_program(vs, fs_secmon);
     glDeleteShader(fs_ui);
     glDeleteShader(fs_bloom);
     glDeleteShader(fs_taa);
@@ -1588,6 +1696,8 @@ int main(int argc, char **argv) {
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
 
+        GLsync fprtReady = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
         // ui pass //////////////////
         glUseProgram(ui_pass);
         bind_texture_to_slot(ui_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
@@ -1597,6 +1707,7 @@ int main(int argc, char **argv) {
         bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
         bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
         bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
+        set_aradjust(ui_pass, fbw, fbh);
 
         glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
         glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
@@ -1604,15 +1715,10 @@ int main(int argc, char **argv) {
         glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
         glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
         glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
-
-        float output_ar = fbw / float(fbh);
-        float input_ar = RESW / float(RESH);
-        float scale = output_ar / input_ar;
-        if (scale > 1.f) { // output is wider than input - black bars at sides
-            glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), scale, 1.f);
-        } else { // black bars at top and bottom
-            glUniform2f(glGetUniformLocation(ui_pass, "uARadjust"), 1.f, 1.f / scale);
-        }
+        // if there's a second monitor, we can afford to fade the render a bit more
+        // to make the code more readable.
+        float fade_render = lerp(1.f, winFS ? 0.5f : 0.8f, ui_alpha);
+        glUniform1f(glGetUniformLocation(ui_pass, "fade_render"), fade_render);
 
         float f_cursor_x = curE->cursor_x * curE->font_width;
         float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
@@ -1669,6 +1775,30 @@ int main(int argc, char **argv) {
         ui_alpha += (ui_alpha_target - ui_alpha) * 0.1;
 
         glfwSwapBuffers(win);
+        if (winFS) {
+            check_gl("pre second mon");
+
+            glfwMakeContextCurrent(winFS);
+            int sw,sh; glfwGetFramebufferSize(winFS,&sw,&sh);
+            glViewport(0, 0, sw, sh);
+            glClearColor(1.f, 0.f, 1.f, 1.f);
+            //glClear(GL_COLOR_BUFFER_BIT);
+            glWaitSync(fprtReady, 0, GL_TIMEOUT_IGNORED);
+            glUseProgram(secmon_pass);
+            bind_texture_to_slot(secmon_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);    
+            bind_texture_to_slot(secmon_pass, 1, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
+            set_aradjust(secmon_pass, sw, sh);    
+            glBindVertexArray(vaoFS);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            unbind_textures_from_slots(2);
+            glBindVertexArray(0);
+            glfwSwapBuffers(winFS);
+            glfwMakeContextCurrent(win);
+            check_gl("post second mon");
+
+        }
         iFrame++;
 
         // poll for changes in the audio file
@@ -1694,6 +1824,11 @@ int main(int argc, char **argv) {
     ma_device_stop(&dev);
     ma_device_uninit(&dev);
 
+    if (winFS) {
+        glDeleteVertexArrays(1, &vaoFS);
+        glfwDestroyWindow(winFS);
+        winFS = NULL;
+    }
     glDeleteVertexArrays(1, &vao);
     glDeleteTextures(1, &texText);
     glDeleteTextures(1, &texFont);

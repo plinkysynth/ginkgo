@@ -1,7 +1,7 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern [c]*0.5
+/fancy_pattern [/up /down]
 /up [c e]
 /down [g f e d]
 

@@ -26,5 +26,5 @@ vec4 pixel(vec2 uv) {
         vec3 col = fract(rd*10.5);
         //o += vec4(col, 1./maxt);
     }
-    return o*(1./8.);
+    return o*(1./2.);
 }

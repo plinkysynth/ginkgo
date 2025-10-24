@@ -618,7 +618,6 @@ static void dump_settings(void) {
     json_end_file(&jp);
 }
 
-
 static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_idx) {
     int cur_tab = 0;
     const char *settings_fname = "settings.json";
@@ -627,7 +626,8 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
             if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
                 printf(COLOR_YELLOW "Usage: " COLOR_CYAN "ginkgo" COLOR_RESET " [options] [filename]\n");
                 printf("Options:\n");
-                printf(COLOR_YELLOW "  --fullscreen, -f, -e index " COLOR_RESET " - run editor fullscreen on the specified monitor\n");
+                printf(COLOR_YELLOW "  --fullscreen, -f, -e index " COLOR_RESET
+                                    " - run editor fullscreen on the specified monitor\n");
                 printf(COLOR_YELLOW "  --settings, -s file.json " COLOR_RESET " - load settings from file\n");
                 printf(COLOR_YELLOW "  --secmon, -m, -v index " COLOR_RESET " - use the specified monitor for visuals\n");
                 printf(COLOR_YELLOW "  --help, -h " COLOR_RESET " - show this help message\n");
@@ -636,13 +636,20 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
                 _exit(0);
             }
             if (strcmp(argv[i], "--fullscreen") == 0 || strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "-e") == 0) {
-                if (i+1<argc) *primon_idx = atoi(argv[i + 1]); else *primon_idx = 0;
+                if (i + 1 < argc)
+                    *primon_idx = atoi(argv[i + 1]);
+                else
+                    *primon_idx = 0;
             }
             if (strcmp(argv[i], "--settings") == 0 || strcmp(argv[i], "-s") == 0) {
-                if (i+1<argc) settings_fname = argv[i + 1];
+                if (i + 1 < argc)
+                    settings_fname = argv[i + 1];
             }
             if (strcmp(argv[i], "--secmon") == 0 || strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "-v") == 0) {
-                if (i+1<argc) *secmon_idx = atoi(argv[i + 1]); else *secmon_idx = 0;
+                if (i + 1 < argc)
+                    *secmon_idx = atoi(argv[i + 1]);
+                else
+                    *secmon_idx = 0;
             }
         } else if (strstr(argv[i], ".glsl"))
             tabs[0].fname = stbstring_from_span(argv[i], NULL, 0);
@@ -770,24 +777,31 @@ GLuint try_to_compile_shader(EditorState *E) {
     GLenum e = glGetError(); // clear any errors
     return new_user_pass;
 }
-GLFWwindow *winFS;// fullscreen window for visuals
+GLFWwindow *winFS; // fullscreen window for visuals
 GLuint vaoFS = 0;
 
 GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
 
-    int count=0; 
-    GLFWmonitor** mons = glfwGetMonitors(&count);
+    int count = 0;
+    GLFWmonitor **mons = glfwGetMonitors(&count);
     GLFWmonitor *actual_primon = glfwGetPrimaryMonitor();
     GLFWmonitor *primon = NULL;
-    GLFWmonitor* secmon = NULL;
-    if (primon_idx>=0 && primon_idx<count) primon = mons[primon_idx];
-    if (secmon_idx<0 && count>1) {
+    GLFWmonitor *secmon = NULL;
+    if (primon_idx >= 0 && primon_idx < count)
+        primon = mons[primon_idx];
+    if (secmon_idx < 0 && count > 1) {
         // if more than 1 monitor, default to visuals on the secondary monitor
         GLFWmonitor *monitor_to_avoid = primon ? primon : actual_primon;
-        for (int i=0;i<count;i++) if (mons[i]!=monitor_to_avoid) { secmon_idx = i; break; }
+        for (int i = 0; i < count; i++)
+            if (mons[i] != monitor_to_avoid) {
+                secmon_idx = i;
+                break;
+            }
     }
-    if (secmon_idx>=0 && secmon_idx<count) secmon = mons[secmon_idx];
-    if (secmon_idx == primon_idx) secmon = NULL;
+    if (secmon_idx == primon_idx)
+        secmon_idx = -1;
+    if (secmon_idx >= 0 && secmon_idx < count)
+        secmon = mons[secmon_idx];
 
     const GLFWvidmode *vm = primon ? glfwGetVideoMode(primon) : NULL;
     int ww = primon ? vm->width : 1920 / 2;
@@ -804,7 +818,6 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     if (primon) {
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
     }
-        
 
     char winname[1024];
     snprintf(winname, sizeof(winname), "ginkgo | %s | %s", tabs[0].fname, tabs[1].fname);
@@ -823,16 +836,16 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
         glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_FALSE);
         const GLFWvidmode *vm = glfwGetVideoMode(secmon);
-        int ww = vm->width; // 1920
-        int wh = vm->height; // 1080
+        int ww = vm->width;                                              // 1920
+        int wh = vm->height;                                             // 1080
         winFS = glfwCreateWindow(ww, wh, "Ginkgo Visuals", secmon, win); // 'share' = win
         glfwMakeContextCurrent(winFS);
         glfwSwapInterval(0);
         glGenVertexArrays(1, &vaoFS);
-       // glfwSetInputMode(winFS, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-        unsigned char px[4] = {0,0,0,0};
-        GLFWimage img = { .width=1, .height=1, .pixels=px };
-        GLFWcursor* invis = glfwCreateCursor(&img, 0, 0);
+        // glfwSetInputMode(winFS, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+        unsigned char px[4] = {0, 0, 0, 0};
+        GLFWimage img = {.width = 1, .height = 1, .pixels = px};
+        GLFWcursor *invis = glfwCreateCursor(&img, 0, 0);
         glfwSetCursor(winFS, invis);
         glfwMakeContextCurrent(win);
     }
@@ -1468,10 +1481,12 @@ static void update_spheres(void) {
 }
 
 inline float atof_default(const char *s, float def) {
-    if (!s) return def;
-    char *end=NULL;
+    if (!s)
+        return def;
+    char *end = NULL;
     float f = strtod(s, &end);
-    if (end == s) return def;
+    if (end == s)
+        return def;
     return f;
 }
 
@@ -1491,19 +1506,19 @@ int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
     if (!glfwInit())
         die("glfwInit failed");
-    int count=0; 
-    GLFWmonitor** mons = glfwGetMonitors(&count);
+    int count = 0;
+    GLFWmonitor **mons = glfwGetMonitors(&count);
     printf(COLOR_CYAN "%d" COLOR_RESET " monitors found\n", count);
-        
+
     if (count > 1) {
         GLFWmonitor *primon = glfwGetPrimaryMonitor();
-        for (int i=0;i<count;i++) {
+        for (int i = 0; i < count; i++) {
             const GLFWvidmode *vm = glfwGetVideoMode(mons[i]);
             const char *name = glfwGetMonitorName(mons[i]);
-            printf(COLOR_YELLOW "  %d: %dx%d @ %dHz - " COLOR_CYAN "%s" COLOR_RED "%s" COLOR_RESET "\n", i, vm->width, vm->height, vm->refreshRate, name, mons[i] == primon ? " (primary)" : "");
+            printf(COLOR_YELLOW "  %d: %dx%d @ %dHz - " COLOR_CYAN "%s" COLOR_RED "%s" COLOR_RESET "\n", i, vm->width, vm->height,
+                   vm->refreshRate, name, mons[i] == primon ? " (primary)" : "");
         }
     }
-
 
     int primon_idx = -1;
     int secmon_idx = -1;
@@ -1514,8 +1529,7 @@ int main(int argc, char **argv) {
 
     // void test_minipat(void);
     // test_minipat();
-    //return 0;
-
+    // return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);
 
@@ -1616,11 +1630,14 @@ int main(int argc, char **argv) {
             want_taa_str = NULL;
         bool want_taa = want_taa_str != NULL;
         const char *aperture_str = strstr(s, "// aperture ");
-        if (aperture_str) aperture = atof_default(aperture_str + 11, aperture);
+        if (aperture_str)
+            aperture = atof_default(aperture_str + 11, aperture);
         const char *focal_distance_str = strstr(s, "// focal_distance ");
-        if (focal_distance_str) focal_distance = atof_default(focal_distance_str + 17, focal_distance);
+        if (focal_distance_str)
+            focal_distance = atof_default(focal_distance_str + 17, focal_distance);
         const char *fov_str = strstr(s, "// fov ");
-        if (fov_str) fov = atof_default(fov_str + 7, fov);
+        if (fov_str)
+            fov = atof_default(fov_str + 7, fov);
         stbds_arrpop(tabs[0].str);
         static uint32_t skytex = 0;
         if (sky_name) {
@@ -1779,17 +1796,18 @@ int main(int argc, char **argv) {
             check_gl("pre second mon");
 
             glfwMakeContextCurrent(winFS);
-            int sw,sh; glfwGetFramebufferSize(winFS,&sw,&sh);
+            int sw, sh;
+            glfwGetFramebufferSize(winFS, &sw, &sh);
             glViewport(0, 0, sw, sh);
             glClearColor(1.f, 0.f, 1.f, 1.f);
-            //glClear(GL_COLOR_BUFFER_BIT);
+            // glClear(GL_COLOR_BUFFER_BIT);
             glWaitSync(fprtReady, 0, GL_TIMEOUT_IGNORED);
             glUseProgram(secmon_pass);
             bind_texture_to_slot(secmon_pass, 0, "uFP", texFPRT[iFrame % 2], GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);    
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
             bind_texture_to_slot(secmon_pass, 1, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
-            set_aradjust(secmon_pass, sw, sh);    
+            set_aradjust(secmon_pass, sw, sh);
             glBindVertexArray(vaoFS);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             unbind_textures_from_slots(2);
@@ -1797,7 +1815,6 @@ int main(int argc, char **argv) {
             glfwSwapBuffers(winFS);
             glfwMakeContextCurrent(win);
             check_gl("post second mon");
-
         }
         iFrame++;
 

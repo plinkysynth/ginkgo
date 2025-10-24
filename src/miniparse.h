@@ -24,6 +24,7 @@ typedef struct Node {
     uint8_t type;
     int8_t value_type;  // note, number, sound
     int32_t start, end;  // half-open [start,end) character range (for syntax hilighting)
+    int linenumber; // whate line we are on
     int32_t first_child; // index or -1
     int32_t next_sib;    // index or -1 - linked list of siblings
     int num_children;
@@ -75,6 +76,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
     // bfs 
     int_pair_t *bfs_start_end; // source code ranges
     float_minmax_t *bfs_min_max_value; // parsed value of the node
+    float *bfs_grid_time_offset;
     float *bfs_kids_total_length;
     bfs_node_t *bfs_nodes;
 
@@ -91,6 +93,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
         stbds_arrfree(bfs_start_end);
         stbds_arrfree(bfs_min_max_value);
         stbds_arrfree(bfs_kids_total_length);
+        stbds_arrfree(bfs_grid_time_offset);
         stbds_arrfree(bfs_nodes);
     }
 } pattern_t;
@@ -103,6 +106,7 @@ typedef struct pattern_maker_t {
     int root;    // index of root node
     int32_t n;   // length of string
     int32_t i;   // current position in string during parsing.
+    int linecount; // counts \n
     int err;     // 0 ok, else position of first error
     const char *errmsg;
     pattern_t make_pattern(const char *key=NULL);
@@ -121,6 +125,7 @@ void parse_named_patterns_in_c_source(const char *s, const char *e);
 
 const char *skip_path(const char *s, const char *e);
 const char *find_end_of_pattern(const char *s, const char *e);
+const char *find_start_of_pattern(const char *s, const char *e);
 
 void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to);
 

@@ -1521,11 +1521,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
         // draw a popup below the cursor
         int basex = left;
         int chartx = basex + 13;
-        int code_start_idx = xy_to_idx(E, 0, E->cursor_y);
-        const char *pat_start = t.str + code_start_idx;
+        const char *pat_start = find_start_of_pattern(t.str, t.str + E->cursor_idx);
         pat_start = skip_path(pat_start, t.str + t.n);
         const char *pat_end = find_end_of_pattern(pat_start, t.str + t.n);
-        code_start_idx = pat_start - t.str;
+        int code_start_idx = pat_start - t.str;
         int code_end_idx = pat_end - t.str;
         static uint32_t cached_compiled_string_hash = 0;
         static pattern_maker_t cached_parser = {};

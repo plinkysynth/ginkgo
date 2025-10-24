@@ -12,17 +12,20 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
     int n_input = stbds_arrlen(nodes);
     if (err || root<0 || root>=n_input)
         return p;
-    arrsetlencap(p.bfs_start_end, 0, n_input);
-    arrsetlencap(p.bfs_min_max_value, 0, n_input);
-    arrsetlencap(p.bfs_nodes, 0, n_input);
-    arrsetlencap(p.bfs_kids_total_length, 0, n_input);
     int_pair_t q[n_input];
     int qhead = 1;
     q[0] = {root, -1};
     for (int i = 0; i < qhead; i++) {
         Node *n = nodes + q[i].k;
         bool has_one_child = n->first_child >= 0 && nodes[n->first_child].next_sib < 0;
-        if (has_one_child && (n->type == N_CAT || (n->type == N_FASTCAT && n->total_length == 1.f) || n->type == N_PARALLEL)) {
+        bool has_zero_children = n->first_child < 0;
+        
+        if ((has_one_child || has_zero_children) && (n->type == N_CAT || (n->type == N_FASTCAT && n->total_length == 1.f) || n->type == N_PARALLEL)) {
+            if (has_zero_children) {
+                // skip this node! its empty.
+
+                continue;
+            }
             q[i--].k = n->first_child; // replace this node with its only child
             continue;
         }
@@ -31,17 +34,27 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
         // float previous_sibling_length = 0.f;
         if (bfs_parent >= 0 && p.bfs_nodes[bfs_parent].first_child < 0) {
             p.bfs_nodes[bfs_parent].first_child = my_bfs_idx;
-        } /*else if (my_bfs_idx > 0) {
-            previous_sibling_length = p.bfs_kids_total_length[my_bfs_idx - 1];
-        }*/
+        }
+        if (bfs_parent >= 0) {
+            p.bfs_nodes[bfs_parent].num_children++;
+        }
+
         int_pair_t start_end = {n->start, n->end};
         float_minmax_t min_max_value = {n->min_value, n->max_value};
-        bfs_node_t node = {n->type, n->value_type, (uint16_t)n->num_children, -1};
+        bfs_node_t node = {n->type, n->value_type, 0, -1};
         // float cumulative_length = n->total_length + previous_sibling_length;
+        if (!p.bfs_nodes) {
+            arrsetlencap(p.bfs_start_end, 0, n_input);
+            arrsetlencap(p.bfs_min_max_value, 0, n_input);
+            arrsetlencap(p.bfs_nodes, 0, n_input);
+            arrsetlencap(p.bfs_kids_total_length, 0, n_input);
+            arrsetlencap(p.bfs_grid_time_offset, 0, n_input);
+        }
         stbds_arrpush(p.bfs_start_end, start_end);
         stbds_arrpush(p.bfs_min_max_value, min_max_value);
         stbds_arrpush(p.bfs_nodes, node);
         stbds_arrpush(p.bfs_kids_total_length, n->total_length);
+        stbds_arrpush(p.bfs_grid_time_offset, n->linenumber / 16.f);
         for (int child = n->first_child; child >= 0; child = nodes[child].next_sib) {
             assert(child < n_input);
             q[qhead++] = {child, my_bfs_idx};
@@ -442,8 +455,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
             hap_time child_length = get_length(childnode);
             hap_time to = from + child_length;
             if (n->type == N_GRID) {
-                if (childidx==0) { from=loop_from+0.25f; to=loop_from+0.5f; }
-                if (childidx==1) { from=loop_from+1.5; to=loop_from+1.75f; }
+                float grid_time_offset = bfs_grid_time_offset[childnode];
+                float next_grid_time_offset = (childidx < n->num_children-1) ? bfs_grid_time_offset[childnode+1] : kids_total_length;
+                from = loop_from + grid_time_offset;
+                to = loop_from + next_grid_time_offset;
                 if (from > child_b) break;
             }
             if (to <= from)

@@ -113,8 +113,11 @@ static void error(pattern_maker_t *p, const char *msg) {
 
 static void skipws(pattern_maker_t *p) {
     while (1) {
-        while (p->i < p->n && isspace(p->s[p->i]))
+        while (p->i < p->n && isspace(p->s[p->i])) {
+            if (p->s[p->i] == '\n')
+                p->linecount++;
             p->i++;
+        }
         if (p->i + 2 > p->n || p->s[p->i] != '/' || p->s[p->i + 1] != '/')
             return;
         // skip // comment
@@ -144,6 +147,7 @@ static int make_node(pattern_maker_t *p, int node_type, int first_child, int nex
     Node n = (Node){.type = (uint8_t)node_type,
                     .start = start,
                     .end = end,
+                    .linenumber = p->linecount,
                     .first_child = first_child,
                     .next_sib = next_sib,
                     .total_length = 0,
@@ -231,6 +235,9 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
         error(p, "expected opening bracket");
         return -1;
     }
+    skipws(p);
+    p->linecount = 0; // count lines within this group
+
     int is_poly = node_type == N_POLY;
     int group_node = parse_args(p, is_poly ? N_CAT : node_type, start, is_poly, close);
     if (!consume(p, close)) {
@@ -239,7 +246,10 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
     }
     p->nodes[group_node].end = p->i;
     if (node_type == N_GRID) {
-        p->nodes[group_node].max_value = 2.f; // length of the grid TODO from whitespace :)
+        //printf("grid linecount: %d\n", p->linecount);
+        float grid_length = ceilf(p->linecount/16.f);
+        if (grid_length <= 0.f) grid_length = 1.f;
+        p->nodes[group_node].max_value = grid_length; // length of the grid TODO from whitespace :)
         skipws(p);
         if (isdigit(peek(p))) {
             // TODO: allow the user to specify a time multiplier for the grid. store it in min_value?
@@ -642,7 +652,7 @@ void test_minipat(void) {
     // const char *s = "[bd | sd | rim]*8";
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "< # a b # e >"; // test divide
+    const char *s = "c < > d"; // test divide
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
     //  const char *s = "[bd <hh oh>,rim*<4 8>]";
@@ -677,14 +687,24 @@ const char *skip_path(const char *s, const char *e) {
     return s;
 }
 
+// scan 'e' backwards until we find / at the start of a new line.
+const char *find_start_of_pattern(const char *s, const char *e) {
+    while (s <= e -2) {
+        if (e[-2] == '\n' && e[-1] == '/')
+            return e - 1;
+        --e;
+    }
+    return s;
+}
+
 const char *find_end_of_pattern(const char *s, const char *e) {
     while (s < e) {
         while (s < e && *s != '\n')
             ++s; // find new line
         if (s + 3 < e && s[0] == '\n' && s[1] == '/' && s[2] != '/')
             return s; // its a new path
-        if (s + 2 < e && s[0] == '\n' && s[1] == '#')
-            return s; // its a line starting '#'
+        if (s + 7 < e && s[0] == '\n' && strncmp(s+1, "#endif", 6) == 0)
+             return s; // its a line starting '#endif'
         if (s < e)
             ++s;
     }

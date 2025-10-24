@@ -286,6 +286,7 @@ typedef struct voice_state_t {
     float duty;
     float gate;
     float env;
+    bool decaying;
 } voice_state_t;
 float test_patterns(void) {
 
@@ -304,6 +305,7 @@ float test_patterns(void) {
         for (int i = stbds_hmlen(voices); i-- > 0;) {
             voice_state_t *v = &voices[i];
             v->gate = 0;
+            v->decaying = true;
         }
         if (G->playing) {
             hap_t haps[8];
@@ -330,7 +332,9 @@ float test_patterns(void) {
     for (int i = stbds_hmlen(voices); i-- > 0;) {
         voice_state_t *v = &voices[i];
         rv += pwmo(&v->phase, v->dphase, v->duty) * v->env;
-        v->env += (v->gate - v->env) * ((v->env > v->gate) ? 0.001f : 0.001f);
+        float env_target = v->decaying ? v->gate * 0.1f : v->gate*1.1f;
+        v->env += (env_target - v->env) * ((v->env < env_target) ? 0.01f : 0.0001f);
+        if (v->env > v->gate) { v->env = v->gate; v->decaying= true; }
         if (v->env < 0.01f && v->gate == 0.f)
             stbds_hmdel(voices, v->key);
     }

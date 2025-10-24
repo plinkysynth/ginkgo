@@ -827,10 +827,16 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     glfwGetWindowContentScale(win, &retina, NULL);
     // printf("retina: %f\n", retina);
     glfwMakeContextCurrent(win);
-    glfwSwapInterval(1);
+    glfwSwapInterval(secmon ? 0 : 1); // let the secondary monitor determine the swap interval
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     if (secmon) {
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    #ifdef __APPLE__
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    #endif
         glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, false);
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
@@ -840,7 +846,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
         int wh = vm->height;                                             // 1080
         winFS = glfwCreateWindow(ww, wh, "Ginkgo Visuals", secmon, win); // 'share' = win
         glfwMakeContextCurrent(winFS);
-        glfwSwapInterval(0);
+        glfwSwapInterval(1);
         glGenVertexArrays(1, &vaoFS);
         // glfwSetInputMode(winFS, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
         unsigned char px[4] = {0, 0, 0, 0};

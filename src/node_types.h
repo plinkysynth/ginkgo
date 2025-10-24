@@ -26,6 +26,7 @@ fast slow and all the others that are equivalent to the mininotation ones
 #define OP NODE
 #endif
 NODE(N_LEAF)
+NODE(N_CALL)
 NODE(N_CURVE)
 NODE(N_CAT)
 NODE(N_FASTCAT)

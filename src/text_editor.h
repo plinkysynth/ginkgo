@@ -78,9 +78,7 @@ typedef struct slider_spec_t {
 
 bool ispartofnumber(char c) { return isdigit(c) || c == '-' || c == '.' || c == 'e' || c == 'E'; }
 
-static inline bool iswordbreak(char c) {
-    return !isalnum(c) && !ispartofnumber(c);
-}
+static inline bool iswordbreak(char c) { return !isalnum(c) && !ispartofnumber(c); }
 static inline bool isnewline(char c) { return c == '\n' || c == '\r'; }
 
 int try_parse_number(const char *str, int n, int idx, float *out, int *out_idx, float default_val) {
@@ -345,7 +343,7 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
     }
     if (!E->mouse_dragging_chart) {
         // sliders on the right interaction
-        
+
         if (E->click_fx >= tmw - 16 && E->click_fx < tmw) {
             for (int slideridx = 0; slideridx < 16; ++slideridx) {
                 /*
@@ -482,23 +480,23 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             find_word_at_idx(E, E->cursor_idx, &word_start, &word_end);
             float number = 0.f;
             int number_idx = 0;
-            const char *end = E->str+word_end;
-            int midinote = parse_midinote(E->str+word_start, E->str+word_end, &end, 0);
-            if (midinote>=0) {
+            const char *end = E->str + word_end;
+            int midinote = parse_midinote(E->str + word_start, E->str + word_end, &end, 0);
+            if (midinote >= 0) {
                 midinote += (key & 0xffff) == GLFW_KEY_UP ? 1 : -1;
-                midinote=clamp(midinote, 0, 127);
+                midinote = clamp(midinote, 0, 127);
                 const char *buf = print_midinote(midinote);
                 push_edit_op(E, word_start, word_end, buf, 0);
                 return;
             } else if (try_parse_number(E->str, n, word_start, &number, &number_idx, 0.f)) {
-                while (word_end > word_start && !ispartofnumber(E->str[word_end-1]))
+                while (word_end > word_start && !ispartofnumber(E->str[word_end - 1]))
                     word_end--;
                 // count decimal places
                 int dp = -1;
                 for (int i = word_start; i < word_end; i++)
                     if (E->str[i] == '.')
                         dp = i;
-                int numdp = (dp<0) ? 0 : max(1, word_end - dp - 1);
+                int numdp = (dp < 0) ? 0 : max(1, word_end - dp - 1);
                 number += powf(10.f, -numdp) * ((key & 0xffff) == GLFW_KEY_UP ? 1.f : -1.f);
                 char buf[32];
                 char fmt[32];
@@ -1190,53 +1188,30 @@ static inline Sound *get_sound_span(const char *s, const char *e) { return get_s
 
 autocomplete_option_t autocomplete_score(const char *users, int userlen, int minmatch, const char *option) {
     autocomplete_option_t rv = {option};
-    /*
     // find the longest substring of option that starts at 'users'
+    int option_len = strlen(option);
+    const char *option_end = option + option_len;
     for (const char *c = option; *c; c++) {
         int i;
         for (i = 0; i < userlen; i++)
-            if (users[i] != c[i])
+            if (tolower(users[i]) != tolower(c[i]))
                 break;
         if (c == option && c[i] == 0) // complete match doesnt count as 'completion'...
             continue;
-        int score = i;
-        if (score < minmatch)
+        if (i < minmatch)
             continue;
+        int score = i * 2 + 20 - (option_end - c) * 2;
+
         if (c == option)
             score += 20; // boost if the match is at the start
+        else if (isupper(c[0]) && !isupper(c[-1]))
+            score += 10;
         if (score > rv.value) {
             rv.value = score;
-            rv.xoffset = c-option;
+            rv.xoffset = c - option;
             rv.matchlen = i;
         }
-    }*/
-    // try: letters must appear in order...
-    const char *src = users;
-    const char *srcend = users + userlen;
-    const char *c = option;
-
-    while (*c && src < srcend) {
-        while (src < srcend && *c && tolower(*src) != tolower(*c)) {
-            ++c;
-            if (src == users)
-                rv.xoffset++;
-        }
-        int matchweight = 1;
-        while (src < srcend && *c && tolower(*src) == tolower(*c)) {
-            ++c;
-            ++src;
-            rv.value += matchweight;
-            rv.matchlen++;
-            matchweight += 5;
-        }
-        if (src >= srcend || *src != '_')
-            break;
-        src++;
-        rv.matchlen++;
-        rv.value++;
     }
-    if (rv.matchlen < minmatch || rv.matchlen == strlen(option))
-        rv.value = 0;
     return rv;
 }
 
@@ -1649,25 +1624,24 @@ int code_color(EditorState *E, uint32_t *ptr) {
 
     E->autocomplete_index = 0;
     stbds_hmfree(E->autocomplete_options);
-    if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after && cursor_token_start_idx < cursor_token_end_idx) {
+    if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after &&
+        cursor_token_start_idx < cursor_token_end_idx) {
         // autocomplete popup
         const char *token = &t.str[cursor_token_start_idx];
         int pm = E->cursor_in_pattern_area;
-        if ( token[0] == '"') {
+        if (token[0] == '"') {
             token++;
             cursor_token_start_idx++;
             pm = true;
         }
-        bool include_chord_names = false;
+        int include_chord_names = 0;
         if (pm) {
             // if the start of the token parses as a midi note, then skip forward
-            const char *noteend=NULL;
+            const char *noteend = NULL;
             const char *tokenend = &t.str[cursor_token_end_idx];
             int note = parse_midinote(token, tokenend, &noteend, 0);
-            if (note>=0 && noteend < tokenend) {
-                token = noteend;
-                cursor_token_start_idx = token - t.str;
-                include_chord_names = true;
+            if (note >= 0 && noteend < tokenend) {
+                include_chord_names = noteend - token;
             }
         }
         int token_len = cursor_token_end_idx - cursor_token_start_idx;
@@ -1680,9 +1654,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
             int bestscore = 2;
             char *bestoption = NULL;
 
-#define COMPARE_PREFIX(x)                                                                                                          \
+#define COMPARE_PREFIX(x, tokofs)                                                                                                  \
     {                                                                                                                              \
-        autocomplete_option_t score = autocomplete_score(token, token_len, num_chars_so_far, x);                                   \
+        autocomplete_option_t score = autocomplete_score(token + tokofs, token_len - tokofs, num_chars_so_far - tokofs, x);        \
         if (score.value >= 2) {                                                                                                    \
             stbds_hmputs(E->autocomplete_options, score);                                                                          \
             if (score.value > bestscore) {                                                                                         \
@@ -1693,26 +1667,26 @@ int code_color(EditorState *E, uint32_t *ptr) {
     }
 #define K(x)                                                                                                                       \
     if (!pm)                                                                                                                       \
-        COMPARE_PREFIX(#x);
+        COMPARE_PREFIX(#x, 0);
 #define T(x)                                                                                                                       \
     if (!pm)                                                                                                                       \
-        COMPARE_PREFIX(#x);
+        COMPARE_PREFIX(#x, 0);
 #define P(x)                                                                                                                       \
     if (!pm)                                                                                                                       \
-        COMPARE_PREFIX(#x);
+        COMPARE_PREFIX(#x, 0);
 #define M(x)                                                                                                                       \
     if (pm)                                                                                                                        \
-        COMPARE_PREFIX(#x);
+        COMPARE_PREFIX(#x, 0);
 #include "tokens.h"
             if (pm) {
                 if (include_chord_names) {
-                    #define X(scale_name, scale_bits) COMPARE_PREFIX(scale_name);
-                    #include "scales.h"
+#define X(scale_name, scale_bits) COMPARE_PREFIX(scale_name, include_chord_names);
+#include "scales.h"
                 }
                 int n = num_sounds();
                 for (int i = 0; i < n; ++i) {
                     char *name = G->sounds[i].key;
-                    COMPARE_PREFIX(name);
+                    COMPARE_PREFIX(name, 0);
                 }
             }
             int numchoices = stbds_hmlen(E->autocomplete_options);
@@ -1743,12 +1717,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             continue;
                         if (y == avoid_y + 1) {
                             int xx = x + left - o->xoffset;
-                            const char *s = token;
-                            const char *e = token + token_len;
-                            for (const char *c = o->key; *c; c++) {
-                                bool match = s < e && (tolower(*c) == tolower(*s));
-                                if (match)
-                                    s++;
+                            int idx = 0;
+                            for (const char *c = o->key; *c; c++, ++idx) {
+                                bool match = idx >= o->xoffset && idx < o->xoffset + o->matchlen;
                                 if (xx >= 0 && xx < TMW && y >= 0 && y < TMH)
                                     t.ptr[xx + y * TMW] = (match ? C_SELECTION : C_AUTOCOMPLETE) | (unsigned char)(*c);
                                 xx++;

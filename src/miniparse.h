@@ -64,6 +64,9 @@ typedef struct bfs_node_t {
 typedef bool (*filter_cb_t)(hap_t *left_hap, hap_t *right_hap, int new_hapid);
 typedef void (*value_cb_t)(hap_t *target, hap_t *right_hap, size_t context);
 
+typedef struct float_minmax_t {
+    float mn, mx;
+} float_minmax_t;
 
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
@@ -71,7 +74,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
 
     // bfs 
     int_pair_t *bfs_start_end; // source code ranges
-    float_pair_t *bfs_min_max_value; // parsed value of the node
+    float_minmax_t *bfs_min_max_value; // parsed value of the node
     float *bfs_nodes_total_length;
     bfs_node_t *bfs_nodes;
 

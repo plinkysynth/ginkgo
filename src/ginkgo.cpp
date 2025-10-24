@@ -746,12 +746,6 @@ GLFWwindow *gl_init(int want_fullscreen) {
 #endif
 
     GLFWmonitor *mon = want_fullscreen ? glfwGetPrimaryMonitor() : NULL;
-    // int count;
-    // const GLFWvidmode* modes = glfwGetVideoModes(mon, &count);
-    // const GLFWvidmode* pick = NULL;
-    // for (int i=0;i<count;i++) {
-    //     printf("mode %d: %d x %d - %d Hz\n", i, modes[i].width, modes[i].height, modes[i].refreshRate);
-    // }
     const GLFWvidmode *vm = want_fullscreen ? glfwGetVideoMode(mon) : NULL;
     int ww = want_fullscreen ? vm->width : 1920 / 2;
     int wh = want_fullscreen ? vm->height : 1200 / 2;
@@ -1412,13 +1406,10 @@ int main(int argc, char **argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
 
-    void test_minipat(void);
-    test_minipat();
-    
+    // void test_minipat(void);
+    // test_minipat();
     //return 0;
 
-    ma_device dev;
-    init_audio_midi(&dev);
 
     GLFWwindow *win = gl_init(want_fullscreen);
 
@@ -1495,6 +1486,10 @@ int main(int argc, char **argv) {
     glfwSetCharCallback(win, char_callback);
     glfwSetScrollCallback(win, scroll_callback);
     glfwSetMouseButtonCallback(win, mouse_button_callback);
+
+    ma_device dev;
+    init_audio_midi(&dev);
+
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
         glfwGetFramebufferSize(win, &fbw, &fbh);

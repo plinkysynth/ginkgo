@@ -292,8 +292,8 @@ float test_patterns(void) {
     static hap_time from, to;
     static voice_state_t *voices;
     if ((G->sampleidx % 96) == 0 && G->patterns_map) {
-        pattern_t *p = &G->patterns_map[0]; // stbds_hmgets(G->patterns_map, "/fancy_pattern");
-        if (!p->key)
+        pattern_t *p = stbds_shgetp_null(G->patterns_map, "/fancy_pattern");
+        if (!p || !p->key)
             return 0.f;
         from = to;
         to = G->t;

@@ -1,8 +1,9 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern [c3-c5*16] : <cmaj fmaj a2min gmaj>
-
+/fancy_pattern [c]*0.5
+/up [c e]
+/down [g f e d]
 
 
 

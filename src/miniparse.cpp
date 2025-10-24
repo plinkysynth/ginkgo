@@ -421,6 +421,25 @@ static int parse_leaf(pattern_maker_t *p) {
     return node;
 }
 
+static pattern_t *new_pattern_map_during_parse = NULL;
+
+static int parse_call(pattern_maker_t *p) {
+    const char *start = p->s + p->i;
+    const char *end = skip_path(start, p->s + p->n);
+    const char *name = temp_cstring_from_span(start, end);
+    int patidx = stbds_shgeti(new_pattern_map_during_parse, name);
+    if (patidx < 0) {
+        name = stbstring_from_span(start, end, 0);
+        pattern_t empty = {.key = name};
+        stbds_shputs(new_pattern_map_during_parse, empty);
+        patidx = stbds_shgeti(new_pattern_map_during_parse, name);
+    }
+    p->i = end - p->s;
+    int node = make_node(p, N_CALL, -1, -1, start - p->s, p->i);
+    p->nodes[node].max_value = patidx;
+    return node;
+}
+
 static int parse_expr_inner(pattern_maker_t *p) {
     skipws(p);
     switch (peek(p)) {
@@ -432,6 +451,8 @@ static int parse_expr_inner(pattern_maker_t *p) {
         return parse_group(p, '{', '}', N_POLY);
     case '\'':
         return parse_curve(p);
+    case '/':
+        return parse_call(p);
     default:
         if (isleaf(peek(p)))
             return parse_leaf(p);
@@ -519,7 +540,12 @@ static int parse_expr(pattern_maker_t *p) {
             int i = p->i;
             while (!isdelimiter(p->s[i]) && !isopening(p->s[i]) && !isdigit(p->s[i]))
                 ++i;
+            if (i==p->i && i<p->n) ++i;
             if (i > p->i) {
+                if (p->s[p->i] == '/' && i>p->i+1) {
+                    // call to a pattern... break out of the loop and parse the pattern name as a leaf node.
+                    break;
+                }
                 uint32_t name_hash = literal_hash_span(p->s + p->i, p->s + i);
                 switch (name_hash) {
 #define NODE(x, ...)
@@ -575,7 +601,7 @@ static void update_lengths(pattern_maker_t *p, int node) {
     // leaf nodes dont want to overwrite their max value with the max of their children (real data is there!)
     // poly nodes use it as a hack for the % figure.
     // single child elongate nodes use it as a count to elongate by.
-    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF) {
+    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL) {
         n->max_value = max_value;
     }
 }
@@ -602,7 +628,7 @@ void test_minipat(void) {
     // const char *s = "[bd | sd | rim]*8";
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "[0 1] : [cmaj * 2]"; // test divide
+    const char *s = "[0 1 /ascending]"; // test divide
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
     //  const char *s = "[bd <hh oh>,rim*<4 8>]";
@@ -611,9 +637,9 @@ void test_minipat(void) {
     pattern_maker_t pm = {.s = s, .n = (int)strlen(s)};
     parse_pattern(&pm);
     pattern_t p = pm.make_pattern();
-    printf("parsed %d nodes\n", (int)stbds_arrlen(pm.nodes));
     if (pm.errmsg)
-        printf("error: %s\n", pm.errmsg);
+        printf(COLOR_BRIGHT_RED "error: %s\n" COLOR_RESET, pm.errmsg);
+    printf("parsed %d nodes\n", (int)stbds_arrlen(pm.nodes));
     pretty_print_nodes(s, s + pm.n, &p);
     hap_t dst[64];
     hap_span_t haps = p.make_haps({dst, dst + 64}, 64, 0, 1);
@@ -666,7 +692,7 @@ const char *spanstr(const char *s, const char *e, const char *substr) {
 }
 
 void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
-    pattern_t *patterns_map = NULL; // stbds_hm
+    new_pattern_map_during_parse = NULL; // stbds_hm
     while (s < real_e) {
         s = spanstr(s, real_e, "#ifdef PATTERNS");
         if (!s)
@@ -696,9 +722,10 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             pattern_maker_t p = {.s = pattern_start, .n = (int)(s - pattern_start)};
             pattern_t pat = parse_pattern(&p);
             if (p.err <= 0) {
-                printf("found pattern: %.*s\n", (int)(pathend - pathstart), pathstart);
                 pat.key = stbstring_from_span(pathstart, pathend, 0);
-                stbds_shputs(patterns_map, pat);
+                stbds_shputs(new_pattern_map_during_parse, pat);
+                int idx = stbds_shgeti(new_pattern_map_during_parse, pat.key);
+                printf("found pattern: %.*s - index %d\n", (int)(pathend - pathstart), pathstart, idx);
             } else {
                 printf("error: %.*s: %s\n", (int)(pathend - pathstart), pathstart, p.errmsg);
                 pat.unalloc();
@@ -706,5 +733,6 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
         }
     }
     // TODO - let the old pattern table leak because concurrency etc
-    G->patterns_map = patterns_map;
+    G->patterns_map = new_pattern_map_during_parse;
+    new_pattern_map_during_parse = NULL;
 }

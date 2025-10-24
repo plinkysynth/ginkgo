@@ -698,7 +698,7 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 
 #endif
 
-float test_patterns(void);
+float test_patterns(const char *pattern_name);
 
 #define STATE_VERSION(version, ...)                                                                                                \
     typedef struct state : public basic_state_t{__VA_ARGS__} state;                                                                \

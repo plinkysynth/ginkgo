@@ -288,12 +288,12 @@ typedef struct voice_state_t {
     float env;
     bool decaying;
 } voice_state_t;
-float test_patterns(void) {
+float test_patterns(const char *pattern_name) {
 
     static hap_time from, to;
     static voice_state_t *voices;
     if ((G->sampleidx % 96) == 0 && G->patterns_map) {
-        pattern_t *p = stbds_shgetp_null(G->patterns_map, "/fancy_pattern");
+        pattern_t *p = stbds_shgetp_null(G->patterns_map, pattern_name);
         if (!p || !p->key)
             return 0.f;
         from = to;

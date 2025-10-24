@@ -7,7 +7,7 @@ template <typename T> void arrsetlencap(T *&arr, int len, int cap) {
 }
 
 // convert the parsed node structure into an SoA bfs tree. also 'squeezes' single child lists.
-pattern_t pattern_maker_t::make_pattern(const char *key) {
+pattern_t pattern_maker_t::make_pattern(const char *key, int index_to_add_to_start_end) {
     pattern_t p = {.key = key, .curvedata = curvedata};
     int n_input = stbds_arrlen(nodes);
     if (err || root<0 || root>=n_input)
@@ -39,7 +39,7 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
             p.bfs_nodes[bfs_parent].num_children++;
         }
 
-        int_pair_t start_end = {n->start, n->end};
+        token_info_t start_end = {n->start + index_to_add_to_start_end, n->end + index_to_add_to_start_end, 0.f};
         float_minmax_t min_max_value = {n->min_value, n->max_value};
         bfs_node_t node = {n->type, n->value_type, 0, -1};
         // float cumulative_length = n->total_length + previous_sibling_length;
@@ -63,11 +63,11 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
     return p;
 }
 
-void pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int i = 0, int depth = 0, int numsiblings = 1) {
+void _pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int i = 0, int depth = 0, int numsiblings = 1) {
     if (i < 0 || p->bfs_nodes == NULL)
         return;
-    int c0 = p->bfs_start_end[i].k;
-    int c1 = p->bfs_start_end[i].v;
+    int c0 = p->bfs_start_end[i].start;
+    int c1 = p->bfs_start_end[i].end;
     if (srcend > src && srcend[-1] == '\n')
         --srcend;
     c0 = clamp(c0, 0, (int)(srcend - src));
@@ -102,13 +102,21 @@ void pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int i
         break;
     }
     if (n->first_child >= 0) {
-        pretty_print_nodes(src, srcend, p, n->first_child, depth + 1, n->num_children);
+        _pretty_print_nodes(src, srcend, p, n->first_child, depth + 1, n->num_children);
     }
     if (numsiblings > 1) {
-        pretty_print_nodes(src, srcend, p, i + 1, depth, numsiblings - 1);
+        _pretty_print_nodes(src, srcend, p, i + 1, depth, numsiblings - 1);
     }
 }
 
+void pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int i = 0, int depth = 0, int numsiblings = 1) {
+    int n = srcend - src;
+    char *copy_src=temp_cstring_from_span(src, srcend);
+    srcend = copy_src+n;
+    src=copy_src;
+    for (int i = 0; i < n; i++) if (copy_src[i] == '\n') copy_src[i]='.';
+    _pretty_print_nodes(src, srcend, p, i, depth, numsiblings);
+}
 /*
 TODO the compact-hap mode is: 6*4=24 bytes per hap. and then a bulky one off to the side.
 hap_time t0, t1;
@@ -144,13 +152,13 @@ float pattern_t::get_length(int nodeidx) {
     return 1.f;
 }
 
-void pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid) {
+bool pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid) {
     if (dst.s >= dst.e || t0 > t1 || nodeidx < 0)
-        return;
+        return false;
     bfs_node_t *n = bfs_nodes + nodeidx;
     int value_type = n->value_type;
     if (value_type <= VT_NONE)
-        return;
+        return false;
     float_minmax_t minmax = bfs_min_max_value[nodeidx];
     float v;
     if (minmax.mn != minmax.mx && value_type != VT_SCALE) { // randomize in range
@@ -163,7 +171,7 @@ void pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time 
     } else
         v = minmax.mx; // take the max value (for scales, this is the note)
     if (value_type == VT_SOUND && v < 1.f)
-        return; // its a rest! is_rest
+        return false; // its a rest! is_rest
 
     hap_t *hap = dst.s++;
     hap->t0 = t0;
@@ -173,6 +181,7 @@ void pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time 
     hap->valid_params = 1 << value_type;
     hap->params[value_type] = v;
     hap->scale_bits = (value_type == VT_SCALE) ? minmax.mn : 0;
+    return true;
 }
 
 // filter out haps that are outside the query range a-b as an optimization,
@@ -287,14 +296,18 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
             pat->_make_haps(dst, tmp_size, 0, a, b, hapid, merge_repeated_leaves);
         }
         break; }
-    case N_LEAF:
+    case N_LEAF: {
+        bool appended = false;
         if (merge_repeated_leaves)
-            _append_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid);
+            appended = _append_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid);
         else
             for (int i = floor(a + hap_eps); i < b; ++i) {
-                _append_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
+                appended |= _append_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
             }
-        break;
+        if (appended) {
+            bfs_start_end[nodeidx].last_evaled_glfw_time = G->iTime;
+        }
+        break; }
     case N_POLY:
         speed_scale = (bfs_min_max_value[nodeidx].mx > 0) ? bfs_min_max_value[nodeidx].mn
                       : (n->first_child >= 0)            ? bfs_kids_total_length[n->first_child]
@@ -450,6 +463,9 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
         hap_time from = loopidx * kids_total_length;
         hap_time loop_from = from;
         int childidx = 0;
+        if (n->type == N_GRID) {
+            bfs_start_end[nodeidx].local_time_of_eval = child_a;
+        }
         while (from <= child_b) {
             int childnode = n->first_child + childidx;
             hap_time child_length = get_length(childnode);

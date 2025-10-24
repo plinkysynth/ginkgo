@@ -69,12 +69,18 @@ typedef struct float_minmax_t {
     float mn, mx;
 } float_minmax_t;
 
+typedef struct token_info_t {
+    int start, end;
+    float last_evaled_glfw_time;
+    float local_time_of_eval;
+} token_info_t;
+
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
     float *curvedata; // stb_ds
 
     // bfs 
-    int_pair_t *bfs_start_end; // source code ranges
+    token_info_t *bfs_start_end; // source code ranges
     float_minmax_t *bfs_min_max_value; // parsed value of the node
     float *bfs_grid_time_offset;
     float *bfs_kids_total_length;
@@ -84,7 +90,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
     void _filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time a, hap_time b, hap_time from, hap_time to);
     int _apply_values(hap_span_t &dst, int tmp_size, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb, size_t context);
     hap_span_t _make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves);
-    void _append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
+    bool _append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
     hap_span_t make_haps(hap_span_t dst, int tmp_size, hap_time t0, hap_time t1) { 
         return _make_haps(dst, tmp_size, 0, t0, t1, 1, false);
     }
@@ -109,7 +115,7 @@ typedef struct pattern_maker_t {
     int linecount; // counts \n
     int err;     // 0 ok, else position of first error
     const char *errmsg;
-    pattern_t make_pattern(const char *key=NULL);
+    pattern_t make_pattern(const char *key=NULL, int index_to_add_to_start_end=0);
     void unalloc() {
         stbds_arrfree(nodes);
         stbds_arrfree(curvedata);
@@ -119,13 +125,15 @@ typedef struct pattern_maker_t {
 
 const char *print_midinote(int note);
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
-pattern_t parse_pattern(pattern_maker_t *pm);
+pattern_t parse_pattern(pattern_maker_t *pm, int index_to_add_to_start_end);
 void fill_curve_data_from_string(float *data, const char *s, int n); // responsible for the interpolation of lines
 void parse_named_patterns_in_c_source(const char *s, const char *e);
 
 const char *skip_path(const char *s, const char *e);
 const char *find_end_of_pattern(const char *s, const char *e);
 const char *find_start_of_pattern(const char *s, const char *e);
+
+pattern_t *get_pattern(const char *path);
 
 void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to);
 

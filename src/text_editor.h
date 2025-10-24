@@ -31,6 +31,7 @@ typedef struct autocomplete_option_t {
 
 typedef struct EditorState {
     char *str;                                   // stb stretchy buffer
+    int *new_idx_to_old_idx;                    // remapping from last saved version to this version
     const char *fname;                           // name of the file
     edit_op_t *edit_ops;                         // stretchy buffer
     autocomplete_option_t *autocomplete_options; // stretchy buffer
@@ -68,6 +69,14 @@ typedef struct EditorState {
     int click_down_idx; // where in the text we clicked down.
 } EditorState;
 
+void init_remapping(EditorState *E); 
+
+void parse_named_patterns_in_c_source(EditorState *E) {
+    const char *s = E->str, *real_e = E->str + stbds_arrlen(E->str);
+    init_remapping(E);
+    parse_named_patterns_in_c_source(E->str, E->str + stbds_arrlen(E->str));
+}
+
 typedef struct slider_spec_t {
     int start_idx;
     int end_idx;
@@ -75,6 +84,14 @@ typedef struct slider_spec_t {
     int value_end_idx;
     float minval, maxval, curval;
 } slider_spec_t;
+
+void init_remapping(EditorState *E) {
+    int n = stbds_arrlen(E->str);
+    stbds_arrsetlen(E->new_idx_to_old_idx, n);
+    for (int i = 0; i < n; i++) {
+        E->new_idx_to_old_idx[i] = i;
+    }
+}
 
 bool ispartofnumber(char c) { return isdigit(c) || c == '-' || c == '.' || c == 'e' || c == 'E'; }
 
@@ -149,11 +166,16 @@ edit_op_t apply_edit_op(EditorState *E, edit_op_t op, int update_cursor_idx) {
     if (op.remove_end > op.remove_start) {
         removed_str = stbstring_from_span(E->str + op.remove_start, E->str + op.remove_end, 0);
         stbds_arrdeln(E->str, op.remove_start, op.remove_end - op.remove_start);
+        stbds_arrdeln(E->new_idx_to_old_idx, op.remove_start, op.remove_end - op.remove_start);
     }
     int numins = op.insert_str ? strlen(op.insert_str) : 0;
     if (numins) {
         stbds_arrinsn(E->str, op.remove_start, numins);
+        stbds_arrinsn(E->new_idx_to_old_idx, op.remove_start, numins);
         memcpy(E->str + op.remove_start, op.insert_str, numins);
+        for (int i = op.remove_start; i < op.remove_start + numins; i++) {
+            E->new_idx_to_old_idx[i] = -1;
+        }
     }
     if (update_cursor_idx) {
         if (E->cursor_idx >= op.remove_end)
@@ -364,7 +386,7 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
         }
         // text editor mouse interaction
         // adjust for the left margin of the code view
-        int left = 64 / E->font_width;
+        int left =80 / E->font_width;
         cx -= left;
 
         // int looks_like_slider_comment(const char *str, int n, int idx,slider_spec_t *out) { // see if 'idx' is inside a
@@ -399,8 +421,13 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                 *end = 0;
                 // TODO : undo merging. for now, just poke the text in directly.
                 stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
+                stbds_arrdeln(E->new_idx_to_old_idx, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
                 stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
                 memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
+                stbds_arrinsn(E->new_idx_to_old_idx, slider_spec.value_start_idx, strlen(buf));
+                for (int i = slider_spec.value_start_idx; i < slider_spec.value_start_idx + strlen(buf); i++) {
+                    E->new_idx_to_old_idx[i] = -1;
+                }
             }
         } else {
 
@@ -1216,7 +1243,7 @@ autocomplete_option_t autocomplete_score(const char *users, int userlen, int min
 }
 
 int code_color(EditorState *E, uint32_t *ptr) {
-    int left = 64 / E->font_width;
+    int left = 80 / E->font_width;
     tokenizer_t t = {.ptr = ptr,
                      .str = E->str,
                      .n = (int)stbds_arrlen(E->str),
@@ -1258,6 +1285,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
     int cursor_token_end_idx = 0;
     int pattern_entry_idx = -1;
     int pattern_mode = 0; // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
+    int grid_line_start = -1; // when we enter a grid (#), we start counting lines...
+    int grid_line_wants_end = 0;
+    pattern_t *cur_pattern = NULL;
     slider_spec_t slider_spec;
     for (int i = 0; i <= t.n + 10;) {
         unsigned h = 0;
@@ -1301,6 +1331,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
             } else if (pattern_mode) {
                 col = C_STR;
                 const char *e = skip_path(t.str + i, t.str + t.n);
+                if (i>0 && t.str[i-1]=='\n') {
+                    const char *s = t.str + i;
+                    cur_pattern = get_pattern(temp_cstring_from_span(s, e));
+                }
                 j = e - t.str;
                 break;
             }
@@ -1333,6 +1367,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
             col = C_PREPROC;
             if (!pattern_mode && i + 15 <= t.n && strncmp(t.str + i, "#ifdef PATTERNS", 15) == 0) {
                 pattern_mode = 1;
+                grid_line_start = -1;
+                grid_line_wants_end = 0;
                 pattern_entry_idx = i;
                 j = i + 15;
             } else if (pattern_mode && i + 6 <= t.n && strncmp(t.str + i, "#endif", 6) == 0) {
@@ -1341,6 +1377,14 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 }
                 pattern_mode = 0;
                 j = i + 6;
+            } else if (pattern_mode==1) {
+                if (grid_line_start >=0 && !grid_line_wants_end) {
+                    grid_line_wants_end = 1;
+                } else {
+                    grid_line_start = t.y;
+                    for (int eol=i; eol<t.n; eol++) if (!isspace(t.str[eol])) { break; } else if (t.str[eol]=='\n') { grid_line_start++; break; }
+                    grid_line_wants_end = 0;
+                }
             }
             break;
 
@@ -1462,7 +1506,29 @@ int code_color(EditorState *E, uint32_t *ptr) {
             uint32_t bgcol = ccol & 0xfff00000u;
             if (pattern_mode && bgcol == 0) {
                 // pattern area gets a special bg color
-                ccol |= 0x11100000u;
+                if (grid_line_start >=0 && grid_line_start < t.y) {
+                    int grid_line = t.y - grid_line_start - 1;
+                    if ((grid_line%8)==0) ccol|=0x44700000u;
+                    else if ((grid_line%4)==0) ccol|=0x33500000u;
+                    else ccol|=0x11100000u;
+                } else {
+                    ccol |= 0x11100000u;
+                }
+                if (cur_pattern) {
+                    pattern_t *pat = cur_pattern;
+                    int n = stbds_arrlen(pat->bfs_nodes);
+                    int remapped_i = (i>=0 && i<stbds_arrlen(E->new_idx_to_old_idx)) ? E->new_idx_to_old_idx[i] : -1;
+                    if (remapped_i >=0) {
+                        for (int ni =0; ni<n; ++ni) {
+                            const token_info_t *se = &pat->bfs_start_end[ni];
+                            float time_since_trigger = (G->iTime - se->last_evaled_glfw_time) * 2.f;
+                            if (remapped_i >= se->start && remapped_i < se->end && time_since_trigger >=0.f && time_since_trigger <= 1.f) {
+                                ccol |= (int)((1.f-time_since_trigger) * 15)<<(7*4); // red
+                                break;
+                            }
+                        } 
+                    }
+                }
             }
             if (t.x < TMW && t.y >= 0 && t.y < TMH)
                 t.ptr[t.y * TMW + t.x] = (ccol) | (unsigned char)(ch);
@@ -1491,6 +1557,20 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     for (; t.x < tmw; t.x++) {
                         t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     }
+                    if (grid_line_start >=0 && grid_line_start < t.y) {
+                        uint8_t grid_line = (t.y - grid_line_start - 1)&0xff;
+                        const static char hex[17] = "0123456789abcdef";
+                        if (left>=3) {
+                            t.ptr[t.y * TMW + left-3] = ccol | hex[grid_line>>4];
+                            t.ptr[t.y * TMW + left-2] = ccol | hex[grid_line&0xf];
+                            t.ptr[t.y * TMW + left-1] = ccol | ' ';
+                        }
+                    
+                    } 
+                }
+                if (grid_line_wants_end) {
+                    grid_line_start = -1;
+                    grid_line_wants_end = 0;
                 }
                 /*
                 if (t.y >= 0 && t.y < TMH && sliders[t.y]) {
@@ -1517,6 +1597,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     E->num_lines = t.y + 1 + E->intscroll;
     E->mouse_hovering_chart = false;
 
+    /*
     if (E->cursor_in_pattern_area) {
         // draw a popup below the cursor
         int basex = left;
@@ -1537,7 +1618,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             cached_compiled_string_hash = hash;
             cached_parser.unalloc();
             cached_parser = {.s = codes, .n = (int)(codee - codes)};
-            pattern_t pat = parse_pattern(&cached_parser);
+            pattern_t pat = parse_pattern(&cached_parser, 0);
             if (cached_parser.err <= 0) {
                 cached_haps = pat.make_haps({cached_hap_mem, cached_hap_mem + 256}, 256, 0.f, 4.f);
             }
@@ -1620,7 +1701,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             print_to_screen(t.ptr, basex + cached_parser.err, E->cursor_y + 1 - E->intscroll, C_ERR, false, cached_parser.errmsg);
         }
     }
-
+    */
     E->autocomplete_index = 0;
     stbds_hmfree(E->autocomplete_options);
     if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after &&
@@ -1812,5 +1893,8 @@ void load_file_into_editor(EditorState *E) {
         E->font_height = 24;
     }
     stbds_arrfree(E->str);
+    stbds_arrfree(E->new_idx_to_old_idx);
     E->str = load_file(E->fname);
+    init_remapping(E);
 }
+

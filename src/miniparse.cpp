@@ -497,6 +497,11 @@ static int parse_leaf(pattern_maker_t *p) {
 
 static pattern_t *new_pattern_map_during_parse = NULL;
 
+pattern_t *get_pattern(const char *name) {
+    return stbds_shgetp_null(G->patterns_map, name);
+}
+
+
 static int parse_call(pattern_maker_t *p) {
     const char *start = p->s + p->i;
     const char *end = skip_path(start, p->s + p->n);
@@ -685,7 +690,7 @@ static void update_lengths(pattern_maker_t *p, int node) {
     }
 }
 
-pattern_t parse_pattern(pattern_maker_t *p) {
+pattern_t parse_pattern(pattern_maker_t *p, int index_to_add_to_start_end) {
     p->i = 0;
     if (p->nodes)
         stbds_arrsetlen(p->nodes, 0);
@@ -696,7 +701,7 @@ pattern_t parse_pattern(pattern_maker_t *p) {
     p->errmsg = NULL;
     p->root = parse_args(p, N_FASTCAT, 0, 0, 0);
     update_lengths(p, p->root);
-    return p->make_pattern();
+    return p->make_pattern(NULL, index_to_add_to_start_end);
 }
 
 #include "makehaps.h"
@@ -708,7 +713,7 @@ void test_minipat(void) {
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
     //const char *s = "c < > d"; // test empty group
-    const char *s = "#\nc\nd\n#"; // test grid
+    const char *s = "#\na\n[c e f g]\n\n\n#"; // test grid
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
@@ -716,7 +721,7 @@ void test_minipat(void) {
     //  const char *s = "[bd,sd*1.1]";
     printf("\nparsing " COLOR_BRIGHT_GREEN "\"%s\"\n" COLOR_RESET "\n", s);
     pattern_maker_t pm = {.s = s, .n = (int)strlen(s)};
-    parse_pattern(&pm);
+    parse_pattern(&pm, 0);
     pattern_t p = pm.make_pattern();
     if (pm.errmsg)
         printf(COLOR_BRIGHT_RED "error: %s\n" COLOR_RESET, pm.errmsg);
@@ -783,6 +788,7 @@ const char *spanstr(const char *s, const char *e, const char *substr) {
 }
 
 void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
+    const char *code_start = s;
     new_pattern_map_during_parse = NULL; // stbds_hm
     while (s < real_e) {
         s = spanstr(s, real_e, "#ifdef PATTERNS");
@@ -811,7 +817,7 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
             // printf("found pattern: %.*s - %.*s\n", (int)(pathend-pathstart), pathstart, (int)(s-pattern_start),
             // pattern_start);
             pattern_maker_t p = {.s = pattern_start, .n = (int)(s - pattern_start)};
-            pattern_t pat = parse_pattern(&p);
+            pattern_t pat = parse_pattern(&p, pattern_start - code_start);
             if (p.err <= 0) {
                 pat.key = stbstring_from_span(pathstart, pathend, 0);
                 stbds_shputs(new_pattern_map_during_parse, pat);

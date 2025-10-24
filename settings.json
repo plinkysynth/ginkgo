@@ -2,7 +2,7 @@
 {
   "camera": {
     "c_pos": [6.247538, 1.816651, 1.110346, 1.000000],
-    "c_lookat": [7.928279, -0.462591, -3.010354, 1.000000],
+    "c_lookat": [7.085090, 2.932403, -3.691071, 1.000000],
     "fov": 1.000000,
     "focal_distance": 5.000000
   },
@@ -11,18 +11,18 @@
     "cur_tab": 1,
     "tabs": [
       {
-        "fname": "livesrc/orange.glsl",
+        "fname": "livesrc/blank.glsl",
         "font_height": 34,
         "scroll_y": 0.000000,
-        "cursor_idx": 0,
-        "select_idx": 0
+        "cursor_idx": 36,
+        "select_idx": 36
       },
       {
         "fname": "livesrc/audio.cpp",
-        "font_height": 36,
+        "font_height": 38,
         "scroll_y": 0.000000,
-        "cursor_idx": 77,
-        "select_idx": 77
+        "cursor_idx": 56,
+        "select_idx": 56
       }
     ]
   }

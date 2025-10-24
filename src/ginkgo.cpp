@@ -909,8 +909,9 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     fclose(f);
                     if (rename("editor.tmp", E->fname) == 0) {
                         set_status_bar(C_OK, E->is_shader ? "saved shader" : "saved audio");
+                        init_remapping(E);
                         if (!E->is_shader)
-                            parse_named_patterns_in_c_source(E->str, E->str + stbds_arrlen(E->str));
+                            parse_named_patterns_in_c_source(E);
                     } else {
                         f = 0;
                     }
@@ -924,7 +925,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
             if (E->is_shader)
                 try_to_compile_shader(E);
             else
-                parse_named_patterns_in_c_source(E->str, E->str + stbds_arrlen(E->str));
+                parse_named_patterns_in_c_source(E);
         }
     }
 
@@ -1563,7 +1564,7 @@ int main(int argc, char **argv) {
     load_file_into_editor(&tabs[0]);
     load_file_into_editor(&tabs[1]);
     try_to_compile_shader(&tabs[0]);
-    parse_named_patterns_in_c_source(tabs[1].str, tabs[1].str + stbds_arrlen(tabs[1].str));
+    parse_named_patterns_in_c_source(&tabs[1]);
 
     texFont = load_texture("assets/font_sdf.png");
 

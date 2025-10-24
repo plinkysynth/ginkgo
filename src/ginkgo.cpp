@@ -784,7 +784,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     if (secmon_idx<0 && count>1) {
         // if more than 1 monitor, default to visuals on the secondary monitor
         GLFWmonitor *monitor_to_avoid = primon ? primon : actual_primon;
-        for (int i=0;i<count;i++) if (mons[i]!=monitor_to_avoid) { secmon = mons[i]; break; }
+        for (int i=0;i<count;i++) if (mons[i]!=monitor_to_avoid) { secmon_idx = i; break; }
     }
     if (secmon_idx>=0 && secmon_idx<count) secmon = mons[secmon_idx];
     if (secmon_idx == primon_idx) secmon = NULL;

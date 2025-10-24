@@ -54,7 +54,7 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
         stbds_arrpush(p.bfs_min_max_value, min_max_value);
         stbds_arrpush(p.bfs_nodes, node);
         stbds_arrpush(p.bfs_kids_total_length, n->total_length);
-        stbds_arrpush(p.bfs_grid_time_offset, n->linenumber / 16.f);
+        stbds_arrpush(p.bfs_grid_time_offset, n->linenumber);
         for (int child = n->first_child; child >= 0; child = nodes[child].next_sib) {
             assert(child < n_input);
             q[qhead++] = {child, my_bfs_idx};
@@ -455,8 +455,9 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
             hap_time child_length = get_length(childnode);
             hap_time to = from + child_length;
             if (n->type == N_GRID) {
-                float grid_time_offset = bfs_grid_time_offset[childnode];
-                float next_grid_time_offset = (childidx < n->num_children-1) ? bfs_grid_time_offset[childnode+1] : kids_total_length;
+                float lines_per_cycle = max(1.f, bfs_min_max_value[nodeidx].mn);
+                float grid_time_offset = bfs_grid_time_offset[childnode] / lines_per_cycle;
+                float next_grid_time_offset = (childidx < n->num_children-1) ? bfs_grid_time_offset[childnode+1] / lines_per_cycle : kids_total_length;
                 from = loop_from + grid_time_offset;
                 to = loop_from + next_grid_time_offset;
                 if (from > child_b) break;

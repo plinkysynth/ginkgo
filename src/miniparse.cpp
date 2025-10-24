@@ -228,6 +228,7 @@ static int parse_args(pattern_maker_t *p, int group_type, int start, int is_poly
 }
 
 static int parse_leaf(pattern_maker_t *p);
+static int parse_number(const char *s, const char *e, const char **end, float *number);
 
 static int parse_group(pattern_maker_t *p, char open, char close, int node_type) {
     int start = p->i;
@@ -245,16 +246,6 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
         return -1;
     }
     p->nodes[group_node].end = p->i;
-    if (node_type == N_GRID) {
-        //printf("grid linecount: %d\n", p->linecount);
-        float grid_length = ceilf(p->linecount/16.f);
-        if (grid_length <= 0.f) grid_length = 1.f;
-        p->nodes[group_node].max_value = grid_length; // length of the grid TODO from whitespace :)
-        skipws(p);
-        if (isdigit(peek(p))) {
-            // TODO: allow the user to specify a time multiplier for the grid. store it in min_value?
-        }
-    }
     if (is_poly) {
         skipws(p);
         if (consume(p, '%')) {
@@ -269,6 +260,70 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
     }
     return group_node;
 }
+
+static int parse_grid(pattern_maker_t *p) {
+    int start = p->i;
+    if (!consume(p, '#')) {
+        error(p, "expected #");
+        return -1;
+    }
+    int actual_end = p->n;
+    skipws(p);
+    int group_node = make_node(p, N_GRID, -1, -1, start, start);
+    int prev_child = -1;
+    p->linecount = 0;
+    while (p->i < actual_end) {
+        // find the end of the line
+        int lineend = p->i;
+        while (lineend < p->n && p->s[lineend] != '\n' && p->s[lineend] != '#')
+            lineend++;
+        // cheat and mark the line end as the end of the whole code. this forces the child
+        // pattern to be a single line.
+        p->n = lineend;
+        int line_node = (lineend == p->i) ? -1 : parse_args(p, N_FASTCAT, start, false, 0);
+        if (line_node >= 0) {
+            p->nodes[line_node].linenumber = p->linecount;
+            if (prev_child <0)
+                p->nodes[group_node].first_child = line_node;
+            else
+                p->nodes[prev_child].next_sib = line_node;
+            prev_child = line_node;
+        }
+        // restore the original end of the code
+        p->n = actual_end;
+        p->i = lineend;
+        skipws(p);
+        if (peek(p) == '#') { 
+            break;
+        }
+    }
+    if (!consume(p, '#')) {
+        error(p, "expected #");
+        return -1;
+    }
+    p->nodes[group_node].end = p->i;
+    float grid_length = p->linecount;
+    float lines_per_cycle = 8.f;
+    skipws(p);
+    if (isdigit(peek(p))) {
+        // allow the user to specify a time multiplier for the grid. store it in min_value?
+        const char *end=0;
+        parse_number(p->s + p->i, p->s + p->n, &end, &lines_per_cycle);
+        lines_per_cycle = roundf(lines_per_cycle);
+        if (lines_per_cycle <= 0.f) {
+            error(p, "expected positive number for the lines per cycle");
+            return -1;
+        }
+        p->i = end - p->s;
+    }
+    if (lines_per_cycle <= 0.f) lines_per_cycle = 1.f;
+    grid_length /= lines_per_cycle;
+    grid_length = ceilf(grid_length);
+    p->nodes[group_node].min_value = lines_per_cycle;
+    p->nodes[group_node].max_value = grid_length; 
+    return group_node;
+}
+
 
 int parse_midinote(const char *s, const char *e, const char **end,
                    int allow_p_prefix) { // if you dont speify *end, midi note must fill all of s-e
@@ -465,7 +520,7 @@ static int parse_expr_inner(pattern_maker_t *p) {
     case '[':
         return parse_group(p, '[', ']', N_FASTCAT);
     case '#':
-        return parse_group(p, '#', '#', N_GRID);
+        return parse_grid(p);
     case '<':
         return parse_group(p, '<', '>', N_CAT);
     case '{':
@@ -652,7 +707,9 @@ void test_minipat(void) {
     // const char *s = "[bd | sd | rim]*8";
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "c < > d"; // test divide
+    //const char *s = "c < > d"; // test empty group
+    const char *s = "#\nc\nd\n#"; // test grid
+
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
     //  const char *s = "[bd <hh oh>,rim*<4 8>]";

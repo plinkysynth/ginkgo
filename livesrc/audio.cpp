@@ -1,7 +1,21 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern < c < > d >
+/fancy_pattern #
+a b c d
+
+
+
+
+
+
+
+
+
+
+
+
+#4
 /up [c e]
 /down [g f e d]
 /bpm 140

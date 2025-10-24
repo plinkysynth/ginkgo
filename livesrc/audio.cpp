@@ -1,15 +1,9 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern # 
-
-
-a c e
-
-
-
-
-
+/fancy_pattern #
+c4
+[c d e f]
 #
 
 

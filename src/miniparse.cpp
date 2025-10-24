@@ -237,8 +237,7 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
         return -1;
     }
     skipws(p);
-    p->linecount = 0; // count lines within this group
-
+    
     int is_poly = node_type == N_POLY;
     int group_node = parse_args(p, is_poly ? N_CAT : node_type, start, is_poly, close);
     if (!consume(p, close)) {
@@ -268,10 +267,9 @@ static int parse_grid(pattern_maker_t *p) {
         return -1;
     }
     int actual_end = p->n;
-    skipws(p);
     int group_node = make_node(p, N_GRID, -1, -1, start, start);
     int prev_child = -1;
-    p->linecount = 0;
+    p->linecount = -1;
     while (p->i < actual_end) {
         // find the end of the line
         int lineend = p->i;
@@ -282,7 +280,7 @@ static int parse_grid(pattern_maker_t *p) {
         p->n = lineend;
         int line_node = (lineend == p->i) ? -1 : parse_args(p, N_FASTCAT, start, false, 0);
         if (line_node >= 0) {
-            p->nodes[line_node].linenumber = p->linecount;
+            p->nodes[line_node].linenumber = max(0,p->linecount);
             if (prev_child <0)
                 p->nodes[group_node].first_child = line_node;
             else

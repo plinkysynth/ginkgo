@@ -60,6 +60,9 @@ pattern_t pattern_maker_t::make_pattern(const char *key, int index_to_add_to_sta
             q[qhead++] = {child, my_bfs_idx};
         }
     }
+    if (!stbds_arrlen(p.bfs_nodes)) {
+        p.unalloc();
+    }
     return p;
 }
 

@@ -15,7 +15,7 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
     arrsetlencap(p.bfs_start_end, 0, n_input);
     arrsetlencap(p.bfs_min_max_value, 0, n_input);
     arrsetlencap(p.bfs_nodes, 0, n_input);
-    arrsetlencap(p.bfs_nodes_total_length, 0, n_input);
+    arrsetlencap(p.bfs_kids_total_length, 0, n_input);
     int_pair_t q[n_input];
     int qhead = 1;
     q[0] = {root, -1};
@@ -32,7 +32,7 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
         if (bfs_parent >= 0 && p.bfs_nodes[bfs_parent].first_child < 0) {
             p.bfs_nodes[bfs_parent].first_child = my_bfs_idx;
         } /*else if (my_bfs_idx > 0) {
-            previous_sibling_length = p.bfs_nodes_total_length[my_bfs_idx - 1];
+            previous_sibling_length = p.bfs_kids_total_length[my_bfs_idx - 1];
         }*/
         int_pair_t start_end = {n->start, n->end};
         float_minmax_t min_max_value = {n->min_value, n->max_value};
@@ -41,7 +41,7 @@ pattern_t pattern_maker_t::make_pattern(const char *key) {
         stbds_arrpush(p.bfs_start_end, start_end);
         stbds_arrpush(p.bfs_min_max_value, min_max_value);
         stbds_arrpush(p.bfs_nodes, node);
-        stbds_arrpush(p.bfs_nodes_total_length, n->total_length);
+        stbds_arrpush(p.bfs_kids_total_length, n->total_length);
         for (int child = n->first_child; child >= 0; child = nodes[child].next_sib) {
             assert(child < n_input);
             q[qhead++] = {child, my_bfs_idx};
@@ -68,23 +68,23 @@ void pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int i
     switch (n->value_type) {
     case VT_SOUND: {
         Sound *sound = get_sound_by_index((int)p->bfs_min_max_value[i].mx);
-        printf("%d - %s - maxlen %g val %g-%g %s\n", i, node_type_names[n->type], p->bfs_nodes_total_length[i],
+        printf("%d - %s - kidslen %g val %g-%g %s\n", i, node_type_names[n->type], p->bfs_kids_total_length[i],
                p->bfs_min_max_value[i].mn, p->bfs_min_max_value[i].mx, sound ? sound->name : "");
         break;
     }
     case VT_NOTE: {
-        printf("%d - %s - maxlen %g val %g-%g %s-%s\n", i, node_type_names[n->type], p->bfs_nodes_total_length[i],
+        printf("%d - %s - kidslen %g val %g-%g %s-%s\n", i, node_type_names[n->type], p->bfs_kids_total_length[i],
                p->bfs_min_max_value[i].mn, p->bfs_min_max_value[i].mx, print_midinote((int)p->bfs_min_max_value[i].mn),
                print_midinote((int)p->bfs_min_max_value[i].mx));
         break;
     }
     case VT_SCALE: {
-        printf("%d - %s - maxlen %g val scale %03x-%03x\n", i, node_type_names[n->type], p->bfs_nodes_total_length[i],
+        printf("%d - %s - kidslen %g val scale %03x-%03x\n", i, node_type_names[n->type], p->bfs_kids_total_length[i],
                (int)p->bfs_min_max_value[i].mn, (int)p->bfs_min_max_value[i].mx);
         break;
     }
     default:
-        printf("%d - %s - maxlen %g val %g-%g\n", i, node_type_names[n->type], p->bfs_nodes_total_length[i],
+        printf("%d - %s - maxlen %g val %g-%g\n", i, node_type_names[n->type], p->bfs_kids_total_length[i],
                p->bfs_min_max_value[i].mn, p->bfs_min_max_value[i].mx);
         break;
     }
@@ -126,7 +126,7 @@ float pattern_t::get_length(int nodeidx) {
     if (nodeidx < 0)
         return 0.f;
     int t = bfs_nodes[nodeidx].type;
-    if (t == N_OP_REPLICATE || t == N_OP_ELONGATE)
+    if (t == N_OP_REPLICATE || t == N_OP_ELONGATE || t == N_GRID)
         return bfs_min_max_value[nodeidx].mx; // use max value as length
     return 1.f;
 }
@@ -169,6 +169,7 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
         left_hap->t0 /= speed_scale;
         left_hap->t1 /= speed_scale;
+        if (left_hap->t1 > to) left_hap->t1 = to;
         if (left_hap->t0 > b || left_hap->t1 < a || left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps > to) {
             left_hap->valid_params = 0;
         }
@@ -263,7 +264,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
         return rv;
     bfs_node_t *n = bfs_nodes + nodeidx;
     hap_time speed_scale = 1.f;
-    hap_time total_length = bfs_nodes_total_length[nodeidx];
+    hap_time kids_total_length = bfs_kids_total_length[nodeidx];
     int param = P_NUMBER;
     switch (n->type) {
     case N_CALL: {
@@ -283,7 +284,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
         break;
     case N_POLY:
         speed_scale = (bfs_min_max_value[nodeidx].mx > 0) ? bfs_min_max_value[nodeidx].mn
-                      : (n->first_child >= 0)            ? bfs_nodes_total_length[n->first_child]
+                      : (n->first_child >= 0)            ? bfs_kids_total_length[n->first_child]
                                                          : 1.;
     case N_PARALLEL: {
         if (speed_scale <= 0.f)
@@ -425,19 +426,26 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
         break;
     }
     case N_FASTCAT:
-        speed_scale = total_length;
+        speed_scale = kids_total_length;
         // fall thru
-    case N_CAT: {
-        if (total_length <= 0.f || n->first_child < 0)
+    case N_CAT: 
+    case N_GRID: {
+        if (kids_total_length <= 0.f || n->first_child < 0)
             break;
         hap_time child_a = a * speed_scale, child_b = b * speed_scale;
-        int loopidx = floor(child_a / total_length + hap_eps);
-        hap_time from = loopidx * total_length;
+        int loopidx = floor(child_a / kids_total_length + hap_eps);
+        hap_time from = loopidx * kids_total_length;
+        hap_time loop_from = from;
         int childidx = 0;
         while (from <= child_b) {
             int childnode = n->first_child + childidx;
             hap_time child_length = get_length(childnode);
             hap_time to = from + child_length;
+            if (n->type == N_GRID) {
+                if (childidx==0) { from=loop_from+0.25f; to=loop_from+0.5f; }
+                if (childidx==1) { from=loop_from+1.5; to=loop_from+1.75f; }
+                if (from > child_b) break;
+            }
             if (to <= from)
                 break;
             if (to > child_a) {
@@ -454,7 +462,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
                 for (hap_t *src_hap = newhaps.s; src_hap < newhaps.e; src_hap++) {
                     src_hap->t0 = (src_hap->t0 + tofs) / speed_scale;
                     src_hap->t1 = (src_hap->t1 + tofs) / speed_scale;
-                    if (src_hap->t0 > b || src_hap->t1 < a) { // filter out haps that are outside the query range
+                    if (src_hap->t1 > to) src_hap->t1 = to;
+                    if (src_hap->t0 > b || src_hap->t1 < a || src_hap->t0 > src_hap->t1) { // filter out haps that are outside the query range
                         src_hap->valid_params = 0;
                     }
                 }
@@ -462,6 +471,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap
             if (++childidx == n->num_children) {
                 childidx = 0;
                 loopidx++;
+                loop_from += kids_total_length;
             }
             from = to;
         }

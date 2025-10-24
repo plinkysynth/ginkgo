@@ -135,8 +135,8 @@ static int consume(pattern_maker_t *p, int c) {
     return 0;
 }
 
-static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' || c == '>'; }
-static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<'; }
+static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' || c == '>' || c == '#'; }
+static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<' || c == '#'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
 static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end) {
@@ -154,7 +154,7 @@ static int make_node(pattern_maker_t *p, int node_type, int first_child, int nex
 
 static int parse_expr(pattern_maker_t *p);
 
-static int parse_args(pattern_maker_t *p, int group_type, int start, int is_poly) {
+static int parse_args(pattern_maker_t *p, int group_type, int start, int is_poly, char close) {
     int group_node = make_node(p, group_type, -1, -1, start, start);
     int group_link_idx = -1;
     int comma_node = -1;
@@ -162,7 +162,9 @@ static int parse_args(pattern_maker_t *p, int group_type, int start, int is_poly
     char comma_char = 0;
     skipws(p);
     int leg_start = p->i;
-    while (!isclosing(peek(p))) {
+    while (1) {
+        char c = peek(p);
+        if (c<=0 || c==close) break;
         int i = parse_expr(p);
         if (i == -1)
             return -1;
@@ -230,12 +232,19 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
         return -1;
     }
     int is_poly = node_type == N_POLY;
-    int group_node = parse_args(p, is_poly ? N_CAT : node_type, start, is_poly);
+    int group_node = parse_args(p, is_poly ? N_CAT : node_type, start, is_poly, close);
     if (!consume(p, close)) {
         error(p, "expected closing bracket");
         return -1;
     }
     p->nodes[group_node].end = p->i;
+    if (node_type == N_GRID) {
+        p->nodes[group_node].max_value = 2.f; // length of the grid TODO from whitespace :)
+        skipws(p);
+        if (isdigit(peek(p))) {
+            // TODO: allow the user to specify a time multiplier for the grid. store it in min_value?
+        }
+    }
     if (is_poly) {
         skipws(p);
         if (consume(p, '%')) {
@@ -445,6 +454,8 @@ static int parse_expr_inner(pattern_maker_t *p) {
     switch (peek(p)) {
     case '[':
         return parse_group(p, '[', ']', N_FASTCAT);
+    case '#':
+        return parse_group(p, '#', '#', N_GRID);
     case '<':
         return parse_group(p, '<', '>', N_CAT);
     case '{':
@@ -574,7 +585,7 @@ template <typename T> float get_length(T *p, int node) {
     if (node < 0)
         return 1.f;
     Node *n = &p->nodes[node];
-    if (n->type == N_OP_REPLICATE || n->type == N_OP_ELONGATE) {
+    if (n->type == N_OP_REPLICATE || n->type == N_OP_ELONGATE || n->type == N_GRID) {
         return n->max_value;
     }
     return 1.f;
@@ -596,12 +607,15 @@ static void update_lengths(pattern_maker_t *p, int node) {
             max_value = max(max_value, p->nodes[i].max_value);
         total_length += get_length(p, i);
     }
+    if (n->type == N_GRID) {
+        total_length = n->max_value; // i claim the total length of my kids is in fact just my own grid size. :)
+    }
     n->total_length = total_length;
     n->num_children = num_children;
     // leaf nodes dont want to overwrite their max value with the max of their children (real data is there!)
     // poly nodes use it as a hack for the % figure.
     // single child elongate nodes use it as a count to elongate by.
-    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL) {
+    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID) {
         n->max_value = max_value;
     }
 }
@@ -615,7 +629,7 @@ pattern_t parse_pattern(pattern_maker_t *p) {
     p->root = -1;
     p->err = 0;
     p->errmsg = NULL;
-    p->root = parse_args(p, N_FASTCAT, 0, 0);
+    p->root = parse_args(p, N_FASTCAT, 0, 0, 0);
     update_lengths(p, p->root);
     return p->make_pattern();
 }
@@ -628,7 +642,7 @@ void test_minipat(void) {
     // const char *s = "[bd | sd | rim]*8";
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    const char *s = "[0 1 /ascending]"; // test divide
+    const char *s = "< # a b # e >"; // test divide
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
     //  const char *s = "[bd <hh oh>,rim*<4 8>]";
@@ -642,8 +656,8 @@ void test_minipat(void) {
     printf("parsed %d nodes\n", (int)stbds_arrlen(pm.nodes));
     pretty_print_nodes(s, s + pm.n, &p);
     hap_t dst[64];
-    hap_span_t haps = p.make_haps({dst, dst + 64}, 64, 0, 1);
-    pretty_print_haps(haps, 0.f, 1.f);
+    hap_span_t haps = p.make_haps({dst, dst + 64}, 64, 0, 4);
+    pretty_print_haps(haps, 0.f, 4.f);
 
     // char *chart = print_pattern_chart(&p);
     // printf("%s\n", chart);

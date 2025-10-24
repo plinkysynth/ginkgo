@@ -1533,8 +1533,8 @@ int main(int argc, char **argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     init_sampler();
 
-    // void test_minipat(void);
-    // test_minipat();
+    void test_minipat(void);
+    test_minipat();
     // return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);

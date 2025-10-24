@@ -1,7 +1,7 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern [/up /down]
+/fancy_pattern < # [a b c d e f g a] [b c b c b c b c b c b c b c] # e1 >
 /up [c e]
 /down [g f e d]
 

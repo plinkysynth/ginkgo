@@ -75,7 +75,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
     // bfs 
     int_pair_t *bfs_start_end; // source code ranges
     float_minmax_t *bfs_min_max_value; // parsed value of the node
-    float *bfs_nodes_total_length;
+    float *bfs_kids_total_length;
     bfs_node_t *bfs_nodes;
 
     float get_length(int nodeidx);
@@ -90,6 +90,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
         stbds_arrfree(curvedata);
         stbds_arrfree(bfs_start_end);
         stbds_arrfree(bfs_min_max_value);
+        stbds_arrfree(bfs_kids_total_length);
         stbds_arrfree(bfs_nodes);
     }
 } pattern_t;

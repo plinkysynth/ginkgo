@@ -2,11 +2,27 @@ STATE_VERSION(1,  )
 
 #ifdef PATTERNS
 /fancy_pattern #
-c4
-[c d e f]
+c4,e4,g4,c5
+
+[c d e]*4
+
+g
+
+
+
+a,f4,c4
+
+
+
+b,g4
+
+
+
+#,#
+c2
+c3
+c2
 #
-
-
 /bpm 140
 
 #endif

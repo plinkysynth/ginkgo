@@ -6,6 +6,7 @@
 
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
 const char *print_midinote(int note);
+const char *spanstr(const char *s, const char *e, const char *substr);
 
 int fbw, fbh; // current framebuffer size in pixels
 
@@ -29,12 +30,22 @@ typedef struct autocomplete_option_t {
     int matchlen;
 } autocomplete_option_t;
 
+typedef struct character_pos_t {
+    uint32_t x : 10;
+    uint32_t y : 21;
+    uint32_t pattern_mode : 1;
+} character_pos_t;
+
+static_assert(sizeof(character_pos_t) == 4, "character_pos_t should be 4 bytes");
+
 typedef struct EditorState {
-    char *str;                                   // stb stretchy buffer
-    int *new_idx_to_old_idx;                    // remapping from last saved version to this version
+    // all these arrays are stbds_arrs
     const char *fname;                           // name of the file
-    edit_op_t *edit_ops;                         // stretchy buffer
-    autocomplete_option_t *autocomplete_options; // stretchy buffer
+    char *str;                                   // the text
+    int *new_idx_to_old_idx;                     // remapping from last saved version to this version
+    character_pos_t *character_pos;              //
+    edit_op_t *edit_ops;                         //
+    autocomplete_option_t *autocomplete_options; //
     int autocomplete_index;
     int autocomplete_scroll_y;
     float autocomplete_show_after;
@@ -69,7 +80,7 @@ typedef struct EditorState {
     int click_down_idx; // where in the text we clicked down.
 } EditorState;
 
-void init_remapping(EditorState *E); 
+void init_remapping(EditorState *E);
 
 void parse_named_patterns_in_c_source(EditorState *E) {
     const char *s = E->str, *real_e = E->str + stbds_arrlen(E->str);
@@ -234,67 +245,26 @@ static inline int get_select_end(EditorState *obj) { return max(obj->cursor_idx,
 
 static inline int next_tab(int x) { return (x + 4) & ~3; }
 
-int xy_to_idx(EditorState *E, int tx, int ty) {
+int xy_to_idx_slow(EditorState *E, int tx, int ty) {
     tx = max(0, tx);
     ty = max(0, ty);
-    int n = stbds_arrlen(E->str);
-    int x = 0, y = 0;
+    int n = stbds_arrlen(E->character_pos);
+    int rv=-1;
     for (int i = 0; i < n; i++) {
-        if (x == tx && y == ty)
-            return i;
-        if (E->str[i] == '\n' || E->str[i] == 0) {
-            if (y == ty)
-                return i;
-            y++;
-            x = 0;
-            continue;
+        if (E->character_pos[i].y == ty) {
+            if (E->character_pos[i].x <= tx || rv<0) rv=i;
         }
-        if (E->str[i] == '\t') {
-            x = next_tab(x);
-            continue;
-        }
-        x++;
     }
-    return n;
+    if (rv<0) rv=n;
+    return rv;
 }
 
-int idx_to_x(EditorState *E, int idx, int line_start_idx) {
-    int x = 0;
-    for (int i = line_start_idx; i < idx; i++) {
-        if (E->str[i] == '\n' || E->str[i] == 0)
-            break;
-        if (E->str[i] == '\t')
-            x = next_tab(x);
-        else
-            x++;
-    }
-    return x;
-}
-
-void idx_to_xy(EditorState *E, int idx, int *tx, int *ty) {
-    int x = 0, y = 0;
-    for (int i = 0; i < idx; i++) {
-        if (i == idx)
-            break;
-        if (E->str[i] == '\n' || E->str[i] == 0) {
-            y++;
-            x = 0;
-            continue;
-        }
-        if (E->str[i] == '\t') {
-            x = next_tab(x);
-            continue;
-        }
-        x++;
-    }
-    *tx = x;
-    *ty = y;
-}
-
-static int idx_to_y(EditorState *E, int idx) {
-    int x = 0, y = 0;
-    idx_to_xy(E, idx, &x, &y);
-    return y;
+bool idx_to_xy(EditorState *E, int idx, int *tx, int *ty) {
+    if (idx < 0 || idx >= stbds_arrlen(E->character_pos))
+        return false;
+    *tx = E->character_pos[idx].x;
+    *ty = E->character_pos[idx].y;
+    return true;
 }
 
 static void adjust_font_size(EditorState *E, int delta) {
@@ -385,52 +355,49 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
             }
         }
         // text editor mouse interaction
-        // adjust for the left margin of the code view
-        int left =80 / E->font_width;
-        cx -= left;
 
         // int looks_like_slider_comment(const char *str, int n, int idx,slider_spec_t *out) { // see if 'idx' is inside a
         // /*0======5*/<whitespace>number type comment.
-        int click_idx = xy_to_idx(E, cx, cy);
+        int click_idx = xy_to_idx_slow(E, cx, cy);
         if (!is_drag) {
             E->click_down_idx = click_idx;
         }
         slider_spec_t slider_spec;
         if (looks_like_slider_comment(E->str, stbds_arrlen(E->str), E->click_down_idx, &slider_spec)) {
-
             int slider_x1, slider_x2, slider_y;
-            idx_to_xy(E, slider_spec.start_idx, &slider_x1, &slider_y);
-            idx_to_xy(E, slider_spec.end_idx, &slider_x2, &slider_y);
-            if (!is_drag) {
-                E->click_slider_value = slider_spec.curval;
-            }
-            float dv = fx - E->click_fx;
-            float v = E->click_slider_value + (slider_spec.maxval - slider_spec.minval) * (dv / (slider_x2 - slider_x1));
-            v = clamp(v, slider_spec.minval, slider_spec.maxval);
-            // printf("slider value: %f\n", v);
-            if (v != slider_spec.curval) {
-                char buf[32];
-                int numdecimals = clamp(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0.f, 5.f);
-                char fmtbuf[32];
-                snprintf(fmtbuf, sizeof(fmtbuf), "%%0.%df", numdecimals);
-                snprintf(buf, sizeof(buf), fmtbuf, v);
-                char *end = buf + strlen(buf);
-                if (strrchr(buf, '.'))
-                    while (end > buf && end[-1] == '0')
-                        --end;
-                *end = 0;
-                // TODO : undo merging. for now, just poke the text in directly.
-                stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
-                stbds_arrdeln(E->new_idx_to_old_idx, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
-                stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
-                memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
-                stbds_arrinsn(E->new_idx_to_old_idx, slider_spec.value_start_idx, strlen(buf));
-                for (int i = slider_spec.value_start_idx; i < slider_spec.value_start_idx + strlen(buf); i++) {
-                    E->new_idx_to_old_idx[i] = -1;
+            if (idx_to_xy(E, slider_spec.start_idx, &slider_x1, &slider_y) &&
+                idx_to_xy(E, slider_spec.end_idx, &slider_x2, &slider_y)) {
+                if (!is_drag) {
+                    E->click_slider_value = slider_spec.curval;
+                }
+                float dv = fx - E->click_fx;
+                float v = E->click_slider_value + (slider_spec.maxval - slider_spec.minval) * (dv / (slider_x2 - slider_x1));
+                v = clamp(v, slider_spec.minval, slider_spec.maxval);
+                // printf("slider value: %f\n", v);
+                if (v != slider_spec.curval) {
+                    char buf[32];
+                    int numdecimals = clamp(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0.f, 5.f);
+                    char fmtbuf[32];
+                    snprintf(fmtbuf, sizeof(fmtbuf), "%%0.%df", numdecimals);
+                    snprintf(buf, sizeof(buf), fmtbuf, v);
+                    char *end = buf + strlen(buf);
+                    if (strrchr(buf, '.'))
+                        while (end > buf && end[-1] == '0')
+                            --end;
+                    *end = 0;
+                    // TODO : undo merging. for now, just poke the text in directly.
+                    stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
+                    stbds_arrdeln(E->new_idx_to_old_idx, slider_spec.value_start_idx,
+                                  slider_spec.value_end_idx - slider_spec.value_start_idx);
+                    stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
+                    memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
+                    stbds_arrinsn(E->new_idx_to_old_idx, slider_spec.value_start_idx, strlen(buf));
+                    for (int i = slider_spec.value_start_idx; i < slider_spec.value_start_idx + strlen(buf); i++) {
+                        E->new_idx_to_old_idx[i] = -1;
+                    }
                 }
             }
         } else {
-
             E->cursor_idx = click_idx;
             if (!is_drag)
                 E->select_idx = E->cursor_idx;
@@ -449,6 +416,18 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
 }
 
 static inline bool isspaceortab(char c) { return c == ' ' || c == '\t'; }
+
+static inline int find_start_of_line(EditorState *E, int idx) {
+    while (idx > 0 && E->str[idx-1]!='\n')
+        idx--;
+    return idx;
+}
+
+static inline int find_end_of_line(EditorState *E, int idx) {
+    while (idx < stbds_arrlen(E->str) && E->str[idx]!='\n')
+        idx++;
+    return idx;
+}
 
 int jump_to_found_text(EditorState *E, int backwards, int extra_char) {
     int delta = backwards ? -1 : 1;
@@ -584,96 +563,98 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             {
                 int ss = get_select_start(E);
                 int se = get_select_end(E);
-                int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
-                ss = xy_to_idx(E, 0, sy);
-                se = xy_to_idx(E, 0x7fffffff, ey);
-                char *str = stbstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
-                int minx = 0x7fffffff;
-                int all_commented = true;
-                int n = se - ss;
-                for (int idx = 0; idx < n;) {
-                    int x = 0;
-                    while (idx < n && isspaceortab(str[idx])) {
-                        if (str[idx] == '\t')
-                            x = next_tab(x);
-                        else
-                            ++x;
-                        ++idx;
-                    }
-                    if (idx < n && str[idx] == '\n') {
-                        ++idx;
-                        continue;
-                    } // skip blank lines
-                    minx = min(x, minx);
-                    if (idx + 2 >= n || str[idx] != '/' || str[idx + 1] != '/')
-                        all_commented = false;
-                    while (idx < n) {
-                        ++idx;
-                        if (str[idx - 1] == '\n')
-                            break;
-                    }
-                }
-                if (all_commented) { // remove the comments!
-                    int dstidx = 0;
-                    for (int idx = 0; idx < n;) {
-                        while (idx < n && isspaceortab(str[idx]))
-                            str[dstidx++] = str[idx++];
-                        if (idx + 2 < n && str[idx] == '/' && str[idx + 1] == '/') {
-                            int oldidx = idx;
-                            idx += 2;
-                            if (idx < n && isspaceortab(str[idx]))
-                                idx++;
-                            if (idx < E->cursor_idx)
-                                E->cursor_idx += oldidx - idx;
-                            if (idx < E->select_idx)
-                                E->select_idx += oldidx - idx;
-                        }
-                        while (idx < n) {
-                            str[dstidx++] = str[idx++];
-                            if (str[dstidx - 1] == '\n')
-                                break;
-                        }
-                    }
-                    str[dstidx] = 0;
-                } else { // add comments at minx
+                int sx, sy, ex, ey;
+                if (idx_to_xy(E, ss, &sx, &sy) && idx_to_xy(E, se, &ex, &ey)) {
+                    ss = find_start_of_line(E, ss);
+                    se = find_end_of_line(E, se);
+                    char *str = stbstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
+                    int minx = 0x7fffffff;
+                    int all_commented = true;
+                    int n = se - ss;
                     for (int idx = 0; idx < n;) {
                         int x = 0;
-                        while (idx < n && x < minx && isspaceortab(str[idx])) {
+                        while (idx < n && isspaceortab(str[idx])) {
                             if (str[idx] == '\t')
                                 x = next_tab(x);
                             else
                                 ++x;
                             ++idx;
                         }
-                        if (idx < n && str[idx] != '\n') {
-                            memmove(str + idx + 3, str + idx, n - idx);
-                            str[idx++] = '/';
-                            str[idx++] = '/';
-                            str[idx++] = ' ';
-                            n += 3;
-                            if (idx <= E->cursor_idx)
-                                E->cursor_idx += 3;
-                            if (idx <= E->select_idx)
-                                E->select_idx += 3;
-                        }
+                        if (idx < n && str[idx] == '\n') {
+                            ++idx;
+                            continue;
+                        } // skip blank lines
+                        minx = min(x, minx);
+                        if (idx + 2 >= n || str[idx] != '/' || str[idx + 1] != '/')
+                            all_commented = false;
                         while (idx < n) {
                             ++idx;
                             if (str[idx - 1] == '\n')
                                 break;
                         }
                     }
-                    str[n] = 0;
+                    if (all_commented) { // remove the comments!
+                        int dstidx = 0;
+                        for (int idx = 0; idx < n;) {
+                            while (idx < n && isspaceortab(str[idx]))
+                                str[dstidx++] = str[idx++];
+                            if (idx + 2 < n && str[idx] == '/' && str[idx + 1] == '/') {
+                                int oldidx = idx;
+                                idx += 2;
+                                if (idx < n && isspaceortab(str[idx]))
+                                    idx++;
+                                if (idx < E->cursor_idx)
+                                    E->cursor_idx += oldidx - idx;
+                                if (idx < E->select_idx)
+                                    E->select_idx += oldidx - idx;
+                            }
+                            while (idx < n) {
+                                str[dstidx++] = str[idx++];
+                                if (str[dstidx - 1] == '\n')
+                                    break;
+                            }
+                        }
+                        str[dstidx] = 0;
+                    } else { // add comments at minx
+                        for (int idx = 0; idx < n;) {
+                            int x = 0;
+                            while (idx < n && x < minx && isspaceortab(str[idx])) {
+                                if (str[idx] == '\t')
+                                    x = next_tab(x);
+                                else
+                                    ++x;
+                                ++idx;
+                            }
+                            if (idx < n && str[idx] != '\n') {
+                                memmove(str + idx + 3, str + idx, n - idx);
+                                str[idx++] = '/';
+                                str[idx++] = '/';
+                                str[idx++] = ' ';
+                                n += 3;
+                                if (idx <= E->cursor_idx)
+                                    E->cursor_idx += 3;
+                                if (idx <= E->select_idx)
+                                    E->select_idx += 3;
+                            }
+                            while (idx < n) {
+                                ++idx;
+                                if (str[idx - 1] == '\n')
+                                    break;
+                            }
+                        }
+                        str[n] = 0;
+                    }
+                    push_edit_op(E, ss, se, str, 0);
+                    E->find_mode = false;
+                    if (sy != ey) {
+                        E->select_idx = ss;
+                        E->cursor_idx = ss + strlen(str);
+                    }
+                    stbds_arrfree(str);
+                    break;
                 }
-                push_edit_op(E, ss, se, str, 0);
-                E->find_mode = false;
-                if (sy != ey) {
-                    E->select_idx = ss;
-                    E->cursor_idx = ss + strlen(str);
-                }
-                stbds_arrfree(str);
                 break;
             }
-            break;
         }
         }
     bool autocomplete_valid = !shift && E->autocomplete_options && E->autocomplete_index >= 0 &&
@@ -713,11 +694,13 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             } else {
                 int ss = get_select_start(E);
                 int se = get_select_end(E);
-                int sy = idx_to_y(E, ss), ey = idx_to_y(E, se);
+                int sx,sy,ex,ey;
+                if (!idx_to_xy(E, ss, &sx, &sy) || !idx_to_xy(E, se, &ex, &ey))
+                    goto insert_character;
                 if (sy == ey && !shift)
                     goto insert_character;
-                ss = xy_to_idx(E, 0, sy);
-                se = xy_to_idx(E, 0x7fffffff, ey);
+                ss = find_start_of_line(E, ss);
+                se = find_end_of_line(E, se);
                 char *str = stbstring_from_span(E->str + ss, E->str + se, ((ey - sy) + 1) * 4);
                 for (char *c = str; *c;) {
                     if (shift) {
@@ -756,7 +739,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 } else {
                     E->autocomplete_show_after = 0.f; // after typing, we can immediately show autocomplete.
                     // delete the selection; insert the character
-                    int ls = (key == '\n') ? count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y)) : 0;
+                    int ls = (key == '\n') ? count_leading_spaces(E, find_start_of_line(E, E->cursor_idx)) : 0;
                     char buf[ls + 2];
                     buf[0] = key;
                     memset(buf + 1, ' ', ls);
@@ -769,8 +752,8 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             postpone_autocomplete_show(E);
             if (super) {
                 // same as home
-                int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
-                E->cursor_idx = xy_to_idx(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
+                int ls = count_leading_spaces(E, find_start_of_line(E, E->cursor_idx));
+                E->cursor_idx = xy_to_idx_slow(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
             } else if (has_selection && !shift) {
                 E->cursor_idx = get_select_start(E);
             } else
@@ -781,7 +764,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             postpone_autocomplete_show(E);
             if (super) {
                 // same as end
-                E->cursor_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
+                E->cursor_idx = find_end_of_line(E, E->cursor_idx);
             } else if (has_selection && !shift) {
                 E->cursor_idx = get_select_end(E);
             } else
@@ -797,7 +780,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 E->autocomplete_scroll_y--;
             } else {
                 postpone_autocomplete_show(E);
-                E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 1);
+                E->cursor_idx = super ? 0 : xy_to_idx_slow(E, E->cursor_x_target, E->cursor_y - 1);
                 set_target_x = 0;
                 reset_selection = !shift;
             }
@@ -810,21 +793,21 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 E->autocomplete_scroll_y++;
             } else {
                 postpone_autocomplete_show(E);
-                E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 1);
+                E->cursor_idx = super ? n : xy_to_idx_slow(E, E->cursor_x_target, E->cursor_y + 1);
                 set_target_x = 0;
                 reset_selection = !shift;
             }
             break;
         case GLFW_KEY_HOME: {
             postpone_autocomplete_show(E);
-            int ls = count_leading_spaces(E, xy_to_idx(E, 0, E->cursor_y));
-            E->cursor_idx = xy_to_idx(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
+            int ls = count_leading_spaces(E, find_start_of_line(E, E->cursor_idx));
+            E->cursor_idx = xy_to_idx_slow(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
             reset_selection = !shift;
             break;
         }
         case GLFW_KEY_END:
             postpone_autocomplete_show(E);
-            E->cursor_idx = xy_to_idx(E, 0x7fffffff, E->cursor_y);
+            E->cursor_idx = find_end_of_line(E, E->cursor_idx);
             reset_selection = !shift;
             break;
         case GLFW_KEY_PAGE_UP:
@@ -832,7 +815,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             if (E->find_mode) {
                 jump_to_found_text(E, 1, 0);
             } else {
-                E->cursor_idx = super ? 0 : xy_to_idx(E, E->cursor_x_target, E->cursor_y - 20);
+                E->cursor_idx = super ? 0 : xy_to_idx_slow(E, E->cursor_x_target, E->cursor_y - 20);
                 set_target_x = 0;
                 reset_selection = !shift;
             }
@@ -842,7 +825,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             if (E->find_mode) {
                 jump_to_found_text(E, 0, 0);
             } else {
-                E->cursor_idx = super ? n : xy_to_idx(E, E->cursor_x_target, E->cursor_y + 20);
+                E->cursor_idx = super ? n : xy_to_idx_slow(E, E->cursor_x_target, E->cursor_y + 20);
                 set_target_x = 0;
                 reset_selection = !shift;
             }
@@ -860,6 +843,13 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 // --- colors 3 digits bg, 3 digits fg, 2 digits character.
 #define C_SELECTION 0xc48fff00u
 #define C_SELECTION_FIND_MODE 0x4c400000u
+
+#define C_PATTERN_BG 0x11100000u
+#define C_TRACKER_BG 0x12300000u
+#define C_TRACKER_BG_4 0x22400000u
+#define C_TRACKER_BG_8 0x33500000u
+#define C_TRACKER_BG_HILITE 0x44600000u
+#define C_HILITE_NOTE 0xe4900000u
 
 #define C_AUTOCOMPLETE_SECONDARY 0x111c4800u
 #define C_AUTOCOMPLETE 0xc4800000u
@@ -1158,12 +1148,13 @@ void print_span_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool mult
                 return;
             continue;
         }
-        if (y >= 0 && x < TMW && x >= 0)
+        if (y >= 0 && x < TMW && x >= 0) {
             ptr[y * TMW + x] = (color) | (unsigned char)(*c);
+        }
         x++;
     }
 }
-void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_line, const char *fmt, ...) {
+int print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_line, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     int length = vsnprintf(NULL, 0, fmt, args);
@@ -1175,6 +1166,7 @@ void print_to_screen(uint32_t *ptr, int x, int y, uint32_t color, bool multi_lin
     vsnprintf(buf, length + 1, fmt, args);
     va_end(args);
     print_span_to_screen(ptr, x, y, color, multi_line, buf, buf + length);
+    return length;
 }
 
 int vertical_bar(int y) { // y=0 (empty) to y=16 (full)
@@ -1242,6 +1234,29 @@ autocomplete_option_t autocomplete_score(const char *users, int userlen, int min
     return rv;
 }
 
+typedef struct hilite_region_t {
+    int start, end;
+    int color;
+    int alpha;
+} hilite_region_t;
+
+int compare_hilite_regions(const void *a, const void *b) {
+    const hilite_region_t *h1 = (const hilite_region_t *)a;
+    const hilite_region_t *h2 = (const hilite_region_t *)b;
+    return h1->end - h2->end;
+}
+
+uint32_t interp_color(uint32_t col1, uint32_t col2, int alpha) {
+    int s = 256 - alpha;
+    int t = alpha;
+    return ((((((col1 >> 8) & 0xf) * s) + (((col2 >> 8) & 0xf) * t)) >> 8) << 8) |
+           ((((((col1 >> 12) & 0xf) * s) + (((col2 >> 12) & 0xf) * t)) >> 8) << 12) |
+           ((((((col1 >> 16) & 0xf) * s) + (((col2 >> 16) & 0xf) * t)) >> 8) << 16) |
+           ((((((col1 >> 20) & 0xf) * s) + (((col2 >> 20) & 0xf) * t)) >> 8) << 20) |
+           ((((((col1 >> 24) & 0xf) * s) + (((col2 >> 24) & 0xf) * t)) >> 8) << 24) |
+           ((((((col1 >> 28) & 0xf) * s) + (((col2 >> 28) & 0xf) * t)) >> 8) << 28);
+}
+
 int code_color(EditorState *E, uint32_t *ptr) {
     int left = 80 / E->font_width;
     tokenizer_t t = {.ptr = ptr,
@@ -1284,12 +1299,20 @@ int code_color(EditorState *E, uint32_t *ptr) {
     int cursor_token_start_idx = 0;
     int cursor_token_end_idx = 0;
     int pattern_entry_idx = -1;
-    int pattern_mode = 0; // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
-    int grid_line_start = -1; // when we enter a grid (#), we start counting lines...
-    int grid_line_wants_end = 0;
+    int pattern_mode = 0;     // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
+    #define INVALID_LINE 0x7fffffff
+    int grid_line_start = INVALID_LINE; // when we enter a grid (#), we start counting lines...
+    int grid_line_hilight = -1;
+    uint32_t empty_bgcol = 0x11100000u;
     pattern_t *cur_pattern = NULL;
+    hilite_region_t *hilites = NULL;
+    // hap_t viz_hap_mem[128];
+    // hap_span_t viz_haps = {};
+    int current_hilite_region = 0;
     slider_spec_t slider_spec;
-    for (int i = 0; i <= t.n + 10;) {
+    stbds_arrsetlen(E->character_pos, t.n);
+    memset(E->character_pos, 0, sizeof(character_pos_t) * t.n);
+    for (int i = 0; i <= t.n;) {
         unsigned h = 0;
         char c = tok_get(&t, i);
         uint32_t col = C_DEF;
@@ -1331,9 +1354,25 @@ int code_color(EditorState *E, uint32_t *ptr) {
             } else if (pattern_mode) {
                 col = C_STR;
                 const char *e = skip_path(t.str + i, t.str + t.n);
-                if (i>0 && t.str[i-1]=='\n') {
+                if (i > 0 && t.str[i - 1] == '\n') {
                     const char *s = t.str + i;
                     cur_pattern = get_pattern(temp_cstring_from_span(s, e));
+                    stbds_arrsetlen(hilites, 0);
+                    if (cur_pattern) {
+                        int n = stbds_arrlen(cur_pattern->bfs_nodes);
+                        // stbds_arrsetcap(hilites, n);
+                        for (int ni = 0; ni < n; ++ni) {
+                            const token_info_t *se = &cur_pattern->bfs_start_end[ni];
+                            float time_since_trigger = (G->iTime - se->last_evaled_glfw_time) * 2.f;
+                            if (time_since_trigger >= 0.f && time_since_trigger <= 1.f) {
+                                int col = C_HILITE_NOTE;
+                                hilite_region_t h = {se->start, se->end, col, (int)((1.f - time_since_trigger) * 256)};
+                                stbds_arrpush(hilites, h);
+                            }
+                        }
+                        qsort(hilites, stbds_arrlen(hilites), sizeof(hilite_region_t), compare_hilite_regions);
+                        current_hilite_region = 0;
+                    }
                 }
                 j = e - t.str;
                 break;
@@ -1367,8 +1406,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             col = C_PREPROC;
             if (!pattern_mode && i + 15 <= t.n && strncmp(t.str + i, "#ifdef PATTERNS", 15) == 0) {
                 pattern_mode = 1;
-                grid_line_start = -1;
-                grid_line_wants_end = 0;
+                grid_line_start = INVALID_LINE;
                 pattern_entry_idx = i;
                 j = i + 15;
             } else if (pattern_mode && i + 6 <= t.n && strncmp(t.str + i, "#endif", 6) == 0) {
@@ -1377,13 +1415,51 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 }
                 pattern_mode = 0;
                 j = i + 6;
-            } else if (pattern_mode==1) {
-                if (grid_line_start >=0 && !grid_line_wants_end) {
-                    grid_line_wants_end = 1;
-                } else {
+            } else if (pattern_mode == 1) {
+                if (grid_line_start == INVALID_LINE) {
                     grid_line_start = t.y;
-                    for (int eol=i; eol<t.n; eol++) if (!isspace(t.str[eol])) { break; } else if (t.str[eol]=='\n') { grid_line_start++; break; }
-                    grid_line_wants_end = 0;
+                    for (int eol = i; eol < t.n; eol++)
+                        if (!isspace(t.str[eol])) {
+                            break;
+                        } else if (t.str[eol] == '\n') {
+                            grid_line_start++;
+                            break;
+                        }
+                    grid_line_hilight = -1;
+                    int remapped_i = (i >= 0 && i < stbds_arrlen(E->new_idx_to_old_idx)) ? E->new_idx_to_old_idx[i] : -1;
+                    if (remapped_i >= 0 && cur_pattern) {
+                        // find which node in the current pattern this grid corresponds to
+                        int n = stbds_arrlen(cur_pattern->bfs_nodes);
+                        for (int ni = 0; ni < n; ++ni) {
+                            const token_info_t *se = &cur_pattern->bfs_start_end[ni];
+                            if (remapped_i >= se->start && remapped_i < se->end) {
+                                float t = se->local_time_of_eval;
+                                float grid_length = cur_pattern->bfs_min_max_value[ni].mx;
+                                float lines_per_cycle = max(1.f, cur_pattern->bfs_min_max_value[ni].mn);
+                                if (grid_length > 0 && lines_per_cycle > 0) {
+                                    float t_base = floorf(t/grid_length) * grid_length;
+                                    t-=t_base;
+                                    t *= lines_per_cycle;
+                                    grid_line_hilight = (int)t;
+                                    // also calculate the haps for this cycle of the pattern
+                                    // TODO: pass the relevant seed to get the randoms right... 
+                                    // viz_haps.s = viz_hap_mem;
+                                    // viz_haps.e = viz_hap_mem + 64;
+                                    // int hapid = 1;// TODO - pass the right seed
+                                    // viz_haps = cur_pattern->_make_haps(viz_haps, 64, -1.f, ni, t_base, t_base + grid_length, hapid, false);
+                                    // // scale the viz haps' times to lines
+                                    // for (hap_t *hap = viz_haps.s; hap < viz_haps.e; hap++) {
+                                    //     hap->t0 = (hap->t0 - t_base) * lines_per_cycle;
+                                    //     hap->t1 = (hap->t1 - t_base) * lines_per_cycle;
+                                    // }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    uint32_t col = (t.y == E->cursor_y - E->intscroll) ? 0xeee00u : 0x55500u;
+                    print_to_screen(t.ptr, left - 3, t.y, empty_bgcol | col, false, "%02x.", (t.y - grid_line_start - 1) & 0xff);
+                    grid_line_start = INVALID_LINE;
                 }
             }
             break;
@@ -1485,8 +1561,14 @@ int code_color(EditorState *E, uint32_t *ptr) {
             float v = (slider_spec.curval - slider_spec.minval) / (slider_spec.maxval - slider_spec.minval);
             slider_val = (int)(v * ((j - i - 2) * 8.f - 4.f));
         }
+        // PAINT THE TOKEN /////////////////////////////////////////////////
         for (; i < j; ++i) {
             char ch = tok_get(&t, i);
+            if (i < t.n) {
+                E->character_pos[i].x = clamp(t.x, 0, (1 << 10) - 1);
+                E->character_pos[i].y = clamp(t.y + E->intscroll, 0, (1 << 21) - 1);
+                E->character_pos[i].pattern_mode = pattern_mode;
+            }
             uint32_t ccol = col;
             if (curve_data) {
                 ccol = C_CHART;
@@ -1504,29 +1586,24 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 E->cursor_y = t.y + E->intscroll;
             }
             uint32_t bgcol = ccol & 0xfff00000u;
-            if (pattern_mode && bgcol == 0) {
-                // pattern area gets a special bg color
-                if (grid_line_start >=0 && grid_line_start < t.y) {
-                    int grid_line = t.y - grid_line_start - 1;
-                    if ((grid_line%8)==0) ccol|=0x44700000u;
-                    else if ((grid_line%4)==0) ccol|=0x33500000u;
-                    else ccol|=0x11100000u;
-                } else {
-                    ccol |= 0x11100000u;
-                }
-                if (cur_pattern) {
-                    pattern_t *pat = cur_pattern;
-                    int n = stbds_arrlen(pat->bfs_nodes);
-                    int remapped_i = (i>=0 && i<stbds_arrlen(E->new_idx_to_old_idx)) ? E->new_idx_to_old_idx[i] : -1;
-                    if (remapped_i >=0) {
-                        for (int ni =0; ni<n; ++ni) {
-                            const token_info_t *se = &pat->bfs_start_end[ni];
-                            float time_since_trigger = (G->iTime - se->last_evaled_glfw_time) * 2.f;
-                            if (remapped_i >= se->start && remapped_i < se->end && time_since_trigger >=0.f && time_since_trigger <= 1.f) {
-                                ccol |= (int)((1.f-time_since_trigger) * 15)<<(7*4); // red
-                                break;
+            if (bgcol == 0 && pattern_mode) {
+                ccol |= empty_bgcol;
+                // hilight active notes
+                if (hilites) {
+                    int nh = stbds_arrlen(hilites);
+                    int remapped_i = (i >= 0 && i < stbds_arrlen(E->new_idx_to_old_idx)) ? E->new_idx_to_old_idx[i] : -1;
+                    if (remapped_i >= 0) {
+                        // assumes hilites are sorted by end index
+                        while (current_hilite_region < nh && hilites[current_hilite_region].end <= remapped_i)
+                            ++current_hilite_region;
+                        for (int j = current_hilite_region; j < nh; ++j) {
+                            if (remapped_i >= hilites[j].start && remapped_i < hilites[j].end) {
+                                ccol = interp_color(ccol, (col & 0xfff00u) | hilites[current_hilite_region].color,
+                                                    hilites[current_hilite_region].alpha);
                             }
-                        } 
+                            if (hilites[j].start > remapped_i + 32)
+                                break; // approximate: breaks for hilites longer than 32
+                        }
                     }
                 }
             }
@@ -1552,26 +1629,33 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         t.x++;
                     }
                 }
+                // add any haps that need visualizing
+                // if (grid_line_start != INVALID_LINE && viz_haps.e > viz_haps.s) {
+                //     int hapy = ysc - grid_line_start - 1;
+                //     int linestart = find_start_of_line(E, i);
+                //     int lineend = find_end_of_line(E, i);
+                //     uint32_t col = empty_bgcol | 0x55500u;
+                //     for (hap_t *hap = viz_haps.s; hap < viz_haps.e; hap++) {
+                //         if (hap->t0 >= hapy && hap->t0 < hapy + 1) {
+                //             const char *note = print_midinote(hap->params[P_NOTE]);
+                //             if (spanstr(E->str + linestart, E->str + lineend, note) == 0) { // only show ghost notes if not already in the line
+                //                 t.x+=print_to_screen(t.ptr, t.x, t.y, col, false, " %s", print_midinote(hap->params[P_NOTE]));
+                //             }
+                //         }
+                //     }
+                // }
                 // fill to the end of the line
                 if (pattern_mode && t.y >= 0 && t.y < TMH) {
                     for (; t.x < tmw; t.x++) {
                         t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     }
-                    if (grid_line_start >=0 && grid_line_start < t.y) {
-                        uint8_t grid_line = (t.y - grid_line_start - 1)&0xff;
-                        const static char hex[17] = "0123456789abcdef";
-                        if (left>=3) {
-                            t.ptr[t.y * TMW + left-3] = ccol | hex[grid_line>>4];
-                            t.ptr[t.y * TMW + left-2] = ccol | hex[grid_line&0xf];
-                            t.ptr[t.y * TMW + left-1] = ccol | ' ';
-                        }
-                    
-                    } 
+                    if (grid_line_start != INVALID_LINE && grid_line_start < t.y) {
+                        uint32_t col = (t.y == E->cursor_y - E->intscroll) ? 0xeee00u : 0x55500u;
+                        print_to_screen(t.ptr, left - 3, t.y, empty_bgcol | col, false, "%02x ",
+                                        (t.y - grid_line_start - 1) & 0xff);
+                    }
                 }
-                if (grid_line_wants_end) {
-                    grid_line_start = -1;
-                    grid_line_wants_end = 0;
-                }
+
                 /*
                 if (t.y >= 0 && t.y < TMH && sliders[t.y]) {
                     int slider_idx = sliderindices[t.y];
@@ -1588,6 +1672,20 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 }*/
                 t.x = left;
                 ++t.y;
+                // decide on the *next* lines bg color
+                if (pattern_mode) {
+                    empty_bgcol = C_PATTERN_BG;
+                    if (grid_line_start != INVALID_LINE && grid_line_start < t.y) {
+                        empty_bgcol = C_TRACKER_BG;
+                        int grid_line = t.y - grid_line_start - 1;
+                        if ((grid_line % 8) == 0)
+                            empty_bgcol = C_TRACKER_BG_8;
+                        else if ((grid_line % 4) == 0)
+                            empty_bgcol = C_TRACKER_BG_4;
+                        if (grid_line == grid_line_hilight && grid_line_hilight >= 0)
+                            empty_bgcol = C_TRACKER_BG_HILITE;
+                    }
+                }
             } else
                 ++t.x;
             if (!is_space((unsigned)ch))
@@ -1726,10 +1824,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
         }
         int token_len = cursor_token_end_idx - cursor_token_start_idx;
         int num_chars_so_far = E->cursor_idx - cursor_token_start_idx;
-        int x, y;
-        idx_to_xy(E, cursor_token_start_idx, &x, &y);
+        int x = 0, y = 0;
+        bool gotxy = idx_to_xy(E, cursor_token_start_idx, &x, &y);
         y -= E->intscroll;
-        if (num_chars_so_far >= 2 || include_chord_names) { // at least 2 chars
+        if (gotxy && (num_chars_so_far >= 2 || include_chord_names)) { // at least 2 chars
 
             int bestscore = 2;
             char *bestoption = NULL;
@@ -1884,6 +1982,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     } // curve popup
     E->mouse_clicked_chart = false;
 
+    stbds_arrfree(hilites);
     return E->num_lines;
 }
 
@@ -1897,4 +1996,3 @@ void load_file_into_editor(EditorState *E) {
     E->str = load_file(E->fname);
     init_remapping(E);
 }
-

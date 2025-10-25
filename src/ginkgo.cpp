@@ -1545,6 +1545,7 @@ int main(int argc, char **argv) {
     snprintf(fs_ui_str, n, "%s%s", kFS_user_prefix, kFS_ui_suffix);
     vs = compile_shader(NULL, GL_VERTEX_SHADER, kVS);
     fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, fs_ui_str);
+    free(fs_ui_str);
     fs_bloom = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_bloom);
     fs_taa = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_taa);
     fs_secmon = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_secmon);

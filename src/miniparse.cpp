@@ -726,7 +726,7 @@ void test_minipat(void) {
     printf("parsed %d nodes\n", (int)stbds_arrlen(pm.nodes));
     pretty_print_nodes(s, s + pm.n, &p);
     hap_t dst[64];
-    hap_span_t haps = p.make_haps({dst, dst + 64}, 64, 0, 4);
+    hap_span_t haps = p.make_haps({dst, dst + 64}, 64, -1.f, 0, 4);
     pretty_print_haps(haps, 0.f, 4.f);
 
     // char *chart = print_pattern_chart(&p);

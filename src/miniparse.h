@@ -88,11 +88,11 @@ typedef struct pattern_t { // a parsed version of a min notation string
 
     float get_length(int nodeidx);
     void _filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time a, hap_time b, hap_time from, hap_time to);
-    int _apply_values(hap_span_t &dst, int tmp_size, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb, size_t context);
-    hap_span_t _make_haps(hap_span_t &dst, int tmp_size, int nodeidx, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves);
+    int _apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb, size_t context);
+    hap_span_t _make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves);
     bool _append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
-    hap_span_t make_haps(hap_span_t dst, int tmp_size, hap_time t0, hap_time t1) { 
-        return _make_haps(dst, tmp_size, 0, t0, t1, 1, false);
+    hap_span_t make_haps(hap_span_t dst, int tmp_size, float viz_time, hap_time t0, hap_time t1) { 
+        return _make_haps(dst, tmp_size, viz_time, 0, t0, t1, 1, false);
     }
     void unalloc() {
         stbds_arrfree(curvedata);

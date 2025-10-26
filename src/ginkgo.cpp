@@ -891,6 +891,10 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         key = '\n';
     if (mods == GLFW_MOD_SUPER) {
         if (key == GLFW_KEY_P) {
+            if (!G->playing) {
+                // also compile...
+                parse_named_patterns_in_c_source(&tabs[1]);
+            }
             G->playing = !G->playing;
         }
         if (key == GLFW_KEY_COMMA || key == GLFW_KEY_PERIOD) {

@@ -266,6 +266,11 @@ static int parse_grid(pattern_maker_t *p) {
         error(p, "expected #");
         return -1;
     }
+    bool muted=false;
+    if (peek(p) == '_') {
+        consume(p, '_');
+        muted = true;
+    }
     int actual_end = p->n;
     int group_node = make_node(p, N_GRID, -1, -1, start, start);
     int prev_child = -1;
@@ -316,9 +321,10 @@ static int parse_grid(pattern_maker_t *p) {
     }
     if (lines_per_cycle <= 0.f) lines_per_cycle = 1.f;
     grid_length /= lines_per_cycle;
-    grid_length = ceilf(grid_length);
-    p->nodes[group_node].min_value = lines_per_cycle;
-    p->nodes[group_node].max_value = grid_length; 
+    //if (grid_length <= 1.f) grid_length = 1.f;
+    //grid_length = ceilf(grid_length);
+    p->nodes[group_node].min_value = muted ? -lines_per_cycle : lines_per_cycle;
+    p->nodes[group_node].max_value = grid_length;
     return group_node;
 }
 
@@ -711,7 +717,7 @@ void test_minipat(void) {
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
     //const char *s = "c < > d"; // test empty group
-    const char *s = "#\na\n[c e f g]\n\n\n#"; // test grid
+    const char *s = "#\na\nb\nc\nd\n#"; // test grid
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";

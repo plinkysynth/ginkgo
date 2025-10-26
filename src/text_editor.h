@@ -257,12 +257,12 @@ static inline int get_select_end(EditorState *obj) { return max(obj->cursor_idx,
 
 static inline int next_tab(int x) { return (x + 4) & ~3; }
 
-int xy_to_idx_slow(EditorState *E, int tx, int ty) {
+int xy_to_idx_slow(EditorState *E, int tx, int ty, int start_idx = 0) {
     tx = max(0, tx);
     ty = max(0, ty);
     int n = stbds_arrlen(E->character_pos);
     int rv = -1;
-    for (int i = 0; i < n; i++) {
+    for (int i = start_idx; i < n; i++) {
         if (E->character_pos[i].y == ty) {
             if (E->character_pos[i].x <= tx || rv < 0)
                 rv = i;
@@ -750,7 +750,6 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             break;
         }
         case '\n':
-
         case ' ' ... '~':
         insert_character:
             if (!super && !ctrl) {
@@ -772,8 +771,13 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             postpone_autocomplete_show(E);
             if (super) {
                 // same as home
-                int ls = count_leading_spaces(E, find_start_of_line(E, E->cursor_idx));
-                E->cursor_idx = xy_to_idx_slow(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
+                // int ls = count_leading_spaces(E, find_start_of_line(E, E->cursor_idx));
+                // E->cursor_idx = xy_to_idx_slow(E, (E->cursor_x > ls) ? ls : 0, E->cursor_y);
+                int sol = find_start_of_line(E, E->cursor_idx);
+                if (E->cursor_idx == sol && idx_to_xy(E, sol, &E->cursor_x, &E->cursor_y)) {
+                    E->cursor_idx = xy_to_idx_slow(E, E->cursor_x - 1, E->cursor_y);
+                } else
+                    E->cursor_idx = sol;
             } else if (has_selection && !shift) {
                 E->cursor_idx = get_select_start(E);
             } else
@@ -783,8 +787,15 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         case GLFW_KEY_RIGHT:
             postpone_autocomplete_show(E);
             if (super) {
-                // same as end
-                E->cursor_idx = find_end_of_line(E, E->cursor_idx);
+                int eol = find_end_of_line(E, E->cursor_idx);
+                if (eol == E->cursor_idx && idx_to_xy(E, eol, &E->cursor_x, &E->cursor_y)) {
+                    E->cursor_idx = xy_to_idx_slow(E, E->cursor_x + 1, E->cursor_y, eol + 1);
+                    if (E->cursor_idx == stbds_arrlen(E->character_pos)) {
+                        // no column to the right
+                        E->cursor_idx = eol;
+                    }
+                } else
+                    E->cursor_idx = eol;
             } else if (has_selection && !shift) {
                 E->cursor_idx = get_select_end(E);
             } else
@@ -865,8 +876,8 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 #define C_SELECTION_FIND_MODE 0x4c400000u
 
 #define C_PATTERN_LINE 0x80444444u   // this one is 24 bit RGBA, unlike the others :( (add_line uses it)
-#define C_PATTERN_GUTTER 0x80444444u // same
-#define C_PATTERN_JUMP_MARKER 0x000f0000u
+//#define C_PATTERN_GUTTER 0x80000000u // same
+#define C_PATTERN_JUMP_MARKER 0x00070000u
 
 #define C_PATTERN_BG 0x11100000u
 #define C_TRACKER_BG 0x12300000u
@@ -1354,32 +1365,39 @@ int code_color(EditorState *E, uint32_t *ptr) {
     slider_spec_t slider_spec;
     stbds_arrsetlen(E->character_pos, t.n);
     memset(E->character_pos, 0, sizeof(character_pos_t) * t.n);
-#define jump_after_columns()                                                                                                       \
-    if (stbds_arrlen(column_widths) > 0) {                                                                                         \
-        int right = column_max_width + 2 - E->intscroll_x;                                                                         \
-        add_line(E, first_left, first_grid_line_start, right, first_grid_line_start, C_PATTERN_LINE, 5.f);                         \
-        add_line(E, left, t.y, right, t.y, C_PATTERN_LINE, 5.f);                                                                   \
-        if (grid_line_end == INVALID_LINE || t.y > grid_line_end)                                                                  \
-            grid_line_end = t.y;                                                                                                   \
-        int jumpy = (grid_line_end == INVALID_LINE ? t.y : grid_line_end);                                                         \
-        stbds_arrpush(column_widths, right);                                                                                       \
-        stbds_arrpush(column_widths, t.y);                                                                                         \
-        int nc = stbds_arrlen(column_widths);                                                                                      \
-        for (int c = 0; c < nc; c += 2) {                                                                                          \
-            clear_rectangle(t.ptr, (!c) ? first_left : column_widths[c - 2], column_widths[c + 1], column_widths[c], jumpy,        \
-                            C_PATTERN_BG + ' ');                                                                                   \
-            if (c < nc - 2)                                                                                                        \
-                add_line(E, column_widths[c], first_grid_line_start, column_widths[c],                                             \
-                         max(column_widths[c + 1], column_widths[c + 3]), C_PATTERN_GUTTER, 5.f);                                  \
-        }                                                                                                                          \
-        clear_rectangle(t.ptr, right, first_grid_line_start, tmw, jumpy, C_PATTERN_BG + ' ');                                       \
-        t.y = jumpy;                                                                                                               \
-        t.x = left = first_left;                                                                                                   \
-        column_max_width = 0;                                                                                                      \
-        grid_line_start = INVALID_LINE;                                                                                            \
-        grid_line_end = INVALID_LINE;                                                                                              \
-        first_grid_line_start = INVALID_LINE;                                                                                      \
-    }
+    auto jump_after_columns = [&] {
+        if (stbds_arrlen(column_widths) > 0) {
+            int right = column_max_width + 2 - E->intscroll_x;
+            //add_line(E, first_left, first_grid_line_start, right, first_grid_line_start, C_PATTERN_LINE, 5.f);
+            add_line(E, left, t.y, right-1, t.y, C_PATTERN_LINE, 5.f);
+            if (grid_line_end == INVALID_LINE || t.y > grid_line_end)
+                grid_line_end = t.y;
+            int jumpy = (grid_line_end == INVALID_LINE ? t.y : grid_line_end);
+            stbds_arrpush(column_widths, right);
+            stbds_arrpush(column_widths, t.y);
+            int nc = stbds_arrlen(column_widths);
+            for (int c = 0; c < nc; c += 2) {
+                clear_rectangle(t.ptr, (!c) ? first_left : column_widths[c - 2], column_widths[c + 1], column_widths[c], jumpy,
+                                C_PATTERN_BG + ' ');
+                if (c < nc - 2)
+                    // add_line(E, column_widths[c], first_grid_line_start, column_widths[c],
+                    //          max(column_widths[c + 1], column_widths[c + 3]), C_PATTERN_GUTTER, 5.f);
+                    clear_rectangle(t.ptr, column_widths[c]-1, first_grid_line_start, column_widths[c], 
+                        max(column_widths[c + 1], column_widths[c + 3]), C_PATTERN_BG);
+            }
+            clear_rectangle(t.ptr, right, first_grid_line_start, tmw, jumpy, C_PATTERN_BG + ' ');
+            //add_line(E, first_left, first_grid_line_start, first_left, column_widths[1], C_PATTERN_LINE, 5.f);
+            //add_line(E, right, first_grid_line_start, right, column_widths[nc - 1], C_PATTERN_GUTTER, 5.f);
+            t.y = jumpy;
+            t.x = left = first_left;
+            column_max_width = 0;
+            grid_line_start = INVALID_LINE;
+            grid_line_end = INVALID_LINE;
+            first_grid_line_start = INVALID_LINE;
+            stbds_arrsetlen(column_widths, 0);
+        }
+        t.x = left = first_left;
+    };
 
     for (int i = 0; i <= t.n;) {
         unsigned h = 0;
@@ -1407,6 +1425,13 @@ int code_color(EditorState *E, uint32_t *ptr) {
         case '}':
             col = close_bracket(&t, &t.brace, '{');
             break;
+        case '\n':
+            if (pattern_mode && i + 1 < t.n && t.str[i + 1] == '/' && i > 0 && t.str[i - 1] == '\n') {
+                // we are the blank line before a new pattern...
+                jump_after_columns();
+            }
+            break;
+
         case '/': {
             char c2 = tok_get(&t, i + 1);
             if (c2 == '/') {
@@ -1492,11 +1517,13 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 j = i + 6;
             } else if (pattern_mode == 1) {
                 if (grid_line_start != INVALID_LINE) {
-                    /////////////// END OF A GRID //////////////.
+                    /////////////// END OF A GRID //////////////
+                    uint32_t col = (t.y == E->cursor_y - E->intscroll_y) ? 0xeee00u : 0x55500u;
+                    print_to_screen(t.ptr, first_left, t.y, C_PATTERN_BG | col, false, "%02x.", (t.y - grid_line_start - 1) & 0xff);
+
                     if (grid_line_end == INVALID_LINE || t.y > grid_line_end)
                         grid_line_end = t.y;
 
-                    // print_to_screen(t.ptr, left - 3, t.y, empty_bgcol | col, false, "%02x.", (t.y - grid_line_start - 1) & 0xff);
                     grid_line_start = INVALID_LINE;
                     empty_bgcol = C_PATTERN_BG;
                 } else {
@@ -1509,9 +1536,11 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             grid_line_start++;
                             break;
                         }
-                    if (first_grid_line_start == INVALID_LINE)
+                    if (first_grid_line_start == INVALID_LINE) {
+                        // first ever column...
+                        left = first_left + 4;
                         first_grid_line_start = grid_line_start;
-                    else {
+                    } else {
                         // second or more column....
                         print_to_screen(t.ptr, t.x, t.y, C_PATTERN_JUMP_MARKER, false, "#");
                         int oldleft = left;
@@ -1519,7 +1548,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         grid_line_start = first_grid_line_start;
                         left = column_max_width + 2 - E->intscroll_x;
                         t.y++;
-                        add_line(E, oldleft, t.y, left, t.y, C_PATTERN_LINE, 5.f);
+                        add_line(E, oldleft, t.y, left-1, t.y, C_PATTERN_LINE, 5.f);
                         if (grid_line_end == INVALID_LINE || t.y > grid_line_end)
                             grid_line_end = t.y;
                         stbds_arrpush(column_widths, left);
@@ -1748,16 +1777,18 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 //     }
                 // }
                 // fill to the end of the line
-                if (pattern_mode && t.y >= 0 && t.y < TMH) {
-                    for (; t.x < tmw; t.x++) {
-                        t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
+                if (pattern_mode) {
+                    if (t.y >= 0 && t.y < TMH) {
+                        for (; t.x < tmw; t.x++) {
+                            t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
+                        }
                     }
                     if (grid_line_start != INVALID_LINE && grid_line_start < t.y) {
-                        if (stbds_arrlen(column_widths) == 0) {
-                            uint32_t col = (t.y == E->cursor_y - E->intscroll_y) ? 0xeee00u : 0x55500u;
-                            print_to_screen(t.ptr, left - 3, t.y, empty_bgcol | col, false, "%02x ",
-                                            (t.y - grid_line_start - 1) & 0xff);
-                        }
+                        uint32_t col = (t.y == E->cursor_y - E->intscroll_y) ? 0xeee00u : 0x55500u;
+                        if (stbds_arrlen(column_widths)==0)
+                            print_to_screen(t.ptr, first_left+3, t.y, empty_bgcol | col, false, " ");
+                        print_to_screen(t.ptr, first_left, t.y, C_PATTERN_BG | col, false, "%02x ",
+                                        (t.y - grid_line_start - 1) & 0xff);
                         if (grid_line_end == INVALID_LINE || t.y > grid_line_end)
                             grid_line_end = t.y;
                     }
@@ -1940,7 +1971,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
         bool gotxy = idx_to_xy(E, cursor_token_start_idx, &x, &y);
         x -= E->intscroll_x;
         y -= E->intscroll_y;
-        if (gotxy && (num_chars_so_far >= 2 || include_chord_names)) { // at least 2 chars
+        if (gotxy && (num_chars_so_far >= 2)) { // at least 2 chars
 
             int bestscore = 2;
             char *bestoption = NULL;

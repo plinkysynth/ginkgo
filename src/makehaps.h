@@ -466,20 +466,23 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         hap_time from = loopidx * kids_total_length;
         hap_time loop_from = from;
         int childidx = 0;
+        float lines_per_cycle = 1.f;
         if (n->type == N_GRID) {
             bfs_start_end[nodeidx].local_time_of_eval = child_a;
+            lines_per_cycle = bfs_min_max_value[nodeidx].mn;
+            if (lines_per_cycle < 1.f)
+                break;
         }
-        while (from <= child_b) {
+        while (from < child_b) {
             int childnode = n->first_child + childidx;
             hap_time child_length = get_length(childnode);
             hap_time to = from + child_length;
             if (n->type == N_GRID) {
-                float lines_per_cycle = max(1.f, bfs_min_max_value[nodeidx].mn);
-                float grid_time_offset = bfs_grid_time_offset[childnode] / lines_per_cycle;
-                float next_grid_time_offset = (childidx < n->num_children-1) ? bfs_grid_time_offset[childnode+1] / lines_per_cycle : kids_total_length;
+                hap_time grid_time_offset = bfs_grid_time_offset[childnode] / lines_per_cycle;
+                hap_time next_grid_time_offset = (childidx < n->num_children-1) ? bfs_grid_time_offset[childnode+1] / lines_per_cycle : kids_total_length;
                 from = loop_from + grid_time_offset;
                 to = loop_from + next_grid_time_offset;
-                if (from > child_b) break;
+                if (from >= child_b) break;
             }
             if (to <= from)
                 break;
@@ -495,10 +498,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 hap_span_t newhaps = _make_haps(dst, tmp_size, viz_time, childnode, max(child_a, from) - tofs, min(child_b, to) - tofs,
                                                 hash2_pcg(hapid, childidx + loopidx * n->num_children), merge_repeated_leaves);
                 for (hap_t *src_hap = newhaps.s; src_hap < newhaps.e; src_hap++) {
+                    if (src_hap->t1 > to - tofs) src_hap->t1 = to - tofs;
                     src_hap->t0 = (src_hap->t0 + tofs) / speed_scale;
                     src_hap->t1 = (src_hap->t1 + tofs) / speed_scale;
-                    if (src_hap->t1 > to) src_hap->t1 = to;
-                    if (src_hap->t0 > b || src_hap->t1 < a || src_hap->t0 > src_hap->t1) { // filter out haps that are outside the query range
+                    if (src_hap->t0 > b || src_hap->t1 < a || src_hap->t0 >= src_hap->t1) { // filter out haps that are outside the query range
                         src_hap->valid_params = 0;
                     }
                 }

@@ -18,14 +18,65 @@ e4,g3,b3,e5
 [e1,e2]*2
 d3,fs3,a3,fs5 
 [d2,d1]*2
+#,#
+e4
+e5?
+e6?
+#,#
+
+
+
+fs6
+
+
 #>/2
+
+
+
+
+/bpm 140
+
+/phasing_pattern <#
+a4
+
+b4
+
+
+#,#
+
+c5
+
+
+
+
+
+#,#
+
+
+c4|c3
+
+
+
+#>
+
+
+
+
+
+/simple_pattern #
+c
+d
+e
+f
+#
+
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 stereo do_sample(stereo inp) {
-	F drums = 1 * sclip(rompler("break_think")*2); 
-    F t = test_patterns("/fancy_pattern")*0.2;
+	F drums = 0 * sclip(rompler("break_think")*2); 
+    F t = test_patterns("/simple_pattern")*0.2;
 	stereo dry=stereo{t,t};
 	stereo wet=reverb(dry*0.5f);
 	return wet*0.5+dry*1.+drums;

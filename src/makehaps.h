@@ -477,10 +477,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             int childnode = n->first_child + childidx;
             hap_time child_length = get_length(childnode);
             hap_time to = from + child_length;
+            hap_time next_from = to;
             if (n->type == N_GRID) {
                 hap_time grid_time_offset = bfs_grid_time_offset[childnode] / lines_per_cycle;
                 hap_time next_grid_time_offset = (childidx < n->num_children-1) ? bfs_grid_time_offset[childnode+1] / lines_per_cycle : kids_total_length;
+                hap_time grid_time_first_loop = grid_time_offset + bfs_kids_total_length[childnode];
                 from = loop_from + grid_time_offset;
+                next_from = loop_from + next_grid_time_offset;
+                // these two lines prevent the child from looping. not sure if I want it or not.
+                // if (next_grid_time_offset > grid_time_first_loop)
+                //     next_grid_time_offset = grid_time_first_loop;
                 to = loop_from + next_grid_time_offset;
                 if (from >= child_b) break;
             }
@@ -511,7 +517,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 loopidx++;
                 loop_from += kids_total_length;
             }
-            from = to;
+            from = next_from;
         }
         break;
     }

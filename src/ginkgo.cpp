@@ -224,7 +224,7 @@ uniform ivec2 uScreenPx;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
 
-uniform float scroll_y; 
+uniform vec2 scroll; 
 uniform vec4 cursor; 
 uniform float ui_alpha;
 uniform ivec2 uFontPx;
@@ -545,8 +545,9 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
         vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y);
         // status line doesnt scroll
         float status_bar_y = uScreenPx.y - uFontPx.y * status_bar_size;
+        fpixel.x += scroll.x;
         if (fpixel.y < status_bar_y) {
-            fpixel.y += scroll_y;
+            fpixel.y += scroll.y;
         } else {
             int TMH = 256;
             fpixel.y = (fpixel.y - status_bar_y) + uFontPx.y * (TMH-21);
@@ -610,6 +611,7 @@ static void dump_settings(void) {
         json_start_object(&jp, NULL);
         json_print(&jp, "fname", t->fname);
         json_print(&jp, "font_height", t->font_height);
+        json_print(&jp, "scroll_x", t->scroll_x);
         json_print(&jp, "scroll_y", t->scroll_y);
         json_print(&jp, "cursor_idx", t->cursor_idx);
         json_print(&jp, "select_idx", t->select_idx);
@@ -691,6 +693,8 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
                                 continue; // they specified a new name on the commandline, ignore what we stored.
                             if (iter_key_is(&inner3, "fname")) {
                                 t->fname = iter_val_as_stbstring(&inner3, t->fname);
+                            } else if (iter_key_is(&inner3, "scroll_x") && t->scroll_x == 0.f) {
+                                t->scroll_x = iter_val_as_float(&inner3, t->scroll_x);
                             } else if (iter_key_is(&inner3, "scroll_y") && t->scroll_y == 0.f) {
                                 t->scroll_y = iter_val_as_float(&inner3, t->scroll_y);
                             } else if (iter_key_is(&inner3, "cursor_idx") && t->cursor_idx == 0) {
@@ -699,7 +703,8 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
                                 t->select_idx = iter_val_as_int(&inner3, t->select_idx);
                             }
                         } // tab settings
-                        t->scroll_y_target = t->scroll_y;
+                        t->scroll_target_x = t->scroll_x;
+                        t->scroll_target_y = t->scroll_y;
                         t->font_height = clamp(t->font_height, 8, 256);
                         t->font_width = t->font_height / 2;
                     }
@@ -938,7 +943,8 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
 
 static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
     // printf("scroll: %f\n", yoffset);
-    curE->scroll_y_target -= yoffset * curE->font_height;
+    curE->scroll_target_x -= xoffset * curE->font_width;
+    curE->scroll_target_y -= yoffset * curE->font_height;
 }
 
 static void char_callback(GLFWwindow *win, unsigned int codepoint) {
@@ -1012,7 +1018,10 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     if (tmh > 256 - 8)
         tmh = 256 - 8;
 
-    E->scroll_y += (E->scroll_y_target - E->scroll_y) * 0.1;
+    E->scroll_x += (E->scroll_target_x - E->scroll_x) * 0.1;
+    E->scroll_y += (E->scroll_target_y - E->scroll_y) * 0.1;
+    if (E->scroll_x < 0)
+        E->scroll_x = 0;
     if (E->scroll_y < 0)
         E->scroll_y = 0;
 
@@ -1022,7 +1031,8 @@ void editor_update(EditorState *E, GLFWwindow *win) {
                                                  GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
     if (ptr) {
         memset(ptr, 0, textBytes);
-        E->intscroll = (int)(E->scroll_y / E->font_height);
+        E->intscroll_x = (int)(E->scroll_x / E->font_width);
+        E->intscroll_y = (int)(E->scroll_y / E->font_height);
         code_color(E, ptr);
         if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
             int x = tmw - strlen(status_bar) + 1;
@@ -1032,13 +1042,19 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         }
         if (E->need_scroll_update) {
             E->need_scroll_update = false;
-            if (E->cursor_y >= E->intscroll + tmh - 4) {
-                E->scroll_y_target = (E->cursor_y - tmh + 4) * E->font_height;
-            } else if (E->cursor_y < E->intscroll + 4) {
-                E->scroll_y_target = (E->cursor_y - 4) * E->font_height;
+            if (E->cursor_x >= E->intscroll_x + tmw - 4) {
+                E->scroll_target_x = (E->cursor_x - tmw + 4) * E->font_width;
+            } else if (E->cursor_x < E->intscroll_x + 4) {
+                E->scroll_target_x = (E->cursor_x - 4) * E->font_width;
+            }
+            if (E->cursor_y >= E->intscroll_y + tmh - 4) {
+                E->scroll_target_y = (E->cursor_y - tmh + 4) * E->font_height;
+            } else if (E->cursor_y < E->intscroll_y + 4) {
+                E->scroll_target_y = (E->cursor_y - 4) * E->font_height;
             }
         }
-        E->scroll_y_target = clamp(E->scroll_y_target, 0.f, float((E->num_lines - tmh + 4) * E->font_height));
+        E->scroll_target_x = clamp(E->scroll_target_x, 0.f, float((E->max_width - tmw + 4) * E->font_width));
+        E->scroll_target_y = clamp(E->scroll_target_y, 0.f, float((E->num_lines - tmh + 4) * E->font_height));
         // now find a zero crossing in the scope, and copy the relevant section
         // scope cant be more than 2048 as that's how many slots we have in the texture.
         uint32_t scope_start = scope_pos - 1024;
@@ -1690,7 +1706,7 @@ int main(int argc, char **argv) {
             glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), fbw, fbh);
             glUniform2i(glGetUniformLocation(user_pass, "uFontPx"), curE->font_width, curE->font_height);
             glUniform1i(glGetUniformLocation(user_pass, "status_bar_size"), status_bar_color ? 1 : 0);
-            glUniform1f(glGetUniformLocation(user_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
+            glUniform2f(glGetUniformLocation(user_pass, "scroll"), curE->scroll_x - curE->intscroll_x * curE->font_width, curE->scroll_y - curE->intscroll_y * curE->font_height);
             glUniform1f(glGetUniformLocation(user_pass, "ui_alpha"), ui_alpha);
 
             bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
@@ -1738,15 +1754,15 @@ int main(int argc, char **argv) {
         glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
         glUniform1i(glGetUniformLocation(ui_pass, "status_bar_size"), status_bar_color ? 1 : 0);
         glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
-        glUniform1f(glGetUniformLocation(ui_pass, "scroll_y"), curE->scroll_y - curE->intscroll * curE->font_height);
+        glUniform2f(glGetUniformLocation(ui_pass, "scroll"), curE->scroll_x - curE->intscroll_x * curE->font_width, curE->scroll_y - curE->intscroll_y * curE->font_height);
         glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
         // if there's a second monitor, we can afford to fade the render a bit more
         // to make the code more readable.
         float fade_render = lerp(1.f, winFS ? 0.5f : 0.8f, ui_alpha);
         glUniform1f(glGetUniformLocation(ui_pass, "fade_render"), fade_render);
 
-        float f_cursor_x = curE->cursor_x * curE->font_width;
-        float f_cursor_y = (curE->cursor_y - curE->intscroll) * curE->font_height;
+        float f_cursor_x = (curE->cursor_x - curE->intscroll_x) * curE->font_width;
+        float f_cursor_y = (curE->cursor_y - curE->intscroll_y) * curE->font_height;
         glUniform4f(glGetUniformLocation(ui_pass, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
         curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
         curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;

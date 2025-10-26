@@ -13,6 +13,7 @@
       {
         "fname": "livesrc/blank.glsl",
         "font_height": 34,
+        "scroll_x": 0.000000,
         "scroll_y": 0.000000,
         "cursor_idx": 36,
         "select_idx": 36
@@ -20,9 +21,10 @@
       {
         "fname": "livesrc/audio.cpp",
         "font_height": 38,
-        "scroll_y": 0.000000,
-        "cursor_idx": 81,
-        "select_idx": 81
+        "scroll_x": 0.000000,
+        "scroll_y": 646.000244,
+        "cursor_idx": 411,
+        "select_idx": 411
       }
     ]
   }

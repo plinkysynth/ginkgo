@@ -38,6 +38,7 @@ typedef struct character_pos_t {
 
 static_assert(sizeof(character_pos_t) == 4, "character_pos_t should be 4 bytes");
 
+
 typedef struct EditorState {
     // all these arrays are stbds_arrs
     const char *fname;                           // name of the file
@@ -58,15 +59,16 @@ typedef struct EditorState {
     bool mouse_clicked_chart;
     char mouse_click_original_char;
     int mouse_click_original_char_x;
-    float scroll_y;
-    float scroll_y_target;
-    int intscroll; // how many lines we scrolled.
+    float scroll_x, scroll_y;
+    float scroll_target_x, scroll_target_y;
+    int intscroll_x, intscroll_y; // how many lines we scrolled.
     int cursor_x;
     int cursor_y;
     int cursor_x_target;
     int cursor_idx;
     int select_idx;
     int num_lines;
+    int max_width;
     int need_scroll_update;
     float prev_cursor_x;
     float prev_cursor_y;
@@ -268,12 +270,17 @@ bool idx_to_xy(EditorState *E, int idx, int *tx, int *ty) {
 }
 
 static void adjust_font_size(EditorState *E, int delta) {
+    float xzoom = E->cursor_x;
     float yzoom = E->cursor_y;
-    E->scroll_y_target = E->scroll_y_target / E->font_height - yzoom;
+    E->scroll_target_x = E->scroll_target_x / E->font_width - xzoom;
+    E->scroll_target_y = E->scroll_target_y / E->font_height - yzoom;
+    E->scroll_x = E->scroll_x / E->font_width - xzoom;
     E->scroll_y = E->scroll_y / E->font_height - yzoom;
     E->font_width = clamp(E->font_width + delta, 8, 256);
     E->font_height = E->font_width * 2;
-    E->scroll_y_target = (E->scroll_y_target + yzoom) * E->font_height;
+    E->scroll_target_x = (E->scroll_target_x + xzoom) * E->font_width;
+    E->scroll_target_y = (E->scroll_target_y + yzoom) * E->font_height;
+    E->scroll_x = (E->scroll_x + xzoom) * E->font_width;
     E->scroll_y = (E->scroll_y + yzoom) * E->font_height;
 }
 
@@ -319,6 +326,7 @@ static inline void postpone_autocomplete_show(EditorState *E) { E->autocomplete_
 
 void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
     postpone_autocomplete_show(E);
+    x += E->scroll_x;
     y += E->scroll_y;
     int tmw = (fbw - 64.f) / E->font_width;
     float fx = (x / E->font_width + 0.5f);
@@ -1258,14 +1266,14 @@ uint32_t interp_color(uint32_t col1, uint32_t col2, int alpha) {
 }
 
 int code_color(EditorState *E, uint32_t *ptr) {
-    int left = 80 / E->font_width;
+    int left = 80 / E->font_width - E->intscroll_x;
     tokenizer_t t = {.ptr = ptr,
                      .str = E->str,
                      .n = (int)stbds_arrlen(E->str),
                      .x = left,
-                     .y = -E->intscroll,
-                     .cursor_x = E->cursor_x,
-                     .cursor_y = E->cursor_y - E->intscroll,
+                     .y = -E->intscroll_y,
+                     .cursor_x = E->cursor_x - E->intscroll_x,
+                     .cursor_y = E->cursor_y - E->intscroll_y,
                      .prev_nonspace = ';'};
     bool wasinclude = false;
     int se = get_select_start(E);
@@ -1295,12 +1303,15 @@ int code_color(EditorState *E, uint32_t *ptr) {
     memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
     int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
+    E->max_width = 0;
     int cursor_in_type = 0;
     int cursor_token_start_idx = 0;
     int cursor_token_end_idx = 0;
     int pattern_entry_idx = -1;
     int pattern_mode = 0;     // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
     #define INVALID_LINE 0x7fffffff
+    int first_grid_line_start = INVALID_LINE;
+    int grid_line_end = INVALID_LINE;
     int grid_line_start = INVALID_LINE; // when we enter a grid (#), we start counting lines...
     int grid_line_hilight = -1;
     uint32_t empty_bgcol = 0x11100000u;
@@ -1356,6 +1367,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 const char *e = skip_path(t.str + i, t.str + t.n);
                 if (i > 0 && t.str[i - 1] == '\n') {
                     const char *s = t.str + i;
+                    ///////// START OF A NEW PATTERN
+                    grid_line_start = INVALID_LINE;
+                    grid_line_end = INVALID_LINE;
+                    first_grid_line_start = INVALID_LINE;
                     cur_pattern = get_pattern(temp_cstring_from_span(s, e));
                     stbds_arrsetlen(hilites, 0);
                     if (cur_pattern) {
@@ -1407,6 +1422,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
             if (!pattern_mode && i + 15 <= t.n && strncmp(t.str + i, "#ifdef PATTERNS", 15) == 0) {
                 pattern_mode = 1;
                 grid_line_start = INVALID_LINE;
+                first_grid_line_start = INVALID_LINE;
+                grid_line_end = INVALID_LINE;
                 pattern_entry_idx = i;
                 j = i + 15;
             } else if (pattern_mode && i + 6 <= t.n && strncmp(t.str + i, "#endif", 6) == 0) {
@@ -1417,6 +1434,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 j = i + 6;
             } else if (pattern_mode == 1) {
                 if (grid_line_start == INVALID_LINE) {
+                    /////////////// START OF A GRID //////////////
                     grid_line_start = t.y;
                     for (int eol = i; eol < t.n; eol++)
                         if (!isspace(t.str[eol])) {
@@ -1425,6 +1443,14 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             grid_line_start++;
                             break;
                         }
+                    if (first_grid_line_start == INVALID_LINE)
+                        first_grid_line_start = grid_line_start;
+                    else {
+                        grid_line_start = first_grid_line_start;
+                        t.y = grid_line_start;
+                        left += 40; // TODO dynamic column width
+                    }
+
                     grid_line_hilight = -1;
                     int remapped_i = (i >= 0 && i < stbds_arrlen(E->new_idx_to_old_idx)) ? E->new_idx_to_old_idx[i] : -1;
                     if (remapped_i >= 0 && cur_pattern) {
@@ -1456,10 +1482,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             }
                         }
                     }
-                } else {
-                    uint32_t col = (t.y == E->cursor_y - E->intscroll) ? 0xeee00u : 0x55500u;
-                    print_to_screen(t.ptr, left - 3, t.y, empty_bgcol | col, false, "%02x.", (t.y - grid_line_start - 1) & 0xff);
-                    grid_line_start = INVALID_LINE;
                 }
             }
             break;
@@ -1493,21 +1515,21 @@ int code_color(EditorState *E, uint32_t *ptr) {
 #include "tokens.h"
                         CASE8("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7") : CASE2("S8", "S9") : {
                             int slideridx = (t.str[i + 1] - '0');
-                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll)
+                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll_y)
                                 slideridx = 16;
                             col = slidercols[slideridx];
                             break;
                         }
                         CASE6("S10", "S11", "S12", "S13", "S14", "S15") : {
                             int slideridx = ((t.str[i + 2] - '0') + 10);
-                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll)
+                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll_y)
                                 slideridx = 16;
                             col = slidercols[slideridx];
                             break;
                         }
                         CASE6("SA", "SB", "SC", "SD", "SE", "SF") : {
                             int slideridx = (t.str[i + 1] - 'A' + 10);
-                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll)
+                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll_y)
                                 slideridx = 16;
                             col = slidercols[slideridx];
                             break;
@@ -1562,11 +1584,12 @@ int code_color(EditorState *E, uint32_t *ptr) {
             slider_val = (int)(v * ((j - i - 2) * 8.f - 4.f));
         }
         // PAINT THE TOKEN /////////////////////////////////////////////////
+        int istart = i;
         for (; i < j; ++i) {
             char ch = tok_get(&t, i);
             if (i < t.n) {
-                E->character_pos[i].x = clamp(t.x, 0, (1 << 10) - 1);
-                E->character_pos[i].y = clamp(t.y + E->intscroll, 0, (1 << 21) - 1);
+                E->character_pos[i].x = clamp(t.x + E->intscroll_x, 0, (1 << 10) - 1);
+                E->character_pos[i].y = clamp(t.y + E->intscroll_y, 0, (1 << 21) - 1);
                 E->character_pos[i].pattern_mode = pattern_mode;
             }
             uint32_t ccol = col;
@@ -1582,8 +1605,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 ccol = E->find_mode ? C_SELECTION_FIND_MODE : C_SELECTION;
 
             if (i == E->cursor_idx) {
-                E->cursor_x = t.x;
-                E->cursor_y = t.y + E->intscroll;
+                E->cursor_x = t.x + E->intscroll_x;
+                E->cursor_y = t.y + E->intscroll_y;
             }
             uint32_t bgcol = ccol & 0xfff00000u;
             if (bgcol == 0 && pattern_mode) {
@@ -1617,7 +1640,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 }
             } else if (ch == '\n' || ch == 0) {
                 // look for an error message
-                int ysc = t.y + E->intscroll;
+                int ysc = t.y + E->intscroll_y;
                 const char *errline = hmget(E->error_msgs, ysc);
                 if (errline) {
                     uint32_t errcol = C_ERR;
@@ -1650,7 +1673,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     }
                     if (grid_line_start != INVALID_LINE && grid_line_start < t.y) {
-                        uint32_t col = (t.y == E->cursor_y - E->intscroll) ? 0xeee00u : 0x55500u;
+                        uint32_t col = (t.y == E->cursor_y - E->intscroll_y) ? 0xeee00u : 0x55500u;
                         print_to_screen(t.ptr, left - 3, t.y, empty_bgcol | col, false, "%02x ",
                                         (t.y - grid_line_start - 1) & 0xff);
                     }
@@ -1670,6 +1693,19 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         t.ptr[t.y * TMW + x] = col | ch;
                     }
                 }*/
+                if (pattern_mode && j==istart+1 && E->str[istart] == '#' && grid_line_start != INVALID_LINE) {
+                    //////////////////// END OF A GRID //////////////
+                    //uint32_t col = (t.y == E->cursor_y - E->intscroll) ? 0xeee00u : 0x55500u;
+                    //print_to_screen(t.ptr, left - 3, t.y, empty_bgcol | col, false, "%02x.", (t.y - grid_line_start - 1) & 0xff);
+                    if (grid_line_end == INVALID_LINE) { 
+                        grid_line_end = t.y;
+                    } else {
+                        grid_line_end = max(grid_line_end, t.y);
+                    }
+                    t.y=grid_line_end;
+                    grid_line_start = INVALID_LINE;
+                    
+                }
                 t.x = left;
                 ++t.y;
                 // decide on the *next* lines bg color
@@ -1690,9 +1726,11 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 ++t.x;
             if (!is_space((unsigned)ch))
                 t.prev_nonspace = ch;
+            if (t.x + E->intscroll_x > E->max_width)
+                E->max_width = t.x + E->intscroll_x;
         }
     }
-    E->num_lines = t.y + 1 + E->intscroll;
+    E->num_lines = t.y + 1 + E->intscroll_y;
     E->mouse_hovering_chart = false;
 
     /*
@@ -1826,7 +1864,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
         int num_chars_so_far = E->cursor_idx - cursor_token_start_idx;
         int x = 0, y = 0;
         bool gotxy = idx_to_xy(E, cursor_token_start_idx, &x, &y);
-        y -= E->intscroll;
+        x -= E->intscroll_x;
+        y -= E->intscroll_y;
         if (gotxy && (num_chars_so_far >= 2 || include_chord_names)) { // at least 2 chars
 
             int bestscore = 2;
@@ -1971,7 +2010,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 ccol = C_SELECTION;
             if (xx >= 0 && xx < TMW)
                 for (int j = 0; j < 4; ++j) {
-                    int y = E->cursor_y - 1 - j - E->intscroll;
+                    int y = E->cursor_y - 1 - j - E->intscroll_y;
                     if (y >= 0 && y < TMH) {
                         int ch = vertical_bar(datay);
                         t.ptr[y * TMW + xx] = ccol | (unsigned char)(ch); // draw a bar graph cellchar

@@ -331,7 +331,7 @@ float test_patterns(const char *pattern_name) {
     float rv = 0.f;
     for (int i = stbds_hmlen(voices); i-- > 0;) {
         voice_state_t *v = &voices[i];
-        rv += pwmo(&v->phase, v->dphase, v->duty) * v->env;
+        rv += pwmo(&v->phase, v->dphase, v->duty) * v->env;// / (v->dphase * 1000.f);
         float env_target = v->decaying ? v->gate * 0.1f : v->gate*1.1f;
         v->env += (env_target - v->env) * ((v->env < env_target) ? 0.01f : 0.0001f);
         if (v->env > v->gate) { v->env = v->gate; v->decaying= true; }

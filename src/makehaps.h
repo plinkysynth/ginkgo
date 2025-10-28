@@ -193,7 +193,8 @@ bool pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time 
 // filter out haps that are outside the query range a-b as an optimization,
 // but ALSO filter out haps whose start is outside the from-to hap range.
 // this actually culls haps determinstically! eg [a b c] * [2 1] will have a rest in the second half.
-void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time tofs, hap_time a, hap_time b, hap_time from, hap_time to) {
+void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time tofs, hap_time a, hap_time b, hap_time from,
+                             hap_time to) {
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
         left_hap->t0 = (left_hap->t0 + tofs) / speed_scale;
         left_hap->t1 = (left_hap->t1 + tofs) / speed_scale;
@@ -213,7 +214,7 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
     hap_t tmp_mem[tmp_size];
     hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
     hap_span_t value_haps = _make_haps(tmp, tmp_size, viz_time, value_node_idx, t0, t0 + hap_eps,
-                                       hash2_pcg(structure_hap->hapid, value_node_idx + (int)(t0*1000.f)), true);
+                                       hash2_pcg(structure_hap->hapid, value_node_idx + (int)(t0 * 1000.f)), true);
     int count = 0;
     int structure_hapid = structure_hap->hapid;
     if (value_haps.empty()) {
@@ -301,6 +302,19 @@ static inline int scale_index_to_note(int scalebits, int root, int index) {
     return note;
 }
 
+void apply_value_func(hap_t *target, hap_t *right_hap, size_t param_idx) {
+    if (!right_hap || param_idx >= P_LAST)
+        return;
+    int src_idx = param_idx;
+    if (!right_hap->has_param(src_idx)) {
+        if (!right_hap->has_param(P_NUMBER))
+            return;
+        src_idx = P_NUMBER;
+    }
+    target->params[param_idx] = right_hap->params[src_idx];
+    target->valid_params |= 1 << param_idx;
+}
+
 hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time a, hap_time b, int hapid,
                                  bool merge_repeated_leaves) {
     if (nodeidx < 0 || a > b || !bfs_nodes)
@@ -375,14 +389,20 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             hap_time speed_scale = 1.;
             hap_time tofs = 0.;
             switch (n->type) {
-                case N_OP_LATE: tofs = num; break;
-                case N_OP_EARLY: tofs = -num; break;
-                case N_OP_TIMES: speed_scale = num; break;
-                case N_OP_ELONGATE: 
-                case N_OP_REPLICATE: 
-                case N_OP_DIVIDE: 
-                    speed_scale = num ? 1./num : 0.;
-                    break;
+            case N_OP_LATE:
+                tofs = num;
+                break;
+            case N_OP_EARLY:
+                tofs = -num;
+                break;
+            case N_OP_TIMES:
+                speed_scale = num;
+                break;
+            case N_OP_ELONGATE:
+            case N_OP_REPLICATE:
+            case N_OP_DIVIDE:
+                speed_scale = num ? 1. / num : 0.;
+                break;
             }
             if (speed_scale <= 0.f)
                 continue;
@@ -471,30 +491,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         param = P_PAN;
         goto assign_value;
     assign_value:
-        _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t *right_hap, size_t param_idx) {
-                if (!right_hap)
-                    return;
-                int src_idx = param_idx;
-                if (!right_hap->has_param(src_idx)) {
-                    if (!right_hap->has_param(P_NUMBER))
-                        return;
-                    src_idx = P_NUMBER;
-                }
-                target->params[param_idx] = right_hap->params[src_idx];
-                target->valid_params |= 1 << param_idx;
-            },
-            param);
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, apply_value_func, param);
         break;
-    case N_OP_CLIP: 
+    case N_OP_CLIP:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
             [](hap_t *target, hap_t *right_hap, size_t context) {
                 float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
-                if (value <=0.f) 
+                if (value <= 0.f)
                     target->valid_params = 0;
-                else 
+                else
                     target->t1 = target->t0 + (target->t1 - target->t0) * value;
             },
             0);
@@ -585,6 +591,22 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
+    case N_OP_ADSR: {
+        if (n->num_children < 2)
+            break;
+        hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child),
+                                          merge_repeated_leaves);
+        for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
+            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, P_A);
+            if (n->num_children > 2)
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, P_D);
+            if (n->num_children > 3)
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, P_S);
+            if (n->num_children > 4)
+               _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, P_R);
+        }
+        break;
+    }
     case N_OP_EUCLID: {
         if (n->num_children < 3)
             break;
@@ -645,33 +667,33 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         } // numsteps haps
     } // euclid
     } // switch
-    rv.e = dst.s;
-    return rv;
-} // make_haps
+        rv.e = dst.s;
+        return rv;
+    } // make_haps
 
-void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to) {
-    for (hap_t *hap = haps.s; hap < haps.e; hap++) {
-        // hap onset must overlap the query range
-        if (hap->t0 < from || hap->t0 >= to)
-            continue;
-        if (hap->valid_params == 0) {
-            printf(COLOR_GREY "%08x(%d) %5.2f -> %5.2f (filtered)\n" COLOR_RESET, hap->hapid, hap->node, hap->t0, hap->t1);
-            continue;
-        }
-        printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node, hap->t0,
-               hap->t1);
-        for (int i = 0; i < P_LAST; i++) {
-            if (hap->valid_params & (1 << i)) {
-                if (i == P_SOUND) {
-                    Sound *sound = get_sound_by_index((int)hap->params[i]);
-                    printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
-                } else if (i == P_NOTE) {
-                    printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
-                } else {
-                    printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
+    void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to) {
+        for (hap_t *hap = haps.s; hap < haps.e; hap++) {
+            // hap onset must overlap the query range
+            if (hap->t0 < from || hap->t0 >= to)
+                continue;
+            if (hap->valid_params == 0) {
+                printf(COLOR_GREY "%08x(%d) %5.2f -> %5.2f (filtered)\n" COLOR_RESET, hap->hapid, hap->node, hap->t0, hap->t1);
+                continue;
+            }
+            printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node, hap->t0,
+                   hap->t1);
+            for (int i = 0; i < P_LAST; i++) {
+                if (hap->valid_params & (1 << i)) {
+                    if (i == P_SOUND) {
+                        Sound *sound = get_sound_by_index((int)hap->params[i]);
+                        printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
+                    } else if (i == P_NOTE) {
+                        printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
+                    } else {
+                        printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
+                    }
                 }
             }
+            printf("\n");
         }
-        printf("\n");
     }
-}

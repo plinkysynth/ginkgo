@@ -595,16 +595,20 @@ static int parse_op(pattern_maker_t *p, int left_node, int node_type, int num_pa
         return parse_euclid(
             p, left_node); // euclid node is different - it has a closing ) and comma separated args. because, idk. history.
     }
-    if (!optional_right)
-        skipws(p);
-    int right_node;
-    int ch = peek(p);
-    if (optional_right && !isleaf(ch) && !isopening(ch)) {
-        right_node = -1;
-    } else {
-        right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in
+    int prev_node = left_node;
+    for (int i = 0; i < num_params + optional_right; i++) {
+        bool optional = i >= num_params;
+        if (!optional)
+           skipws(p); 
+        else {    
+            int ch = peek(p);
+            if (!isleaf(ch) && !isopening(ch))
+                break;
+        }
+        int right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in
                                           // the while loop inside parse_expr.
-        p->nodes[left_node].next_sib = right_node;
+        p->nodes[prev_node].next_sib = right_node;
+        prev_node = right_node;
     }
     int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i);
     return parent_node;
@@ -731,7 +735,7 @@ void test_minipat(void) {
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
     //const char *s = "c < > d"; // test empty group
-    const char *s = "<c a f e>/2"; // test grid
+    const char *s = "c adsr 0.1 0.2 0.3 0.4"; // test grid
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";

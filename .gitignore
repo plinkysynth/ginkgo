@@ -10,3 +10,4 @@ samples/
 allsounds.json
 log.txt
 .venv/
+settings.json

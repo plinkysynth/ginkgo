@@ -133,6 +133,7 @@ typedef struct basic_state_t {
     float cpu_usage;
     float cpu_usage_smooth;
     double t; // the current musical time! as a double
+    double dt; // change of t per sample
     int64_t t_q32; // the current musical time! as a 32.32 fixed point number
     uint8_t midi_cc[128];
     uint32_t midi_cc_gen[128];
@@ -238,6 +239,14 @@ static inline stereo operator-(stereo a, stereo b) { return STEREO(a.l - b.l, a.
 static inline stereo operator*(stereo a, float b) { return STEREO(a.l * b, a.r * b); }
 static inline stereo operator*(stereo a, stereo b) { return STEREO(a.l * b.l, a.r * b.r); }
 static inline stereo operator/(stereo a, float b) { return STEREO(a.l / b, a.r / b); }
+static inline void operator+=(stereo &a, stereo b) { a.l += b.l; a.r += b.r; }
+static inline void operator+=(stereo &a, float b) { a.l += b; a.r += b; }
+static inline void operator-=(stereo &a, stereo b) { a.l -= b.l; a.r -= b.r; }
+static inline void operator-=(stereo &a, float b) { a.l -= b; a.r -= b; }
+static inline void operator*=(stereo &a, stereo b) { a.l *= b.l; a.r *= b.r; }
+static inline void operator*=(stereo &a, float b) { a.l *= b; a.r *= b; }
+static inline void operator/=(stereo &a, stereo b) { a.l /= b.l; a.r /= b.r; }
+static inline void operator/=(stereo &a, float b) { a.l /= b; a.r /= b; }
 
 static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }
@@ -559,6 +568,8 @@ static inline float sawo_aliased(float state[1], float dphase) {
 static inline float lpf1(float state[1], float x, float f) {
     return state[0] += (x - state[0]) * f;
 }
+
+
 // static inline float adsr(float gate, float attack, float decay, float sustain, float release) {
 //     float *state = ba_get(&G->audio_bump, 2);
 //     float decaying = state[0];
@@ -684,6 +695,7 @@ stereo probe;
 __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
     G = (basic_state_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
     int dt_q32 = G->playing ? G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)) : 0; // on the order of 22000
+    G->dt = dt_q32 *(1./4294967296.);
     for (int i = 0; i < frames; i++) {
         probe = {};
         audio[i] = do_sample(audio[i]);
@@ -698,7 +710,7 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 
 #endif
 
-float test_patterns(const char *pattern_name);
+stereo test_patterns(const char *pattern_name);
 
 #define STATE_VERSION(version, ...)                                                                                                \
     typedef struct state : public basic_state_t{__VA_ARGS__} state;                                                                \

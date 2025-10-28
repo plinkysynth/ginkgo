@@ -416,6 +416,11 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                         E->new_idx_to_old_idx[i] = -1;
                     }
                 }
+                if (is_drag <0 ) {
+                    // recompile on release
+                    parse_named_patterns_in_c_source(E);
+
+                }
             }
         } else {
             E->cursor_idx = click_idx;

@@ -1,85 +1,23 @@
 STATE_VERSION(1,  )
 
 #ifdef PATTERNS
-/fancy_pattern <#
-e3,gs3,b3,gs5
-[e2,e1]*16
-e3,gs3,b3,gs5
-[e1,e2]*8
-a3,cs3,e3,a5
-[a1,a2]*8
-e4,gs3,b3,e5
-[e1,e2]*16
-g3,bb3,d4,d5
-[g1,g2]*8
-c4,e4,g3,b3,c5
-[c1,c2]*8
-e4,g3,b3,e5
-[e1,e2]*2
-d3,fs3,a3,fs5 
-[d2,d1]*2
-#,#
-e4
-e5?
-e6?
-#,#
 
+ // /simple_pattern <[c a f e] ^ 1 sus 0 dec 0.3 rel .3 att 0, [c5 c5 c5 c5] sus 0 dec 0.2>
+ 
+/simple_pattern /* hello */ <a4 g4 d4 f4>*4 sus 1 rel 0.2 att 0.05 clip 0.1-0.5, d1 gain 
+	/*0======2*/ 0.84
 
-
-fs6
-
-
-#>/2
-
-
-
-
-/bpm 140
-
-/phasing_pattern <#
-a4
-
-b4
-
-
-#,#
-
-c5
-
-
-
-
-
-#,#
-
-
-c4|c3
-
-
-
-#>
-
-
-
-
-
-/simple_pattern #
-c
-d
-e
-f
-#
-
+/bpm 130
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 stereo do_sample(stereo inp) {
-	F drums = 0 * sclip(rompler("break_think")*2); 
-    F t = test_patterns("/simple_pattern")*0.2;
-	stereo dry=stereo{t,t};
-	stereo wet=reverb(dry*0.5f);
-	return wet*0.5+dry*1.+drums;
+	F drums = 1. * sclip(rompler("break_think")*2); 
+    //return stereo{drums,drums};
+    stereo mix = test_patterns("/simple_pattern") * 0.5;
+	mix+=reverb(mix*0.5f);
+	return mix+drums;
 }
 
 

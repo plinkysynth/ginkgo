@@ -42,10 +42,26 @@ OP(N_OP_DEGRADE, "?", 1, 1)
 OP(N_OP_REPLICATE, "!", 1, 0)
 OP(N_OP_ELONGATE, "@", 1, 0)
 OP(N_OP_EUCLID, "(", 3, 1)
-OP(N_OP_STRUCT, "struct", 3, 1)
+
+OP(N_OP_LATE, "late", 1, 0)
+OP(N_OP_EARLY, "early", 1, 0)
+OP(N_OP_CLIP, "clip", 1, 0)
 OP(N_OP_PLY, "ply", 1, 0)
+OP(N_OP_SOMETIMESPLY, "sometimesPly", 1, 0)
+OP(N_OP_RARELYPLY, "rarelyPly", 1, 0)
+
+//OP(N_OP_STRUCT, "struct", 3, 1)
+//OP(N_OP_PLY, "ply", 1, 0)
 OP(N_OP_NOTE, "note", 1, 0)
 OP(N_OP_S, "s", 1, 0)
+OP(N_OP_GATE, "^", 1, 0)
+OP(N_OP_ATTACK, "att", 1, 0)
+OP(N_OP_DECAY, "dec", 1, 0)
+OP(N_OP_SUSTAIN, "sus", 1, 0)
+OP(N_OP_RELEASE, "rel", 1, 0)
+OP(N_OP_GAIN, "gain", 1, 0)
+OP(N_OP_PAN, "pan", 1, 0)
+
 
 #undef OP
 #undef NODE

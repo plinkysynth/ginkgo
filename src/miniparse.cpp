@@ -24,6 +24,7 @@ const static char *param_names[P_LAST] = {
 #include "params.h"
 };
 
+
 enum {
 #include "node_types.h"
     N_LAST
@@ -112,18 +113,31 @@ static void error(pattern_maker_t *p, const char *msg) {
 }
 
 static void skipws(pattern_maker_t *p) {
-    while (1) {
+    while (p->i < p->n) {
         while (p->i < p->n && isspace(p->s[p->i])) {
             if (p->s[p->i] == '\n')
                 p->linecount++;
             p->i++;
         }
-        if (p->i + 2 > p->n || p->s[p->i] != '/' || p->s[p->i + 1] != '/')
+        if (p->i + 2 > p->n) return;
+        if (p->s[p->i]!='/') return;
+        if (p->s[p->i+1]=='*') {
+            // skip block comment
+            p->i += 2;
+            while (p->i+1 < p->n) {
+                if (p->s[p->i]=='*' && p->s[p->i+1]=='/') {
+                    p->i+=2;
+                    break;
+                }
+                p->i++;
+            }
+        } else if (p->s[p->i+1]=='/') {
+            // skip line comment
+            p->i += 2;
+            while (p->i < p->n && p->s[p->i] != '\n')
+                p->i++;
+        } else
             return;
-        // skip // comment
-        p->i += 2;
-        while (p->i < p->n && p->s[p->i] != '\n')
-            p->i++;
     }
 }
 
@@ -370,7 +384,7 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
     const char *check = s;
     if (*check == '-')
         check++;
-    if (check >= e || !isdigit(*check))
+    if (check >= e || (!isdigit(*check) && *check!='.'))
         return 0;
     char buf[e - s + 1];
     memcpy(buf, s, e - s);
@@ -717,7 +731,7 @@ void test_minipat(void) {
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
     //const char *s = "c < > d"; // test empty group
-    const char *s = "#\na\nb\nc\nd\n#"; // test grid
+    const char *s = "<c a f e>/2"; // test grid
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";

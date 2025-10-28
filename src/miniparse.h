@@ -5,11 +5,17 @@ Sound *get_sound_init_only(const char *name); // ...by name.
 Sound *add_alias_init_only(const char *short_alias, const char *long_name);
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix); 
 
+    
 enum {
     #define X(x, ...) x,
     #include "params.h"
     P_LAST
 };
+
+const static float param_defaults[P_LAST] = {
+    #define X(x, shortname, def, ...) def,
+    #include "params.h"
+    };
 
 enum EValueType : int8_t { // for Node.value_type
     VT_NONE = -1,
@@ -45,6 +51,7 @@ typedef struct hap_t {
     float params[P_LAST];
     int scale_bits;
     inline float get_param(int param, float default_value) const { return valid_params & (1 << param) ? params[param] : default_value; } 
+    inline float get_param(int param) const { return valid_params & (1 << param) ? params[param] : param_defaults[param]; } 
     bool has_param(int param) const { return valid_params & (1 << param); }
 } hap_t;
 
@@ -87,8 +94,9 @@ typedef struct pattern_t { // a parsed version of a min notation string
     bfs_node_t *bfs_nodes;
 
     float get_length(int nodeidx);
-    void _filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time a, hap_time b, hap_time from, hap_time to);
+    void _filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time tofs, hap_time a, hap_time b, hap_time from, hap_time to);
     int _apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb, size_t context);
+    void _apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, int first_child, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves, filter_cb_t filter_cb, value_cb_t value_cb, size_t context);
     hap_span_t _make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time t0, hap_time t1, int hapid, bool merge_repeated_leaves);
     bool _append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid);
     hap_span_t make_haps(hap_span_t dst, int tmp_size, float viz_time, hap_time t0, hap_time t1) { 

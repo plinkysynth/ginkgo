@@ -1,0 +1,29 @@
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 842 1191" width="842" height="1191">
+	<style>
+		.s0 { fill: none;stroke: #008bff;stroke-linecap: round;stroke-linejoin: round;stroke-width: 34 } 
+		.s1 { fill: none;stroke: #008bff;stroke-linecap: round;stroke-linejoin: round;stroke-width: 59 } 
+		.s2 { fill: none;stroke: #008bff;stroke-linecap: round;stroke-linejoin: round;stroke-width: 17 } 
+		.s3 { fill: none;stroke: #3b3b3b;stroke-linecap: round;stroke-miterlimit:10;stroke-width: 4 } 
+		.s4 { fill: none;stroke: #3b3b3b;stroke-linecap: round;stroke-linejoin: round;stroke-width: 7 } 
+		.s5 { fill: none;stroke: #3b3b3b;stroke-linecap: round;stroke-miterlimit:10;stroke-width: 16 } 
+	</style>
+	<g id="Layer 1">
+		<path id="Shape 5 copy" fill-rule="evenodd" class="s0" d="m612.77 243.66c-1.58-6.79-7.25-18.9-30.06-21.24-23.99-2.46-54.04 12.19-63.47 54.63-9.42 42.44 19.73 52.57 42.72 52.53 23-0.03 47.3-8.56 49.61-45.72-17.07-0.21-30.08 0.55-30.08 0.55"/>
+		<path id="Shape 5 copy 2" fill-rule="evenodd" class="s0" d="m181.77 243.66c-1.58-6.79-7.25-18.9-30.06-21.24-23.99-2.46-54.04 12.19-63.47 54.63-9.42 42.44 19.73 52.57 42.72 52.53 23-0.03 47.3-8.56 49.61-45.72-17.07-0.21-30.08 0.55-30.08 0.55"/>
+		<path id="Shape 6" fill-rule="evenodd" class="s0" d="m239.11 223.86l-21.31 105.64"/>
+		<path id="Shape 7" fill-rule="evenodd" class="s0" d="m269.38 329.5l20.75-105.64 61.03 105.64 22.02-105.64"/>
+		<path id="Shape 8" fill-rule="evenodd" class="s0" d="m420.49 223.86l-20.75 105.64"/>
+		<path id="Shape 9" fill-rule="evenodd" class="s0" d="m492.33 224.54c-22.71 21.75-65.59 48.44-76.33 49.87-6.21 0.82 50.45 29.28 67.95 55.09"/>
+		<path id="Shape 13" fill-rule="evenodd" class="s1" d="m712.99 312.98c0 0-47.18 6.82-42.74-31.31 4.45-38.12 10.04-43.54 10.04-43.54l38.53 34.17 34.98-31.95c-1.18 21.97 6.37 81.08-40.81 72.63z"/>
+		<path id="Shape 11" fill-rule="evenodd" class="s2" d="m704.04 340.97c-12.86-0.19-68.84-0.71-58.66-65.34 7.98-50.7 27.04-72.17 30.68-73.18 3.63-1.01 22.32 16.49 23.39 27.02 17.76-9.57 35.48 0 35.48 0 0 0 24.43-31.62 31.79-27.02 7.37 4.6 12.37 65.76 11.24 78.73-1.18 13.58-8.52 60.75-73.92 59.79z"/>
+		<g id="nose">
+			<path id="mouth2" fill-rule="evenodd" class="s3" d="m709.35 298.16c-0.61 4.27-3.47 9.88-10.22 10.45"/>
+			<path id="mouth1" fill-rule="evenodd" class="s3" d="m709.86 297.16c0.62 4.27 3.47 9.88 10.22 10.45"/>
+			<path id="nose" fill-rule="evenodd" class="s4" d="m703.93 290h10.12c0.81 0.22-3.29 8.16-4.67 7.78-2.17-0.58-6.78-6.16-5.45-7.78z"/>
+		</g>
+		<g id="awake">
+			<path id="eye 2" fill-rule="evenodd" class="s5" d="m740.02 283.2c-1.86 0-3.37-1.35-3.37-3.2 0-1.85 1.5-3.24 3.35-3.24 1.86 0 3.35 1.39 3.35 3.24 0 1.85-1.48 3.2-3.33 3.2z"/>
+			<path id="eye 2 copy" fill-rule="evenodd" class="s5" d="m679.98 283.14c-1.86 0-3.33-1.29-3.33-3.14 0-1.85 1.53-3.16 3.38-3.16 1.86 0 3.32 1.31 3.32 3.16 0 1.85-1.52 3.14-3.37 3.14z"/>
+		</g>
+	</g>
+</svg>

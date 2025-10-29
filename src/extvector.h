@@ -29,6 +29,10 @@ static inline float dot(float4 a, float4 b) {
     return vaddvq_f32(p);
 }
 
+static inline float dot(float2 a, float2 b) { 
+    return a.x * b.x + a.y * b.y;
+}
+
 // the rest is cross platform
 // clang ext_vector ftw
 
@@ -36,6 +40,8 @@ static inline float dot(float4 a, float4 b) {
 static inline float lengthsq(float4 x) { return dot(x, x); }
 
 static inline float length(float4 x) { return sqrtf(dot(x, x)); }
+
+static inline float length(float2 x) { return sqrtf(dot(x, x)); }
 
 static inline float4 normalize(float4 x) {
     float inv = rsqrtf_fast(lengthsq(x));

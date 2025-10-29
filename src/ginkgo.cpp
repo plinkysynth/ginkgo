@@ -34,6 +34,7 @@
 #include "extvector.h"
 #include "morton.h"
 #include "json.h"
+#include "logo.h"
 
 #define RESW 1920
 #define RESH 1080
@@ -1640,6 +1641,7 @@ int main(int argc, char **argv) {
     ma_device dev;
     init_audio_midi(&dev);
 
+    double start_time = glfwGetTime();
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
         glfwGetFramebufferSize(win, &fbw, &fbh);
@@ -1794,6 +1796,7 @@ int main(int argc, char **argv) {
                 col = 0;
             add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
         }
+        draw_logo(iTime - start_time);
         // test_svf_gain();
 
         // fat line draw

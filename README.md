@@ -1,3 +1,5 @@
+![Ginkgo Logo](assets/gingkologo.png)
+
 live coding innit
 
 [link to initial video on bluesky](https://bsky.app/profile/mmalex.bsky.social/post/3lzopol4hbc2c)

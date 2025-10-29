@@ -4,7 +4,7 @@ STATE_VERSION(1,  )
 
  // /simple_pattern <[c a f e] ^ 1 sus 0 dec 0.3 rel .3 att 0, [c5 c5 c5 c5] sus 0 dec 0.2>
  
-/simple_pattern /* hello */ <a4 g4 d4 f4>*4 adsr 0 0.1 0 0 add <12|24>
+/simple_pattern /* hello */ <a4 g4 d4 f4>*4 adsr 0 0.3-0.8 0 0 add <12|-12|0>
 
 /bpm 130
 #endif
@@ -15,7 +15,7 @@ stereo do_sample(stereo inp) {
 	F drums = 0. * sclip(rompler("break_think")*2); 
     //return stereo{drums,drums};
     stereo mix = test_patterns("/simple_pattern") * 0.5;
-	//mix+=reverb(mix*0.5f);
+	mix+=reverb(mix*0.25f);
 	return mix+drums;
 }
 

@@ -217,32 +217,25 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
                                        hash2_pcg(structure_hap->hapid, value_node_idx + (int)(t0 * 1000.f)), true);
     int count = 0;
     int structure_hapid = structure_hap->hapid;
-    if (value_haps.empty()) {
-        bool filtered = (filter_cb && !filter_cb(structure_hap, nullptr, structure_hapid));
-        if (filtered)
-            structure_hap->valid_params = 0;
-        else {
+    bool do_an_empty_one = value_haps.empty();
+    for (hap_t *right_hap = value_haps.s; right_hap < value_haps.e || do_an_empty_one; right_hap++) {
+        do_an_empty_one = false;
+        if (right_hap && !right_hap->valid_params)
+            continue;
+        int new_hapid = hash2_pcg(structure_hapid, right_hap ? right_hap->hapid : 0);
+        int num_copies = filter_cb ? filter_cb(structure_hap, right_hap, new_hapid) : 1;
+        for (int i = 0; i < num_copies; i++) {
+            hap_t *target = structure_hap;
+            if (count++) {
+                if (dst.s >= dst.e)
+                    break;
+                target = dst.s++;
+                *target = *structure_hap;
+                target->hapid = new_hapid;
+            }
             if (value_cb)
-                value_cb(structure_hap, nullptr, context);
+                value_cb(target, right_hap, context + i);
         }
-        return filtered ? 0 : 1;
-    }
-    for (hap_t *right_hap = value_haps.s; right_hap < value_haps.e; right_hap++) {
-        if (!right_hap->valid_params)
-            continue;
-        int new_hapid = hash2_pcg(structure_hapid, right_hap->hapid);
-        if (filter_cb && filter_cb(structure_hap, right_hap, new_hapid))
-            continue;
-        hap_t *target = structure_hap;
-        if (count++) {
-            if (dst.s >= dst.e)
-                break;
-            target = dst.s++;
-            *target = *structure_hap;
-            target->hapid = new_hapid;
-        }
-        if (value_cb)
-            value_cb(target, right_hap, context);
     }
     if (count == 0)
         structure_hap->valid_params = 0; // no copies wanted!
@@ -313,6 +306,14 @@ void apply_value_func(hap_t *target, hap_t *right_hap, size_t param_idx) {
     }
     target->params[param_idx] = right_hap->params[src_idx];
     target->valid_params |= 1 << param_idx;
+}
+
+void add_value_func(hap_t *target, hap_t *right_hap, size_t negative) { // param_idx 1=sub
+    if (!right_hap || !right_hap->has_param(P_NUMBER) || !target->valid_params)
+        return;
+    int param_idx = __builtin_ctz(target->valid_params);
+    float v = right_hap->params[P_NUMBER];
+    target->params[param_idx] += negative ? -v : v;
 }
 
 hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time a, hap_time b, int hapid,
@@ -463,6 +464,12 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             P_NUMBER);
         break;
     }
+    case N_OP_ADD:
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, add_value_func, 0);
+        break;
+    case N_OP_SUB:
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, add_value_func, 1);
+        break;
     case N_OP_GAIN:
         param = P_GAIN;
         goto assign_value;
@@ -511,10 +518,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             [](hap_t *target, hap_t *right_hap, int new_hapid) {
                 float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
                 if (value >= 1.f)
-                    return true;
+                    return 0;
                 if (value <= 0.f)
-                    return false;
-                return (pcg_mix(pcg_next(new_hapid)) & 0xffffff) < (value * 0xffffff);
+                    return 1;
+                return ((pcg_mix(pcg_next(new_hapid)) & 0xffffff) >= (value * 0xffffff)) ? 1 : 0;
             },
             nullptr, 0);
         break;

@@ -69,7 +69,7 @@ typedef struct bfs_node_t {
     int32_t first_child; // index or -1
 } bfs_node_t;
 
-typedef bool (*filter_cb_t)(hap_t *left_hap, hap_t *right_hap, int new_hapid);
+typedef int (*filter_cb_t)(hap_t *left_hap, hap_t *right_hap, int new_hapid); // returns how many copies to make (0=filter...)
 typedef void (*value_cb_t)(hap_t *target, hap_t *right_hap, size_t context);
 
 typedef struct float_minmax_t {

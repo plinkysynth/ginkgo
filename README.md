@@ -2,7 +2,9 @@
 
 live coding innit
 
-[link to initial video on bluesky](https://bsky.app/profile/mmalex.bsky.social/post/3lzopol4hbc2c)
+yes, ginkgo is named for one of our cats. for more of the real gingkgo, go to this [instagram hilights reel](https://www.instagram.com/stories/highlights/17848626912471515/). you won't regret it.
+
+or for more on what this not-real thing is, try this [link to initial video on bluesky](https://bsky.app/profile/mmalex.bsky.social/post/3lzopol4hbc2c)
 
 code is public and licensed under permissive zlib license, see LICENSE.txt
 but don't expect it to be usable by anyone (yet).

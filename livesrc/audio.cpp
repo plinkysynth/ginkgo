@@ -4,7 +4,7 @@ STATE_VERSION(1,  )
 
  // /simple_pattern <[c a f e] ^ 1 sus 0 dec 0.3 rel .3 att 0, [c5 c5 c5 c5] sus 0 dec 0.2>
  
-/simple_pattern /* hello */ <a4 g4 d4 f4>*32 gain <randi 3>
+/simple_pattern /* hello */ <a4 g4 d4 f4>*32 gain <sin range 0.2 0.4>
 
 /bpm 130
 #endif

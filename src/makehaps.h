@@ -217,7 +217,7 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
         // if (left_hap->t1 > to)
         //     left_hap->t1 = to;
         // this checks if the left_hap overlaps the query range, but also if its onset is inside the clipping range.
-        bool onset_outside =  left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps > to;
+        bool onset_outside = left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps > to;
         if (left_hap->t0 > b || left_hap->t1 < a || onset_outside) {
             left_hap->valid_params = 0;
         }
@@ -227,13 +227,13 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
 int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,
                              filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time t0, hap_time t1, int num_rhs) {
     hap_time structure_t0 = structure_hap->t0;
-    hap_t tmp_mem[tmp_size];
+    hap_t tmp_mem[tmp_size * num_rhs];
     int new_hap_id = hash2_pcg(structure_hap->hapid, value_node_idx + (int)(structure_t0 /* * 1000.f */));
     hap_span_t value_haps[num_rhs];
     for (int i = 0; i < num_rhs; i++) {
         hap_span_t tmp = {tmp_mem + i * tmp_size, tmp_mem + (i + 1) * tmp_size};
         value_haps[i] =
-            _make_haps(tmp, tmp_size, viz_time, value_node_idx + i, structure_t0, structure_t0 + hap_eps, new_hap_id, true);
+            _make_haps(tmp, tmp_size, viz_time, value_node_idx + i, structure_t0, structure_t0 + hap_eps, new_hap_id + i*23, true);
     }
     int count = 0;
     int structure_hapid = structure_hap->hapid;
@@ -377,44 +377,46 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
-    case N_SIN: 
+    case N_SIN:
         appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, sinf(a * M_PI * 2) * 0.5f + 0.5f);
         break;
-    case N_SIN2: 
+    case N_SIN2:
         appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, sinf(a * M_PI * 2));
         break;
-    case N_COS: 
+    case N_COS:
         appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, cosf(a * M_PI * 2) * 0.5f + 0.5f);
         break;
-    case N_COS2: 
+    case N_COS2:
         appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, cosf(a * M_PI * 2));
         break;
-    case N_SAW: 
+    case N_SAW:
         appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, frac(a));
         break;
-    case N_SAW2: 
-        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, frac(a)*2.f-1.f);
+    case N_SAW2:
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, frac(a) * 2.f - 1.f);
         break;
-    case N_RAND: 
-        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, (pcg_mix(hash2_pcg(hapid, (int)a))&0xffff)/65535.f);
+    case N_RAND:
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid,
+                                      (pcg_mix(hash2_pcg(hapid, (int)a)) & 0xffff) / 65535.f);
         break;
-    case N_RAND2: 
-        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, (pcg_mix(hash2_pcg(hapid, (int)a))&0xffff)/32767.5f-1.f);
+    case N_RAND2:
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid,
+                                      (pcg_mix(hash2_pcg(hapid, (int)a)) & 0xffff) / 32767.5f - 1.f);
         break;
     case N_RANDI: {
         hap_t tmp_mem[tmp_size];
         hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
-        hap_span_t right_haps =
-            _make_haps(tmp, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child), true);
+        hap_span_t right_haps = _make_haps(tmp, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child), true);
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
             int limit = (int)right_hap->get_param(P_NUMBER, 0.f);
-            int r = (pcg_mix(hash2_pcg(right_hap->hapid, (int)a))&0xffff);
+            int r = (pcg_mix(hash2_pcg(right_hap->hapid, (int)a)) & 0xffff);
             r = limit ? (r % limit) : 0;
             appended |= _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, r);
         }
         break;
 
-    break; } 
+        break;
+    }
 
     case N_LEAF: {
         if (merge_repeated_leaves)
@@ -517,16 +519,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                     target->valid_params |= 1 << P_NOTE;
                 } else if (param_idx == P_SCALEBITS && target->has_param(P_NUMBER) && !target->has_param(P_NOTE)) {
                     // apply a scale to a number -> index scale into a note
-                    target->params[P_NOTE] =
-                        scale_index_to_note(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NUMBER]);
+                    target->params[P_NOTE] = scale_index_to_note(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
+                                                                 (int)target->params[P_NUMBER]);
                     target->valid_params |= (1 << P_NOTE) | (1 << P_SCALEBITS);
                     target->valid_params &= ~(1 << P_NUMBER);
                     target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
                     target->scale_bits = right_hap[0]->scale_bits;
                 } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
                     // apply a scale to a note -> quantize to scale
-                    target->params[P_NOTE] =
-                        quantize_note_to_scale(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NOTE]);
+                    target->params[P_NOTE] = quantize_note_to_scale(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
+                                                                    (int)target->params[P_NOTE]);
                     target->valid_params |= (1 << P_SCALEBITS);
                     target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
                     target->scale_bits = right_hap[0]->scale_bits;
@@ -541,9 +543,26 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             P_NUMBER);
         break;
     }
+    case N_OP_RANGE2:
     case N_OP_RANGE: {
+        _apply_unary_op(
+            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
+                if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !right_hap[1] || !right_hap[1]->has_param(P_NUMBER) ||
+                    !target->valid_params)
+                    return 1;
+                int param_idx = __builtin_ctz(target->valid_params);
+                float mn = right_hap[0]->params[P_NUMBER];
+                float mx = right_hap[1]->params[P_NUMBER];
+                float v = target->params[param_idx];
+                if (context == N_OP_RANGE2)
+                    v = v * 0.5f + 0.5f;
+                target->params[param_idx] = v * (mx - mn) + mn;
+                return 1;
+            },
+            n->type, 2);
         break;
-
+    }
     case N_OP_MUL:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
@@ -781,7 +800,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         } // numsteps haps
     } // euclid
     break;
-    }
+
     } // switch
     if (appended && viz_time >= 0.f) {
         bfs_start_end[nodeidx].last_evaled_glfw_time = viz_time;

@@ -55,6 +55,8 @@ typedef struct hap_t {
     bool has_param(int param) const { return valid_params & (1 << param); }
 } hap_t;
 
+void merge_hap(hap_t *dst, hap_t *src); // copy valid fields from src onto dst
+
 typedef struct hap_span_t {
     hap_t *s, *e;
     inline bool empty() const { return s>=e; }

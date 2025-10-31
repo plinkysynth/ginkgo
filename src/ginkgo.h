@@ -43,12 +43,13 @@ typedef uint32_t U;
 #include "notes.h"
 
 typedef struct wave_t {
-    const char *url; // interned url
+    const char *key; // interned url
     float *frames;   // malloc'd
     uint64_t num_frames;
     float sample_rate;
     uint32_t channels;
     int midi_note;
+    int download_in_progress;
 } wave_t;
 
 typedef struct int_pair_t {
@@ -75,7 +76,7 @@ static inline int lower_bound_int_pair(int_pair_t *arr, int n, int_pair_t key) {
 
 typedef struct Sound {
     const char *name;       // interned name.
-    wave_t *waves;          // stb_ds array
+    int *wave_indices;          // stb_ds array of indices into G->waves
     int_pair_t *midi_notes; // sorted stb_ds array of pairs <midinote, waveindex>
 } Sound;
 
@@ -96,16 +97,10 @@ typedef struct sound_pair_t {
     Sound *value;
 } sound_pair_t;
 
-typedef struct sound_request_key_t {
-    Sound *sound;
-    int index;
-} sound_request_key_t;
 
-typedef struct sound_request_t {
-    sound_request_key_t key;
-    int value;
-    int download_in_progress;
-} sound_request_t;
+typedef struct wave_request_t {
+    wave_t *key;
+} wave_request_t;
 
 struct reverb_state_t {
     float filter_state[16];
@@ -139,15 +134,20 @@ typedef struct basic_state_t {
     uint32_t midi_cc_gen[128];
     int cursor_x, cursor_y;
     float mx, my;
+    float mscrollx, mscrolly;
     int mb;
     int old_mb;
     double iTime;
     uint32_t sampleidx;
     atomic_flag load_request_cs;
     sound_pair_t *sounds;
+    wave_t *waves;
     pattern_t *patterns_map; // stbds_sh
-    sound_request_t *load_requests;
+    wave_request_t *load_requests;
     reverb_state_t R;
+    double preview_wave_t;
+    int preview_wave_idx_plus_one;
+    float preview_wave_fade;
 } basic_state_t;
 
 extern basic_state_t *_BG;
@@ -248,6 +248,7 @@ static inline void operator*=(stereo &a, float b) { a.l *= b; a.r *= b; }
 static inline void operator/=(stereo &a, stereo b) { a.l /= b.l; a.r /= b.r; }
 static inline void operator/=(stereo &a, float b) { a.l /= b; a.r /= b; }
 
+static inline stereo mono2stereo(float mono) { return STEREO(mono, mono); }
 static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }
 static inline stereo midside2st(float mid, float side) { return STEREO(mid + side, mid - side); }
@@ -408,7 +409,7 @@ static inline float notchf(float state[2], float x, float fc, float q) {
 
 void init_basic_state(void);
 stereo reverb(stereo inp);
-wave_t *request_wave_load(Sound *sound, int index);
+wave_t *request_wave_load(wave_t *wave);
 
 // for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
 // however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
@@ -425,12 +426,14 @@ static inline int num_sounds(void) { return stbds_hmlen(G->sounds); }
 static inline wave_t *get_wave(Sound *sound, int index) {
     if (!sound)
         return NULL;
-    int n = stbds_arrlen(sound->waves);
+    if (sound->name[0] == '-' || sound->name[0] == '~')
+        return NULL;
+    int n = stbds_arrlen(sound->wave_indices);
     if (!n)
         return NULL;
     index %= n;
-    wave_t *w = &sound->waves[index];
-    return w->frames ? w : request_wave_load(sound, index);
+    wave_t *w = &G->waves[sound->wave_indices[index]];
+    return w->frames ? w : request_wave_load(w);
 }
 
 static inline wave_t *get_wave_by_name(const char *name) {
@@ -445,11 +448,42 @@ static inline wave_t *get_wave_by_name(const char *name) {
     return get_wave(get_sound(name2), index);
 }
 
-static inline float sample_linear(float pos, const float *smpl) {
+static inline stereo sample_wave(wave_t *w, float pos, float loops, float loope) {
+    if (!w || !w->frames) return {0.f, 0.f};
+    //pos *= w->sample_rate;
+    if (loops < loope && pos > loops) {
+        loops *= w->num_frames;
+        loope *= w->num_frames;
+        pos = fmodf(pos - loops, loope - loops) + loops;
+    } else if (pos >= w->num_frames) {
+        return {0.f, 0.f};
+    }
     int i = (int)floorf(pos);
     float t = pos - (float)i;
+    i %= w->num_frames;
+    bool wrap = (i==w->num_frames-1);
+    if (w->channels>1) {
+        i*=w->channels;
+        stereo s0 = stereo{w->frames[i + 0], w->frames[i + 1]};
+        i=wrap ? i : i+w->channels;
+        stereo s1 = stereo{w->frames[i + 0], w->frames[i + 1]};
+        return s0 + (s1 - s0) * t;
+    } else {
+        float s0 = w->frames[i + 0];
+        i=wrap ? i : i+1;
+        float s1 = w->frames[i + 0];
+        s0 += (s1-s0)*t;
+        return stereo{s0,s0};
+    }
+}
+
+static inline float sample_linear(float pos, const float *smpl, int num_samples) {
+    int i = (int)floorf(pos);
+    float t = pos - (float)i;
+    i %= num_samples;
     float s0 = smpl[i + 0];
-    float s1 = smpl[i + 1];
+    if (++i >=num_samples ) i=0;
+    float s1 = smpl[i];
     return s0 + t * (s1 - s0);
 }
 

@@ -778,7 +778,8 @@ void test_minipat(void) {
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
     // const char *s = "c < > d"; // test empty group
     //const char *s = "c gain <sin * 0.8>"; // test grid
-    const char *s = "[a b c] * [2 1]"; // test grid
+    //const char *s = "[a b c] * [2 1]"; // test rest in second half
+    const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
@@ -793,7 +794,7 @@ void test_minipat(void) {
     printf("parsed %d nodes\n", (int)stbds_arrlen(pm.nodes));
     pretty_print_nodes(s, s + pm.n, &p);
     hap_t dst[64];
-    hap_span_t haps = p.make_haps({dst, dst + 64}, 64, -1.f, 0, 4);
+    hap_span_t haps = p.make_haps({dst, dst + 64}, 64, -1.f, 1.5f, 2.f);
     pretty_print_haps(haps, 0.f, 4.f);
 
     // char *chart = print_pattern_chart(&p);

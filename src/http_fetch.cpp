@@ -5,7 +5,7 @@
 #include <unistd.h>
 // #define DEBUG_FETCH 1
 
-static void sanitize_url_for_local_filesystem(const char *url, char *out, size_t cap) {
+void sanitize_url_for_local_filesystem(const char *url, char *out, size_t cap) {
     size_t i = 0;
     for (; url[i] && i + 1 < cap; ++i) {
         out[i] =

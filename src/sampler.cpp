@@ -13,7 +13,7 @@
 #include "ansicols.h"
 #include "http_fetch.h"
 #include "json.h"
-
+#include <assert.h>
 const char *trimurl(const char *url) {
     // shorten url for printing
     if (strncmp(url, "https://", 8) == 0)
@@ -46,25 +46,23 @@ bool decode_file_to_f32(const char *path, wave_t *out) {
 
 static float _silence[16] = {};
 
-static void wave_loaded(const char *url, const char *fname, void *userdata) {
-}
+static void wave_loaded(const char *url, const char *fname, void *userdata) {}
 
-void load_wave_now(Sound *sound, wave_t *wave) {
+void load_wave_now(wave_t *wave) {
     if (wave->frames)
         return; // already loaded
-    const char *fname = fetch_to_cache(wave->url, 1, wave_loaded, sound);
+    const char *fname = fetch_to_cache(wave->key, 1, wave_loaded, nullptr);
     if (fname) {
         decode_file_to_f32(fname, wave);
     }
     if (!wave->frames) {
-        fprintf(stderr, "warning: wave %s failed to load. replacing with silence\n", wave->url);
+        fprintf(stderr, "warning: wave %s failed to load. replacing with silence\n", wave->key);
         wave->num_frames = 1;
         wave->sample_rate = 48000;
         wave->channels = 1;
         wave->frames = _silence;
     }
 }
-
 
 int parse_strudel_alias_json(const char *json_url) {
     const char *json_fname = fetch_to_cache(json_url, 1);
@@ -85,15 +83,16 @@ int parse_strudel_alias_json(const char *json_url) {
 }
 
 static inline bool char_needs_escaping(const char *s, const char *e) {
-    if (*s=='%' && (s+1<e) && s[1]=='_') return true;
-    return *s==' ' || *s=='#';
-    //return !(isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~' || c=='/');
+    if (*s == '%' && (s + 1 < e) && s[1] == '_')
+        return true;
+    return *s == ' ' || *s == '#';
+    // return !(isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~' || c=='/');
 }
 
 static inline int get_url_length_after_escaping(const char *s, const char *e) {
     int len = e - s;
     for (; s < e; s++)
-        if (char_needs_escaping(s,e))
+        if (char_needs_escaping(s, e))
             len += 2;
     return len;
 }
@@ -102,7 +101,7 @@ static inline const char *escape_url(char *dstbuf, const char *s, const char *e)
     const static char hex[17] = "0123456789abcdef";
     char *d = dstbuf;
     for (; s < e; s++) {
-        if (char_needs_escaping(s,e)) {
+        if (char_needs_escaping(s, e)) {
             *d++ = '%';
             *d++ = hex[*s >> 4];
             *d++ = hex[*s & 0xf];
@@ -153,16 +152,23 @@ int parse_strudel_json(const char *json_url, const char *sound_prefix, bool eage
                 int midinote = parse_midinote(inner.key.start, inner.key.end, NULL, false);
                 // printf("%.*s (%d) -> %s\n", (int)(samplekey.end-samplekey.start), samplekey.start, midinote, url);
                 int j;
-                for (j = 0; j < stbds_arrlen(sound->waves); ++j)
-                    if (strcmp(sound->waves[j].url, url) == 0)
+                for (j = 0; j < stbds_arrlen(sound->wave_indices); ++j)
+                    if (strcmp(G->waves[sound->wave_indices[j]].key, url) == 0)
                         break;
-                if (j == stbds_arrlen(sound->waves)) {
+                if (j == stbds_arrlen(sound->wave_indices)) {
                     wav_count++;
-                    wave_t wave = {.url = url, .midi_note = midinote};
+                    int waveidx = stbds_shgeti(G->waves, url);
+                    if (waveidx == -1) {
+                        wave_t nw = {.key = url, .midi_note = midinote};
+                        stbds_shputs(G->waves, nw);
+                        waveidx = stbds_shgeti(G->waves, url);
+                        assert(waveidx != -1);
+                    }
                     if (eager)
-                        load_wave_now(sound, &wave);
-                    stbds_arrput(sound->waves,
-                                 wave); // TODO; if this causes sound->waves to grow, we may get an exception on the other thread...
+                        load_wave_now(&G->waves[waveidx]);
+                    stbds_arrput(
+                        sound->wave_indices,
+                        waveidx); // TODO; if this causes sound->waves to grow, we may get an exception on the other thread...
                     if (midinote >= 0) {
                         int_pair_t pair = {.k = midinote, .v = j};
                         int insert_at = lower_bound_int_pair(sound->midi_notes, stbds_arrlen(sound->midi_notes), pair);
@@ -185,7 +191,7 @@ int num_waves(void) {
     int n = num_sounds();
     int numwaves = 0;
     for (int i = 0; i < n; ++i)
-        numwaves += stbds_arrlen(G->sounds[i].value->waves);
+        numwaves += stbds_arrlen(G->sounds[i].value->wave_indices);
     return numwaves;
 }
 void dump_all_sounds(const char *fname) {
@@ -199,19 +205,19 @@ void dump_all_sounds(const char *fname) {
         if (has_notes) {
             fprintf(f, "  \"%s\": {\n", s->name);
             for (int j = 0; j < stbds_arrlen(s->midi_notes); j++) {
-                wave_t *w = &s->waves[s->midi_notes[j].v];
+                wave_t *w = &G->waves[s->wave_indices[s->midi_notes[j].v]];
                 char comma = j == stbds_arrlen(s->midi_notes) - 1 ? ' ' : ',';
-                //printf("midi note %s -> %s\n", print_midinote(w->midi_note), w->url);
-                fprintf(f, "    \"%s\": \"%s\"%c // %d %dhz %dch\n", print_midinote(w->midi_note), w->url, comma, (int)w->num_frames,
-                        (int)w->sample_rate, w->channels);
+                // printf("midi note %s -> %s\n", print_midinote(w->midi_note), w->url);
+                fprintf(f, "    \"%s\": \"%s\"%c // %d %dhz %dch\n", print_midinote(w->midi_note), w->key, comma,
+                        (int)w->num_frames, (int)w->sample_rate, w->channels);
             }
             fprintf(f, "  }");
         } else {
             fprintf(f, "  \"%s\": [\n", s->name);
-            for (int j = 0; j < stbds_arrlen(s->waves); j++) {
-                wave_t *w = &s->waves[j];
+            for (int j = 0; j < stbds_arrlen(s->wave_indices); j++) {
+                wave_t *w = &G->waves[s->wave_indices[j]];
                 char comma = j == stbds_arrlen(s->midi_notes) - 1 ? ' ' : ',';
-                fprintf(f, "      \"%s\"%c // %d %dhz %dch\n", w->url, comma, (int)w->num_frames, (int)w->sample_rate, w->channels);
+                fprintf(f, "      \"%s\"%c // %d %dhz %dch\n", w->key, comma, (int)w->num_frames, (int)w->sample_rate, w->channels);
             }
             fprintf(f, "    ]");
         }
@@ -260,18 +266,22 @@ void pump_wave_load_requests_main_thread(void) {
         spin_lock(&G->load_request_cs);
         int n = stbds_hmlen(G->load_requests);
         int i;
-        for (i = 0; i < n; i++) if (!G->load_requests[i].download_in_progress) break;
-        sound_request_t *req = (i<n) ? &G->load_requests[i] : NULL;
+        for (i = 0; i < n; i++)
+            if (!G->load_requests[i].key->download_in_progress)
+                break;
+        wave_t *req = (i < n) ? G->load_requests[i].key : nullptr;
         spin_unlock(&G->load_request_cs);
-        if (i>=n)
+        if (i >= n)
             return;
         if (req) {
             // TODO: add multi download with curl, and move the lines after 'load wave now' into the done-callback.
             req->download_in_progress = 1;
-            load_wave_now(req->key.sound, &req->key.sound->waves[req->key.index]);
+            load_wave_now(req);
             req->download_in_progress = 0;
             spin_lock(&G->load_request_cs);
-            stbds_hmdel(G->load_requests, req->key);
+            // printf("num load requests: %d\n", (int)stbds_hmlen(G->load_requests));
+            stbds_hmdel(G->load_requests, req);
+            // printf("num load requests: %d\n", (int)stbds_hmlen(G->load_requests));
             spin_unlock(&G->load_request_cs);
         }
     }

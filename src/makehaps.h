@@ -1,5 +1,16 @@
 // code for turning patterns (a tree of nodes) into haps (a flat list of events with times and values)
 
+void merge_hap(hap_t *dst, hap_t *src) {
+    int p = src->valid_params;
+    dst->valid_params |= p;
+    while (p) {
+        int i = __builtin_ctz(p);
+        dst->params[i] = src->params[i];
+        p &= ~(1 << i);
+    }
+}
+
+
 template <typename T> void arrsetlencap(T *&arr, int len, int cap) {
     assert(len <= cap);
     stbds_arrsetcap(arr, cap);
@@ -442,6 +453,20 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         _filter_haps({rv.s, dst.s}, speed_scale, 0., a, b, floor(a + hap_eps), ceil(b - hap_eps));
         break;
     }
+    case N_OP_FIT: {
+        hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, a, b, hapid, merge_repeated_leaves);
+        for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
+            if (left_hap->has_param(P_SOUND) && G->dt!=0.) {
+                wave_t *w = get_wave(get_sound_by_index(left_hap->params[P_SOUND]), 0);
+                if (w->num_frames) {
+                    float ratio = w->num_frames / (((left_hap->t1 - left_hap->t0) / G->dt) / SAMPLE_RATE * w->sample_rate);
+                    float note = log2(ratio) * 12 + (12*3);
+                    left_hap->params[P_NOTE] = note;
+                    left_hap->valid_params |= 1 << P_NOTE;
+                }
+            }
+        }
+    break; }
     case N_OP_LATE:
     case N_OP_EARLY:
     case N_OP_ELONGATE:
@@ -595,6 +620,18 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_SUB:
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, add_value_func, 1);
         break;
+    case N_OP_LOOPS:
+        param = P_LOOPS;
+        goto assign_value;
+    case N_OP_LOOPE:
+        param = P_LOOPE;
+        goto assign_value;
+    case N_OP_CUTOFF:
+        param = P_CUTOFF;
+        goto assign_value;
+    case N_OP_RESONANCE:
+        param = P_RESONANCE;
+        goto assign_value;
     case N_OP_GAIN:
         param = P_GAIN;
         goto assign_value;

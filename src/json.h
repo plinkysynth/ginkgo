@@ -67,6 +67,10 @@ static inline float4 iter_val_as_float4(sj_iter_t *iter, float4 default_val={}) 
 }
 #endif
 
+static inline char *iter_key_as_stbstring(sj_iter_t *iter) {
+    return stbstring_from_span(iter->key.start, iter->key.end, 0);
+}
+
 static inline char *iter_val_as_stbstring(sj_iter_t *iter, const char *default_val=NULL) {
     if (iter->val.type != SJ_STRING) return (char*)default_val;
     return stbstring_from_span(iter->val.start, iter->val.end, 0);

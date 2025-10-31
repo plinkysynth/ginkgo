@@ -150,8 +150,10 @@ int try_parse_number(const char *str, int n, int idx, float *out, int *out_idx, 
 
 int looks_like_slider_comment(const char *str, int n, int idx,
                               slider_spec_t *out) { // see if 'idx' is inside a /*0======5*/<whitespace>number type comment.
+    if (idx >= n)
+        return 0;
     int i = idx;
-    while (i >= 0 && str[i] != '/' && str[i] != '\n')
+    while (i >= 0 && i < n && str[i] != '/' && str[i] != '\n')
         i--;
     // ok it must be of the form /*digits-----digits*/
     if (str[i] != '/' || str[i + 1] != '*')
@@ -416,10 +418,9 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
                         E->new_idx_to_old_idx[i] = -1;
                     }
                 }
-                if (is_drag <0 ) {
+                if (is_drag < 0) {
                     // recompile on release
                     parse_named_patterns_in_c_source(E);
-
                 }
             }
         } else {
@@ -880,8 +881,8 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 #define C_SELECTION 0xc48fff00u
 #define C_SELECTION_FIND_MODE 0x4c400000u
 
-#define C_PATTERN_LINE 0x80444444u   // this one is 24 bit RGBA, unlike the others :( (add_line uses it)
-//#define C_PATTERN_GUTTER 0x80000000u // same
+#define C_PATTERN_LINE 0x80444444u // this one is 24 bit RGBA, unlike the others :( (add_line uses it)
+// #define C_PATTERN_GUTTER 0x80000000u // same
 #define C_PATTERN_JUMP_MARKER 0x00070000u
 
 #define C_PATTERN_BG 0x11100000u
@@ -991,7 +992,7 @@ static inline int scan_number(const char *s, int i, int n, unsigned prev_nonspac
     int j = i;
 
     // optional sign (only if it looks unary)
-    if ((s[j] == '+' || s[j] == '-') && j + 1 < n && ((s[j + 1] >= '0' && s[j + 1] <= '9') || s[j + 1] == '.') &&
+    if (j < n && (s[j] == '+' || s[j] == '-') && j + 1 < n && ((s[j + 1] >= '0' && s[j + 1] <= '9') || s[j + 1] == '.') &&
         unary_sign_context(prev_nonspace))
         ++j;
 
@@ -1373,8 +1374,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
     auto jump_after_columns = [&] {
         if (stbds_arrlen(column_widths) > 0) {
             int right = column_max_width + 2 - E->intscroll_x;
-            //add_line(E, first_left, first_grid_line_start, right, first_grid_line_start, C_PATTERN_LINE, 5.f);
-            add_line(E, left, t.y, right-1, t.y, C_PATTERN_LINE, 5.f);
+            // add_line(E, first_left, first_grid_line_start, right, first_grid_line_start, C_PATTERN_LINE, 5.f);
+            add_line(E, left, t.y, right - 1, t.y, C_PATTERN_LINE, 5.f);
             if (grid_line_end == INVALID_LINE || t.y > grid_line_end)
                 grid_line_end = t.y;
             int jumpy = (grid_line_end == INVALID_LINE ? t.y : grid_line_end);
@@ -1387,12 +1388,12 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 if (c < nc - 2)
                     // add_line(E, column_widths[c], first_grid_line_start, column_widths[c],
                     //          max(column_widths[c + 1], column_widths[c + 3]), C_PATTERN_GUTTER, 5.f);
-                    clear_rectangle(t.ptr, column_widths[c]-1, first_grid_line_start, column_widths[c], 
-                        max(column_widths[c + 1], column_widths[c + 3]), C_PATTERN_BG);
+                    clear_rectangle(t.ptr, column_widths[c] - 1, first_grid_line_start, column_widths[c],
+                                    max(column_widths[c + 1], column_widths[c + 3]), C_PATTERN_BG);
             }
             clear_rectangle(t.ptr, right, first_grid_line_start, tmw, jumpy, C_PATTERN_BG + ' ');
-            //add_line(E, first_left, first_grid_line_start, first_left, column_widths[1], C_PATTERN_LINE, 5.f);
-            //add_line(E, right, first_grid_line_start, right, column_widths[nc - 1], C_PATTERN_GUTTER, 5.f);
+            // add_line(E, first_left, first_grid_line_start, first_left, column_widths[1], C_PATTERN_LINE, 5.f);
+            // add_line(E, right, first_grid_line_start, right, column_widths[nc - 1], C_PATTERN_GUTTER, 5.f);
             t.y = jumpy;
             t.x = left = first_left;
             column_max_width = 0;
@@ -1553,7 +1554,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         grid_line_start = first_grid_line_start;
                         left = column_max_width + 2 - E->intscroll_x;
                         t.y++;
-                        add_line(E, oldleft, t.y, left-1, t.y, C_PATTERN_LINE, 5.f);
+                        add_line(E, oldleft, t.y, left - 1, t.y, C_PATTERN_LINE, 5.f);
                         if (grid_line_end == INVALID_LINE || t.y > grid_line_end)
                             grid_line_end = t.y;
                         stbds_arrpush(column_widths, left);
@@ -1790,8 +1791,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                     if (grid_line_start != INVALID_LINE && grid_line_start < t.y) {
                         uint32_t col = (t.y == E->cursor_y - E->intscroll_y) ? 0xeee00u : 0x55500u;
-                        if (stbds_arrlen(column_widths)==0)
-                            print_to_screen(t.ptr, first_left+3, t.y, empty_bgcol | col, false, " ");
+                        if (stbds_arrlen(column_widths) == 0)
+                            print_to_screen(t.ptr, first_left + 3, t.y, empty_bgcol | col, false, " ");
                         print_to_screen(t.ptr, first_left, t.y, C_PATTERN_BG | col, false, "%02x ",
                                         (t.y - grid_line_start - 1) & 0xff);
                         if (grid_line_end == INVALID_LINE || t.y > grid_line_end)

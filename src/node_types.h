@@ -61,7 +61,8 @@ OP(N_OP_MUL, "mul", 1, 0)
 OP(N_OP_DIV, "div", 1, 0)
 OP(N_OP_RANGE, "range", 2, 0)
 OP(N_OP_RANGE2, "range2", 2, 0)
-OP(N_OP_PLY, "ply", 1, 0)
+OP(N_OP_FIT, "fit", 0, 0)
+//OP(N_OP_PLY, "ply", 1, 0)
 
 //OP(N_OP_STRUCT, "struct", 3, 1)
 //OP(N_OP_PLY, "ply", 1, 0)
@@ -75,7 +76,10 @@ OP(N_OP_RELEASE, "rel", 1, 0)
 OP(N_OP_ADSR, "adsr", 4, 0)
 OP(N_OP_GAIN, "gain", 1, 0)
 OP(N_OP_PAN, "pan", 1, 0)
-
+OP(N_OP_LOOPS, "loops", 1, 0)
+OP(N_OP_LOOPE, "loope", 1, 0)
+OP(N_OP_CUTOFF, "cut", 1, 0)
+OP(N_OP_RESONANCE, "res", 1, 0)
 
 #undef OP
 #undef NODE

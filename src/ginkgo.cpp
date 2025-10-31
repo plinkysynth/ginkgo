@@ -570,8 +570,9 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
     });
 // clang-format on
 
+extern EditorState tabs[3];
 EditorState tabs[3] = {
-    {.fname = NULL, .is_shader = true}, {.fname = NULL, .is_shader = false}, {.fname = NULL, .is_shader = false}};
+    {.fname = NULL, .editor_type = 0}, {.fname = NULL, .editor_type=1}, {.editor_type=2}};
 EditorState *curE = tabs;
 float ui_alpha = 0.f;
 float ui_alpha_target = 0.f;
@@ -585,7 +586,7 @@ static float4 c_lookat;
 static float fov = 0.4f;
 static float focal_distance = 5.f;
 static float aperture = 0.01f;
-static void set_tab(EditorState *newE) {
+void set_tab(EditorState *newE) {
     ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
     curE = newE;
 }
@@ -765,7 +766,7 @@ static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
 }
 
 GLuint try_to_compile_shader(EditorState *E) {
-    if (!E->is_shader) {
+    if (E->editor_type!=0) {
         return 0;
     }
     int len = strlen(kFS_user_prefix) + stbds_arrlen(E->str) + strlen(kFS_user_suffix) + 64;
@@ -909,15 +910,15 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         }
         if (key == GLFW_KEY_S) {
             bool compiled = true;
-            if (!E->is_shader || try_to_compile_shader(E) != 0) {
+            if (E->editor_type!=0 || try_to_compile_shader(E) != 0) {
                 FILE *f = fopen("editor.tmp", "w");
                 if (f) {
                     fwrite(E->str, 1, stbds_arrlen(E->str), f);
                     fclose(f);
                     if (rename("editor.tmp", E->fname) == 0) {
-                        set_status_bar(C_OK, E->is_shader ? "saved shader" : "saved audio");
+                        set_status_bar(C_OK, "saved");
                         init_remapping(E);
-                        if (!E->is_shader)
+                        if (E->editor_type==1)
                             parse_named_patterns_in_c_source(E);
                     } else {
                         f = 0;
@@ -929,9 +930,9 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
             }
         }
         if (key == GLFW_KEY_ENTER || key == '\n') {
-            if (E->is_shader)
+            if (E->editor_type==0)
                 try_to_compile_shader(E);
-            else
+            else if (E->editor_type==1)
                 parse_named_patterns_in_c_source(E);
         }
     }
@@ -945,12 +946,13 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
 
 static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
     // printf("scroll: %f\n", yoffset);
-    curE->scroll_target_x -= xoffset * curE->font_width;
-    curE->scroll_target_y -= yoffset * curE->font_height;
     if (G) {
         G->mscrollx += xoffset;
         G->mscrolly += yoffset;
     }
+    if (curE->editor_type==2) return;
+    curE->scroll_target_x -= xoffset * curE->font_width;
+    curE->scroll_target_y -= yoffset * curE->font_height;
 }
 
 static void char_callback(GLFWwindow *win, unsigned int codepoint) {
@@ -971,25 +973,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         tmw = 512;
     if (tmh > 256 - 8)
         tmh = 256 - 8;
-    typedef struct sample_embedding_t {
-        char *key;
-        float x, y, r, g, b;
-        float mindist;
-        int wave_idx;
-        int sound_idx;
-        int sound_number;
-    } sample_embedding_t;
-    static sample_embedding_t *embeddings = NULL;
-    static float zoom = 1.f;
-    static float zoom_sm = 1.f;
-    static float centerx = 0.f, centery = 0.f;
-    static float centerx_sm = 0.f, centery_sm = 0.f;
-    static int old_closest_idx = 0;
-    static int closest_sound_idx = -1;
-    static int closest_sound_number = 0;
-    static int num_after_filtering = 0;
-    static int filter_hash = 0;
-    if (!embeddings) {
+    if (!E->embeddings) {
         FILE *f = fopen("embeddings.bin", "rb");
         sj_Reader r = read_json_file("webcache/umap_sounds.json");
         for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
@@ -1008,14 +992,14 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             iter_next(&inner);
             t.mindist = iter_val_as_float(&inner, t.mindist);
             iter_next(&inner);
-            old_closest_idx = -1;
+            E->old_closest_idx = -1;
             int i;
             t.wave_idx = -1;
             t.sound_idx = -1;
             t.sound_number = 0;
-            stbds_shputs(embeddings, t);
+            stbds_shputs(E->embeddings, t);
         }
-        printf("loaded %d embeddings\n", (int)stbds_shlen(embeddings));
+        printf("loaded %d embeddings\n", (int)stbds_shlen(E->embeddings));
         // find mapping from sounds back to embeddings
         int ns = stbds_shlen(G->sounds);
         for (int i = 0; i < ns; ++i) {
@@ -1026,59 +1010,59 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                 char name[1024];
                 void sanitize_url_for_local_filesystem(const char *url, char *out, size_t cap);
                 sanitize_url_for_local_filesystem(w->key, name, sizeof name);
-                int embed_i = stbds_shgeti(embeddings, name);
+                int embed_i = stbds_shgeti(E->embeddings, name);
                 if (embed_i != -1) {
-                    embeddings[embed_i].sound_idx = i;
-                    embeddings[embed_i].sound_number = j;
-                    embeddings[embed_i].wave_idx = wi;
+                    E->embeddings[embed_i].sound_idx = i;
+                    E->embeddings[embed_i].sound_number = j;
+                    E->embeddings[embed_i].wave_idx = wi;
                 }
             }
         }
-        zoom = 0.f;
-        centerx = fbw / 2.f;
-        centery = fbh / 2.f;
-        num_after_filtering = stbds_shlen(embeddings);
+        E->zoom = 0.f;
+        E->centerx = fbw / 2.f;
+        E->centery = fbh / 2.f;
+        E->num_after_filtering = stbds_shlen(E->embeddings);
         free_json(&r);
     }
     //float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
     
     if (G->mb == 1) {
-        centerx += G->mx - click_mx;
-        centery += G->my - click_my;
+        E->centerx += G->mx - click_mx;
+        E->centery += G->my - click_my;
         click_mx = G->mx;
         click_my = G->my;
     }
     if (G->mscrolly!=0.f) {
-        float mx_e = (G->mx - centerx) / zoom;
-        float my_e = (G->my - centery) / zoom;
-        zoom *= exp2f(G->mscrolly * -0.02f);
-        centerx = G->mx - mx_e * zoom;
-        centery = G->my - my_e * zoom;
+        float mx_e = (G->mx - E->centerx) / E->zoom;
+        float my_e = (G->my - E->centery) / E->zoom;
+        E->zoom *= exp2f(G->mscrolly * -0.02f);
+        E->centerx = G->mx - mx_e * E->zoom;
+        E->centery = G->my - my_e * E->zoom;
         G->mscrolly = 0.f;
     }
-    int n = stbds_shlen(embeddings);
+    int n = stbds_shlen(E->embeddings);
     int closest_idx = 0;
     float closest_d2 = 1e10;
     auto draw_point = [&](int i, float extra_size, bool matched) -> float2 {
-        sample_embedding_t *e = &embeddings[i];
+        sample_embedding_t *e = &E->embeddings[i];
         int r = clamp((int)(e->r * 255.f), 0, 255);
         int g = clamp((int)(e->g * 255.f), 0, 255);
         int b = clamp((int)(e->b * 255.f), 0, 255);
         int col = matched ? (r << 16) | (g << 8) | b | 0x60000000 : 0x10202020;
-        float x = e->x * zoom_sm + centerx_sm;
-        float y = e->y * zoom_sm + centery_sm;
-        add_line(x, y, x, y, col, /*point_size*/ e->mindist * zoom_sm + extra_size);
+        float x = e->x * E->zoom_sm + E->centerx_sm;
+        float y = e->y * E->zoom_sm + E->centery_sm;
+        add_line(x, y, x, y, col, /*point_size*/ e->mindist * E->zoom_sm + extra_size);
         return float2{x, y};
     };
-    num_after_filtering = 0;
-    int filtlen = stbds_arrlen(E->str);
+    E->num_after_filtering = 0;
+    int filtlen = find_end_of_line(E, 0);
     int new_filter_hash = fnv1_hash(E->str, E->str + filtlen);
-    bool autozoom = (new_filter_hash != filter_hash) || zoom<=0.f;
-    filter_hash = new_filter_hash;
+    bool autozoom = (new_filter_hash != E->filter_hash) || E->zoom<=0.f;
+    E->filter_hash = new_filter_hash;
     float minx=1e10, miny=1e10;
     float maxx=-1e10, maxy=-1e10;
     for (int i = 0; i < n; ++i) {
-        sample_embedding_t *e = &embeddings[i];
+        sample_embedding_t *e = &E->embeddings[i];
         bool matched = true;
         if (filtlen) {
             if (e->sound_idx==-1) continue;
@@ -1106,7 +1090,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             miny = min(miny, e->y);
             maxx = max(maxx, e->x);
             maxy = max(maxy, e->y);
-            num_after_filtering++;
+            E->num_after_filtering++;
         }
         if (matched_or_shift) {
             float d2 = square(G->mx - p.x) + square(G->my - p.y);
@@ -1118,38 +1102,54 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         
     }
     draw_point(closest_idx, 30.f, true);
-    if (old_closest_idx != closest_idx) {
+    if (E->old_closest_idx != closest_idx) {
         if (G->preview_wave_fade > 0.01f) {
             G->preview_wave_fade *= 0.999f; // start the fade
         } else {
-            int wi = embeddings[closest_idx].wave_idx;
+            int wi = E->embeddings[closest_idx].wave_idx;
             wave_t *w = &G->waves[wi];
             if (wi!=-1)
                 request_wave_load(w);
             if (w->num_frames) {
-                old_closest_idx = closest_idx;
-                closest_sound_idx = embeddings[closest_idx].sound_idx;
-                closest_sound_number = embeddings[closest_idx].sound_number;
+                E->old_closest_idx = closest_idx;
+                E->closest_sound_idx = E->embeddings[closest_idx].sound_idx;
+                E->closest_sound_number = E->embeddings[closest_idx].sound_number;
                 G->preview_wave_t = 0.;
                 G->preview_wave_idx_plus_one = wi + 1;
                 G->preview_wave_fade = 1.f;
             }
         }
     }
-    if (closest_sound_idx != -1) {
-        Sound *s = G->sounds[closest_sound_idx].value;
+    if (E->closest_sound_idx != -1) {
+        Sound *s = G->sounds[E->closest_sound_idx].value;
         const char *name = s->name;
         print_to_screen(ptr, G->mx / E->font_width + 2.f, G->my / E->font_height - 0.5f, C_SELECTION, false, "%s:%d", name,
-                        closest_sound_number);
+                        E->closest_sound_number);
+        if (closest_idx!=-1) {
+            wave_t *w = &G->waves[E->embeddings[closest_idx].wave_idx];
+            int smp0 = 0;
+            for (int x=48;x<fbw-48.f;++x) {
+                int smp1 = ((int)(x * (float)w->num_frames / (fbw-96.f))) * w->channels;
+                float mn=1e10, mx=-1e10;
+                for (int s=smp0;s<smp1;++s) {
+                    float v = w->frames[s];
+                    mn = min(mn, v);
+                    mx = max(mx, v);
+                }
+                float ymid = fbh-128.f;
+                add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, 0x80808080, 2.f);
+                smp0 = smp1;
+            }
+        }
     }
     if (autozoom) {
-        zoom = min(fbw*0.75f / (maxx - minx), fbh*0.9f / (maxy - miny));
-        centerx = fbw / 2.f - (maxx + minx) / 2.f * zoom;
-        centery = fbh / 2.f - (maxy + miny) / 2.f * zoom;
+        E->zoom = min(fbw*0.75f / (maxx - minx), fbh*0.9f / (maxy - miny));
+        E->centerx = fbw / 2.f - (maxx + minx) / 2.f * E->zoom;
+        E->centery = fbh / 2.f - (maxy + miny) / 2.f * E->zoom;
     }
-    zoom_sm += (zoom - zoom_sm) * 0.1f;
-    centerx_sm += (centerx - centerx_sm) * 0.1f;
-    centery_sm += (centery - centery_sm) * 0.1f;
+    E->zoom_sm += (E->zoom - E->zoom_sm) * 0.1f;
+    E->centerx_sm += (E->centerx - E->centerx_sm) * 0.1f;
+    E->centery_sm += (E->centery - E->centery_sm) * 0.1f;
 }
 
 static void mouse_button_callback(GLFWwindow *win, int button, int action, int mods) {
@@ -1166,7 +1166,7 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
             click_count = 0;
         }
         click_time = t;
-        editor_click(curE, G, mx, my, 0, click_count);
+        editor_click(win, curE, G, mx, my, 0, click_count);
         curE->need_scroll_update = true;
     }
     if (action == GLFW_RELEASE) {
@@ -1181,7 +1181,7 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         } else {
             click_count = 0;
         }
-        editor_click(curE, G, mx, my, -1, click_count);
+        editor_click(win, curE, G, mx, my, -1, click_count);
         curE->need_scroll_update = true;
     }
 }
@@ -1201,7 +1201,7 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     G->cursor_x = E->cursor_x;
     G->cursor_y = E->cursor_y;
     if (m0) {
-        editor_click(E, G, mx, my, 1, 0);
+        editor_click(win, E, G, mx, my, 1, 0);
         E->need_scroll_update = true;
     }
 

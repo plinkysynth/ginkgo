@@ -40,6 +40,16 @@ typedef struct character_pos_t {
 
 static_assert(sizeof(character_pos_t) == 4, "character_pos_t should be 4 bytes");
 
+typedef struct sample_embedding_t {
+    char *key;
+    float x, y, r, g, b;
+    float mindist;
+    int wave_idx;
+    int sound_idx;
+    int sound_number;
+} sample_embedding_t;
+
+
 typedef struct EditorState {
     // all these arrays are stbds_arrs
     const char *fname;                           // name of the file
@@ -52,7 +62,7 @@ typedef struct EditorState {
     int autocomplete_scroll_y;
     float autocomplete_show_after;
     int undo_idx;
-    bool is_shader; // is this a shader file?
+    int editor_type;
     bool mouse_hovering_chart;
     bool find_mode;
     bool cursor_in_pattern_area;
@@ -81,7 +91,34 @@ typedef struct EditorState {
     float click_fy;
     float click_slider_value;
     int click_down_idx; // where in the text we clicked down.
+    // sample picker
+    sample_embedding_t *embeddings;
+    float zoom;
+    float zoom_sm;
+    float centerx, centery;
+    float centerx_sm, centery_sm;
+    int old_closest_idx;
+    int closest_sound_idx;
+    int closest_sound_number;
+    int num_after_filtering;
+    int filter_hash;
+    // end of sample picker
 } EditorState;
+
+static inline bool isspaceortab(char c) { return c == ' ' || c == '\t'; }
+
+static inline int find_start_of_line(EditorState *E, int idx) {
+    while (idx > 0 && E->str[idx - 1] != '\n')
+        idx--;
+    return idx;
+}
+
+static inline int find_end_of_line(EditorState *E, int idx) {
+    while (idx < stbds_arrlen(E->str) && E->str[idx] != '\n')
+        idx++;
+    return idx;
+}
+
 
 // add_line but coords are text
 void add_line(EditorState *E, float p0x, float p0y, float p1x, float p1y, uint32_t col, float width) {
@@ -337,8 +374,22 @@ void find_line_at_idx(EditorState *E, int cursor_idx, int *start_idx, int *end_i
 }
 
 static inline void postpone_autocomplete_show(EditorState *E) { E->autocomplete_show_after = G->iTime + 0.5f; }
+extern EditorState tabs[3];
+void set_tab(EditorState *newE);
 
-void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
+void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
+    if (click_count==1 && is_drag<0 && E->editor_type==2 && E->closest_sound_idx!=-1) {
+        char buf[1024];
+        snprintf(buf, sizeof(buf), "\n%s:%d", G->sounds[E->closest_sound_idx].value->name, E->closest_sound_number);
+        push_edit_op(E, 0, 0, buf, 0);
+        E->cursor_idx = find_end_of_line(E, 0)+1;
+        E->select_idx = E->cursor_idx;
+        E->cursor_idx = find_end_of_line(E, E->cursor_idx);
+        
+        //glfwSetClipboardString(win, buf);
+        //set_tab(&tabs[1]);
+        return;
+    }
     postpone_autocomplete_show(E);
     x += E->scroll_x;
     y += E->scroll_y;
@@ -441,19 +492,6 @@ void editor_click(EditorState *E, basic_state_t *G, float x, float y, int is_dra
     }
 }
 
-static inline bool isspaceortab(char c) { return c == ' ' || c == '\t'; }
-
-static inline int find_start_of_line(EditorState *E, int idx) {
-    while (idx > 0 && E->str[idx - 1] != '\n')
-        idx--;
-    return idx;
-}
-
-static inline int find_end_of_line(EditorState *E, int idx) {
-    while (idx < stbds_arrlen(E->str) && E->str[idx] != '\n')
-        idx++;
-    return idx;
-}
 
 int jump_to_found_text(EditorState *E, int backwards, int extra_char) {
     int delta = backwards ? -1 : 1;

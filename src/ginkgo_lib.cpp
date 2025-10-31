@@ -375,7 +375,7 @@ stereo test_patterns(const char *pattern_name) {
                 if (w && w->num_frames) {
                     pos = w->sample_rate * (t - h->t0)/G->dt / SAMPLE_RATE * dphase;
                 }
-                stereo au = w ? sample_wave(w, pos, loops, loope) :  mono2stereo(pwmo(&v->phase, dphase, duty));
+                stereo au = w ? sample_wave(w, pos, loops, loope) :  mono2stereo(pwmo(&v->phase, dphase / 256.f, duty));
                 au *= v->env * gain;// / (v->dphase * 1000.f);
                 audio[smpl] += au;
             }

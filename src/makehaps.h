@@ -158,7 +158,21 @@ float pattern_t::get_length(int nodeidx) {
     return 1.f;
 }
 
-bool pattern_t::_append_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid) {
+bool pattern_t::_append_number_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid, float value) {
+    if (dst.s >= dst.e || t0 > t1 || nodeidx < 0)
+        return false;
+    hap_t *hap = dst.s++;
+    hap->t0 = t0;
+    hap->t1 = t1;
+    hap->node = nodeidx;
+    hap->hapid = hapid;
+    hap->valid_params = 1 << P_NUMBER;
+    hap->params[P_NUMBER] = value;
+    hap->scale_bits = 0;
+    return true;
+}
+
+bool pattern_t::_append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid) {
     if (dst.s >= dst.e || t0 > t1 || nodeidx < 0)
         return false;
     bfs_node_t *n = bfs_nodes + nodeidx;
@@ -202,28 +216,46 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
         // so we should let haps overhang the right edge of the queried range, I guess is what Im saying.
         // if (left_hap->t1 > to)
         //     left_hap->t1 = to;
-        if (left_hap->t0 > b || left_hap->t1 < a || left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps > to) {
+        // this checks if the left_hap overlaps the query range, but also if its onset is inside the clipping range.
+        bool onset_outside =  left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps > to;
+        if (left_hap->t0 > b || left_hap->t1 < a || onset_outside) {
             left_hap->valid_params = 0;
         }
     }
 }
 
 int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,
-                             filter_cb_t filter_cb, value_cb_t value_cb, size_t context) {
-    hap_time t0 = structure_hap->t0;
+                             filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time t0, hap_time t1, int num_rhs) {
+    hap_time structure_t0 = structure_hap->t0;
     hap_t tmp_mem[tmp_size];
-    hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
-    hap_span_t value_haps = _make_haps(tmp, tmp_size, viz_time, value_node_idx, t0, t0 + hap_eps,
-                                       hash2_pcg(structure_hap->hapid, value_node_idx + (int)(t0 * 1000.f)), true);
+    int new_hap_id = hash2_pcg(structure_hap->hapid, value_node_idx + (int)(structure_t0 /* * 1000.f */));
+    hap_span_t value_haps[num_rhs];
+    for (int i = 0; i < num_rhs; i++) {
+        hap_span_t tmp = {tmp_mem + i * tmp_size, tmp_mem + (i + 1) * tmp_size};
+        value_haps[i] =
+            _make_haps(tmp, tmp_size, viz_time, value_node_idx + i, structure_t0, structure_t0 + hap_eps, new_hap_id, true);
+    }
     int count = 0;
     int structure_hapid = structure_hap->hapid;
-    bool do_an_empty_one = value_haps.empty();
-    for (hap_t *right_hap = value_haps.s; right_hap < value_haps.e || do_an_empty_one; right_hap++) {
-        do_an_empty_one = false;
+    // COMMENT: we just take the structure from the left, but also only loop over the first parameter's haps,
+    // and just take the later params 'modulo first param count'. which is wrong but simple.
+    int num_value_haps = value_haps[0].e - value_haps[0].s;
+    if (num_value_haps == 0)
+        num_value_haps = 1;
+    for (int value_hap_idx = 0; value_hap_idx < num_value_haps; value_hap_idx++) {
+        hap_t *value_hap_i[num_rhs];
+        for (int i = 0; i < num_rhs; i++) {
+            int n = value_haps[i].e - value_haps[i].s;
+            if (!n)
+                value_hap_i[i] = nullptr;
+            else
+                value_hap_i[i] = value_haps[i].s + (value_hap_idx % n);
+        }
+        hap_t *right_hap = value_hap_i[0]; // TODO: more than 1
         if (right_hap && !right_hap->valid_params)
             continue;
         int new_hapid = hash2_pcg(structure_hapid, right_hap ? right_hap->hapid : 0);
-        int num_copies = filter_cb ? filter_cb(structure_hap, right_hap, new_hapid) : 1;
+        int num_copies = filter_cb ? filter_cb(structure_hap, right_hap, new_hapid, t0, t1) : 1;
         for (int i = 0; i < num_copies; i++) {
             hap_t *target = structure_hap;
             if (count++) {
@@ -233,8 +265,14 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
                 *target = *structure_hap;
                 target->hapid = new_hapid;
             }
-            if (value_cb)
-                value_cb(target, right_hap, context + i);
+            if (value_cb) {
+                if (!value_cb(target, value_hap_i, context + i, t0, t1)) {
+                    // cancel this copy!
+                    count--;
+                    if (count > 0)
+                        --dst.s;
+                }
+            }
         }
     }
     if (count == 0)
@@ -244,7 +282,7 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
 
 void pattern_t::_apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, int parent_idx, hap_time t0, hap_time t1,
                                 int parent_hapid, bool merge_repeated_leaves, filter_cb_t filter_cb, value_cb_t value_cb,
-                                size_t context) {
+                                size_t context, int num_rhs) {
     bfs_node_t *n = bfs_nodes + parent_idx;
     if (n->num_children < 1)
         return;
@@ -252,7 +290,7 @@ void pattern_t::_apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, i
     hap_span_t left_haps =
         _make_haps(dst, tmp_size, viz_time, n->first_child, t0, t1, hash2_pcg(parent_hapid, n->first_child), merge_repeated_leaves);
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-        _apply_values(dst, tmp_size, viz_time, left_hap, right_child, filter_cb, value_cb, context);
+        _apply_values(dst, tmp_size, viz_time, left_hap, right_child, filter_cb, value_cb, context, t0, t1, num_rhs);
     }
 }
 
@@ -295,25 +333,27 @@ static inline int scale_index_to_note(int scalebits, int root, int index) {
     return note;
 }
 
-void apply_value_func(hap_t *target, hap_t *right_hap, size_t param_idx) {
+int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_time t0, hap_time t1) {
     if (!right_hap || param_idx >= P_LAST)
-        return;
+        return 1;
     int src_idx = param_idx;
-    if (!right_hap->has_param(src_idx)) {
-        if (!right_hap->has_param(P_NUMBER))
-            return;
+    if (!right_hap[0]->has_param(src_idx)) {
+        if (!right_hap[0]->has_param(P_NUMBER))
+            return 1;
         src_idx = P_NUMBER;
     }
-    target->params[param_idx] = right_hap->params[src_idx];
+    target->params[param_idx] = right_hap[0]->params[src_idx];
     target->valid_params |= 1 << param_idx;
+    return 1;
 }
 
-void add_value_func(hap_t *target, hap_t *right_hap, size_t negative) { // param_idx 1=sub
-    if (!right_hap || !right_hap->has_param(P_NUMBER) || !target->valid_params)
-        return;
+int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time t0, hap_time t1) { // param_idx 1=sub
+    if (!right_hap || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
+        return 1;
     int param_idx = __builtin_ctz(target->valid_params);
-    float v = right_hap->params[P_NUMBER];
+    float v = right_hap[0]->params[P_NUMBER];
     target->params[param_idx] += negative ? -v : v;
+    return 1;
 }
 
 hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time a, hap_time b, int hapid,
@@ -327,6 +367,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     hap_time speed_scale = 1.f;
     hap_time kids_total_length = bfs_kids_total_length[nodeidx];
     int param = P_NUMBER;
+    bool appended = false;
     switch (n->type) {
     case N_CALL: {
         int patidx = (int)bfs_min_max_value[nodeidx].mx;
@@ -336,17 +377,52 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
+    case N_SIN: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, sinf(a * M_PI * 2) * 0.5f + 0.5f);
+        break;
+    case N_SIN2: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, sinf(a * M_PI * 2));
+        break;
+    case N_COS: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, cosf(a * M_PI * 2) * 0.5f + 0.5f);
+        break;
+    case N_COS2: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, cosf(a * M_PI * 2));
+        break;
+    case N_SAW: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, frac(a));
+        break;
+    case N_SAW2: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, frac(a)*2.f-1.f);
+        break;
+    case N_RAND: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, (pcg_mix(hash2_pcg(hapid, (int)a))&0xffff)/65535.f);
+        break;
+    case N_RAND2: 
+        appended = _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, (pcg_mix(hash2_pcg(hapid, (int)a))&0xffff)/32767.5f-1.f);
+        break;
+    case N_RANDI: {
+        hap_t tmp_mem[tmp_size];
+        hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
+        hap_span_t right_haps =
+            _make_haps(tmp, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child), true);
+        for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
+            int limit = (int)right_hap->get_param(P_NUMBER, 0.f);
+            int r = (pcg_mix(hash2_pcg(right_hap->hapid, (int)a))&0xffff);
+            r = limit ? (r % limit) : 0;
+            appended |= _append_number_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid, r);
+        }
+        break;
+
+    break; } 
+
     case N_LEAF: {
-        bool appended = false;
         if (merge_repeated_leaves)
-            appended = _append_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid);
+            appended = _append_leaf_hap(dst, nodeidx, floor(a + hap_eps), ceil(b - hap_eps), hapid);
         else
             for (int i = floor(a + hap_eps); i < b; ++i) {
-                appended |= _append_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
+                appended |= _append_leaf_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
             }
-        if (appended && viz_time >= 0.f) {
-            bfs_start_end[nodeidx].last_evaled_glfw_time = viz_time;
-        }
         break;
     }
     case N_POLY:
@@ -407,8 +483,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             }
             if (speed_scale <= 0.f)
                 continue;
-            hap_time from = (n->type == N_OP_ELONGATE) ? -1e9 : right_hap->t0;
-            hap_time to = (n->type == N_OP_ELONGATE) ? 1e9 : right_hap->t1;
+            hap_time from = (n->type == N_OP_ELONGATE || merge_repeated_leaves) ? -1e9 : right_hap->t0;
+            hap_time to = (n->type == N_OP_ELONGATE || merge_repeated_leaves) ? 1e9 : right_hap->t1;
             hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, max(from, a) * speed_scale,
                                               min(to, b) * speed_scale, hash2_pcg(hapid, right_hap->hapid), merge_repeated_leaves);
             _filter_haps(left_haps, speed_scale, tofs, a, b, from, to);
@@ -430,40 +506,70 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         // the : operator is quite flexible for applying scales to notes or numbers.
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, a, b, nodeidx, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t *right_hap, size_t param_idx) {
-                if (!right_hap || !right_hap->valid_params)
-                    return;
-                param_idx = __builtin_ctz(right_hap->valid_params);
+            [](hap_t *target, hap_t **right_hap, size_t param_idx, hap_time t0, hap_time t1) {
+                if (!right_hap[0] || !right_hap[0]->valid_params)
+                    return 0;
+                param_idx = __builtin_ctz(right_hap[0]->valid_params);
                 if (param_idx == P_NUMBER && target->has_param(P_SCALEBITS) && !target->has_param(P_NOTE)) {
                     // apply a number to a scale -> index scale into a note
                     target->params[P_NOTE] =
-                        scale_index_to_note(target->scale_bits, target->params[P_SCALEBITS], (int)right_hap->params[P_NUMBER]);
+                        scale_index_to_note(target->scale_bits, target->params[P_SCALEBITS], (int)right_hap[0]->params[P_NUMBER]);
                     target->valid_params |= 1 << P_NOTE;
                 } else if (param_idx == P_SCALEBITS && target->has_param(P_NUMBER) && !target->has_param(P_NOTE)) {
                     // apply a scale to a number -> index scale into a note
                     target->params[P_NOTE] =
-                        scale_index_to_note(right_hap->scale_bits, right_hap->params[P_SCALEBITS], (int)target->params[P_NUMBER]);
+                        scale_index_to_note(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NUMBER]);
                     target->valid_params |= (1 << P_NOTE) | (1 << P_SCALEBITS);
                     target->valid_params &= ~(1 << P_NUMBER);
-                    target->params[P_SCALEBITS] = right_hap->params[P_SCALEBITS];
-                    target->scale_bits = right_hap->scale_bits;
+                    target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
+                    target->scale_bits = right_hap[0]->scale_bits;
                 } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
                     // apply a scale to a note -> quantize to scale
                     target->params[P_NOTE] =
-                        quantize_note_to_scale(right_hap->scale_bits, right_hap->params[P_SCALEBITS], (int)target->params[P_NOTE]);
+                        quantize_note_to_scale(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NOTE]);
                     target->valid_params |= (1 << P_SCALEBITS);
-                    target->params[P_SCALEBITS] = right_hap->params[P_SCALEBITS];
-                    target->scale_bits = right_hap->scale_bits;
+                    target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
+                    target->scale_bits = right_hap[0]->scale_bits;
                 } else { // just copy the value
-                    target->params[param_idx] = right_hap->params[param_idx];
+                    target->params[param_idx] = right_hap[0]->params[param_idx];
                     if (param_idx == P_SCALEBITS)
-                        target->scale_bits = right_hap->scale_bits;
+                        target->scale_bits = right_hap[0]->scale_bits;
                     target->valid_params |= 1 << param_idx;
                 }
+                return 1;
             },
             P_NUMBER);
         break;
     }
+    case N_OP_RANGE: {
+        break;
+
+    case N_OP_MUL:
+        _apply_unary_op(
+            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
+                if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
+                    return 1;
+                int param_idx = __builtin_ctz(target->valid_params);
+                float v = right_hap[0]->params[P_NUMBER];
+                target->params[param_idx] *= v;
+                return 1;
+            },
+            0);
+        break;
+    case N_OP_DIV:
+        _apply_unary_op(
+            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
+                if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
+                    return 1;
+                int param_idx = __builtin_ctz(target->valid_params);
+                float v = right_hap[0]->params[P_NUMBER];
+                target->params[param_idx] /= v;
+                return 1;
+            },
+            0);
+        break;
     case N_OP_ADD:
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, add_value_func, 0);
         break;
@@ -503,19 +609,20 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_CLIP:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t *right_hap, size_t context) {
-                float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) {
+                float value = right_hap[0] ? right_hap[0]->get_param(P_NUMBER, 0.5f) : 0.5f;
                 if (value <= 0.f)
                     target->valid_params = 0;
                 else
                     target->t1 = target->t0 + (target->t1 - target->t0) * value;
+                return 1;
             },
             0);
         break;
     case N_OP_DEGRADE: {
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves,
-            [](hap_t *target, hap_t *right_hap, int new_hapid) {
+            [](hap_t *target, hap_t *right_hap, int new_hapid, hap_time t0, hap_time t1) {
                 float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
                 if (value >= 1.f)
                     return 0;
@@ -601,16 +708,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_ADSR: {
         if (n->num_children < 2)
             break;
-        hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child),
-                                          merge_repeated_leaves);
+        hap_span_t left_haps =
+            _make_haps(dst, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, P_A);
+            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, P_A, a, b);
             if (n->num_children > 2)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, P_D);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, P_D, a, b);
             if (n->num_children > 3)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, P_S);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, P_S, a, b);
             if (n->num_children > 4)
-               _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, P_R);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, P_R, a, b);
         }
         break;
     }
@@ -673,34 +780,40 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             } // looping over subdivisions
         } // numsteps haps
     } // euclid
+    break;
+    }
     } // switch
-        rv.e = dst.s;
-        return rv;
-    } // make_haps
+    if (appended && viz_time >= 0.f) {
+        bfs_start_end[nodeidx].last_evaled_glfw_time = viz_time;
+    }
 
-    void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to) {
-        for (hap_t *hap = haps.s; hap < haps.e; hap++) {
-            // hap onset must overlap the query range
-            if (hap->t0 < from || hap->t0 >= to)
-                continue;
-            if (hap->valid_params == 0) {
-                printf(COLOR_GREY "%08x(%d) %5.2f -> %5.2f (filtered)\n" COLOR_RESET, hap->hapid, hap->node, hap->t0, hap->t1);
-                continue;
-            }
-            printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node, hap->t0,
-                   hap->t1);
-            for (int i = 0; i < P_LAST; i++) {
-                if (hap->valid_params & (1 << i)) {
-                    if (i == P_SOUND) {
-                        Sound *sound = get_sound_by_index((int)hap->params[i]);
-                        printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
-                    } else if (i == P_NOTE) {
-                        printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
-                    } else {
-                        printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
-                    }
+    rv.e = dst.s;
+    return rv;
+} // make_haps
+
+void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to) {
+    for (hap_t *hap = haps.s; hap < haps.e; hap++) {
+        // hap onset must overlap the query range
+        if (hap->t0 < from || hap->t0 >= to)
+            continue;
+        if (hap->valid_params == 0) {
+            printf(COLOR_GREY "%08x(%d) %5.2f -> %5.2f (filtered)\n" COLOR_RESET, hap->hapid, hap->node, hap->t0, hap->t1);
+            continue;
+        }
+        printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node, hap->t0,
+               hap->t1);
+        for (int i = 0; i < P_LAST; i++) {
+            if (hap->valid_params & (1 << i)) {
+                if (i == P_SOUND) {
+                    Sound *sound = get_sound_by_index((int)hap->params[i]);
+                    printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
+                } else if (i == P_NOTE) {
+                    printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
+                } else {
+                    printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
                 }
             }
-            printf("\n");
         }
+        printf("\n");
     }
+}

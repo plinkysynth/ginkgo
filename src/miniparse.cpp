@@ -24,7 +24,6 @@ const static char *param_names[P_LAST] = {
 #include "params.h"
 };
 
-
 enum {
 #include "node_types.h"
     N_LAST
@@ -119,19 +118,21 @@ static void skipws(pattern_maker_t *p) {
                 p->linecount++;
             p->i++;
         }
-        if (p->i + 2 > p->n) return;
-        if (p->s[p->i]!='/') return;
-        if (p->s[p->i+1]=='*') {
+        if (p->i + 2 > p->n)
+            return;
+        if (p->s[p->i] != '/')
+            return;
+        if (p->s[p->i + 1] == '*') {
             // skip block comment
             p->i += 2;
-            while (p->i+1 < p->n) {
-                if (p->s[p->i]=='*' && p->s[p->i+1]=='/') {
-                    p->i+=2;
+            while (p->i + 1 < p->n) {
+                if (p->s[p->i] == '*' && p->s[p->i + 1] == '/') {
+                    p->i += 2;
                     break;
                 }
                 p->i++;
             }
-        } else if (p->s[p->i+1]=='/') {
+        } else if (p->s[p->i + 1] == '/') {
             // skip line comment
             p->i += 2;
             while (p->i < p->n && p->s[p->i] != '\n')
@@ -182,7 +183,8 @@ static int parse_args(pattern_maker_t *p, int group_type, int start, int is_poly
     int leg_start = p->i;
     while (1) {
         char c = peek(p);
-        if (c<=0 || c==close) break;
+        if (c <= 0 || c == close)
+            break;
         int i = parse_expr(p);
         if (i == -1)
             return -1;
@@ -251,7 +253,7 @@ static int parse_group(pattern_maker_t *p, char open, char close, int node_type)
         return -1;
     }
     skipws(p);
-    
+
     int is_poly = node_type == N_POLY;
     int group_node = parse_args(p, is_poly ? N_CAT : node_type, start, is_poly, close);
     if (!consume(p, close)) {
@@ -280,7 +282,7 @@ static int parse_grid(pattern_maker_t *p) {
         error(p, "expected #");
         return -1;
     }
-    bool muted=false;
+    bool muted = false;
     if (peek(p) == '_') {
         consume(p, '_');
         muted = true;
@@ -299,8 +301,8 @@ static int parse_grid(pattern_maker_t *p) {
         p->n = lineend;
         int line_node = (lineend == p->i) ? -1 : parse_args(p, N_FASTCAT, start, false, 0);
         if (line_node >= 0) {
-            p->nodes[line_node].linenumber = max(0,p->linecount);
-            if (prev_child <0)
+            p->nodes[line_node].linenumber = max(0, p->linecount);
+            if (prev_child < 0)
                 p->nodes[group_node].first_child = line_node;
             else
                 p->nodes[prev_child].next_sib = line_node;
@@ -310,7 +312,7 @@ static int parse_grid(pattern_maker_t *p) {
         p->n = actual_end;
         p->i = lineend;
         skipws(p);
-        if (peek(p) == '#') { 
+        if (peek(p) == '#') {
             break;
         }
     }
@@ -324,7 +326,7 @@ static int parse_grid(pattern_maker_t *p) {
     skipws(p);
     if (isdigit(peek(p))) {
         // allow the user to specify a time multiplier for the grid. store it in min_value?
-        const char *end=0;
+        const char *end = 0;
         parse_number(p->s + p->i, p->s + p->n, &end, &lines_per_cycle);
         lines_per_cycle = roundf(lines_per_cycle);
         if (lines_per_cycle <= 0.f) {
@@ -333,15 +335,15 @@ static int parse_grid(pattern_maker_t *p) {
         }
         p->i = end - p->s;
     }
-    if (lines_per_cycle <= 0.f) lines_per_cycle = 1.f;
+    if (lines_per_cycle <= 0.f)
+        lines_per_cycle = 1.f;
     grid_length /= lines_per_cycle;
-    //if (grid_length <= 1.f) grid_length = 1.f;
-    //grid_length = ceilf(grid_length);
+    // if (grid_length <= 1.f) grid_length = 1.f;
+    // grid_length = ceilf(grid_length);
     p->nodes[group_node].min_value = muted ? -lines_per_cycle : lines_per_cycle;
     p->nodes[group_node].max_value = grid_length;
     return group_node;
 }
-
 
 int parse_midinote(const char *s, const char *e, const char **end,
                    int allow_p_prefix) { // if you dont speify *end, midi note must fill all of s-e
@@ -384,7 +386,7 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
     const char *check = s;
     if (*check == '-')
         check++;
-    if (check >= e || (!isdigit(*check) && *check!='.'))
+    if (check >= e || (!isdigit(*check) && *check != '.'))
         return 0;
     char buf[e - s + 1];
     memcpy(buf, s, e - s);
@@ -515,10 +517,7 @@ static int parse_leaf(pattern_maker_t *p) {
 
 static pattern_t *new_pattern_map_during_parse = NULL;
 
-pattern_t *get_pattern(const char *name) {
-    return stbds_shgetp_null(G->patterns_map, name);
-}
-
+pattern_t *get_pattern(const char *name) { return stbds_shgetp_null(G->patterns_map, name); }
 
 static int parse_call(pattern_maker_t *p) {
     const char *start = p->s + p->i;
@@ -552,10 +551,52 @@ static int parse_expr_inner(pattern_maker_t *p) {
         return parse_curve(p);
     case '/':
         return parse_call(p);
-    default:
-        if (isleaf(peek(p)))
-            return parse_leaf(p);
-    }
+    default: {
+        // check if its one of the generators
+        int start_i = p->i;
+        while (p->i < p->n && !isdelimiter(p->s[p->i]) && !isopening(p->s[p->i]))
+            ++p->i;
+        uint32_t name_hash = literal_hash_span(p->s + start_i, p->s + p->i);
+        switch (name_hash) {
+        case HASH("sin"):
+        case HASH("sine"):
+            return make_node(p, N_SIN, -1, -1, start_i, p->i);
+        case HASH("cos"):
+        case HASH("cosine"):
+            return make_node(p, N_COS, -1, -1, start_i, p->i);
+        case HASH("sin2"):
+        case HASH("sine2"):
+            return make_node(p, N_SIN2, -1, -1, start_i, p->i);
+        case HASH("cos2"):
+        case HASH("cosine2"):
+            return make_node(p, N_COS2, -1, -1, start_i, p->i);
+        case HASH("saw"):
+            return make_node(p, N_SAW, -1, -1, start_i, p->i);
+        case HASH("saw2"):
+            return make_node(p, N_SAW2, -1, -1, start_i, p->i);
+        case HASH("rand"):
+        case HASH("random"):
+        case HASH("rnd"):
+            return make_node(p, N_RAND, -1, -1, start_i, p->i);
+        case HASH("rand2"):
+        case HASH("rnd2"):
+        case HASH("random2"):
+            return make_node(p, N_RAND2, -1, -1, start_i, p->i);
+        case HASH("rndi"):
+        case HASH("randomi"):
+        case HASH("randi"): {
+            int param = parse_expr_inner(p);
+            return make_node(p, N_RANDI, param, -1, start_i, p->i);
+        }
+        default:
+            p->i = start_i;
+            if (isleaf(peek(p)))
+                return parse_leaf(p);
+            error(p, "unexpected token");
+            return -1;
+        }
+    } // default
+    } // first switch
     error(p, "unexpected token");
     return -1;
 }
@@ -599,14 +640,14 @@ static int parse_op(pattern_maker_t *p, int left_node, int node_type, int num_pa
     for (int i = 0; i < num_params + optional_right; i++) {
         bool optional = i >= num_params;
         if (!optional)
-           skipws(p); 
-        else {    
+            skipws(p);
+        else {
             int ch = peek(p);
             if (!isleaf(ch) && !isopening(ch))
                 break;
         }
-        int right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will do it in
-                                          // the while loop inside parse_expr.
+        int right_node = parse_expr_inner(p); // we parse inner here to avoid consuming more ops on the RHS; instead we will
+                                              // do it in the while loop inside parse_expr.
         p->nodes[prev_node].next_sib = right_node;
         prev_node = right_node;
     }
@@ -643,9 +684,10 @@ static int parse_expr(pattern_maker_t *p) {
             int i = p->i;
             while (!isdelimiter(p->s[i]) && !isopening(p->s[i]) && !isdigit(p->s[i]))
                 ++i;
-            if (i==p->i && i<p->n) ++i;
+            if (i == p->i && i < p->n)
+                ++i;
             if (i > p->i) {
-                if (p->s[p->i] == '/' && i>p->i+1) {
+                if (p->s[p->i] == '/' && i > p->i + 1) {
                     // call to a pattern... break out of the loop and parse the pattern name as a leaf node.
                     break;
                 }
@@ -734,8 +776,9 @@ void test_minipat(void) {
     // const char *s = "[bd | sd | rim]*8";
     // const char *s = "[[sd] [bd]]"; // test squeeze
     // const char *s = "[sd*<2 1> bd(<3 1 4>,8)]"; // test euclid
-    //const char *s = "c < > d"; // test empty group
-    const char *s = "c adsr 0.1 0.2 0.3 0.4"; // test grid
+    // const char *s = "c < > d"; // test empty group
+    //const char *s = "c gain <sin * 0.8>"; // test grid
+    const char *s = "[a b c] * [2 1]"; // test grid
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
@@ -773,7 +816,7 @@ const char *skip_path(const char *s, const char *e) {
 
 // scan 'e' backwards until we find / at the start of a new line.
 const char *find_start_of_pattern(const char *s, const char *e) {
-    while (s <= e -2) {
+    while (s <= e - 2) {
         if (e[-2] == '\n' && e[-1] == '/')
             return e - 1;
         --e;
@@ -787,8 +830,8 @@ const char *find_end_of_pattern(const char *s, const char *e) {
             ++s; // find new line
         if (s + 3 < e && s[0] == '\n' && s[1] == '/' && s[2] != '/')
             return s; // its a new path
-        if (s + 7 < e && s[0] == '\n' && strncmp(s+1, "#endif", 6) == 0)
-             return s; // its a line starting '#endif'
+        if (s + 7 < e && s[0] == '\n' && strncmp(s + 1, "#endif", 6) == 0)
+            return s; // its a line starting '#endif'
         if (s < e)
             ++s;
     }

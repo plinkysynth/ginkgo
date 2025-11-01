@@ -984,11 +984,13 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             iter_next(&inner);
             t.y = iter_val_as_float(&inner, t.y);
             iter_next(&inner);
-            t.r = iter_val_as_float(&inner, t.r);
+            int r=128, g=128, b=128;
+            r = clamp((int)(iter_val_as_float(&inner, r) * 255.f), 0, 255);
             iter_next(&inner);
-            t.g = iter_val_as_float(&inner, t.g);
+            g = clamp((int)(iter_val_as_float(&inner, g) * 255.f), 0, 255);
             iter_next(&inner);
-            t.b = iter_val_as_float(&inner, t.b);
+            b = clamp((int)(iter_val_as_float(&inner, b) * 255.f), 0, 255);
+            t.col = (r << 16) | (g << 8) | b;
             iter_next(&inner);
             t.mindist = iter_val_as_float(&inner, t.mindist);
             iter_next(&inner);
@@ -1021,7 +1023,6 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         E->zoom = 0.f;
         E->centerx = fbw / 2.f;
         E->centery = fbh / 2.f;
-        E->num_after_filtering = stbds_shlen(E->embeddings);
         free_json(&r);
     }
     //float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
@@ -1036,37 +1037,65 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         float mx_e = (G->mx - E->centerx) / E->zoom;
         float my_e = (G->my - E->centery) / E->zoom;
         E->zoom *= exp2f(G->mscrolly * -0.02f);
+        E->zoom = clamp(E->zoom, 0.01f, 100.f);
         E->centerx = G->mx - mx_e * E->zoom;
         E->centery = G->my - my_e * E->zoom;
         G->mscrolly = 0.f;
     }
     int n = stbds_shlen(E->embeddings);
     int closest_idx = 0;
+    float closest_x = G->mx;
+    float closest_y = G->my;
     float closest_d2 = 1e10;
     auto draw_point = [&](int i, float extra_size, bool matched) -> float2 {
         sample_embedding_t *e = &E->embeddings[i];
-        int r = clamp((int)(e->r * 255.f), 0, 255);
-        int g = clamp((int)(e->g * 255.f), 0, 255);
-        int b = clamp((int)(e->b * 255.f), 0, 255);
-        int col = matched ? (r << 16) | (g << 8) | b | 0x60000000 : 0x10202020;
+        int col = matched ? e->col | 0x60000000 : 0x10202020;
         float x = e->x * E->zoom_sm + E->centerx_sm;
         float y = e->y * E->zoom_sm + E->centery_sm;
         add_line(x, y, x, y, col, /*point_size*/ e->mindist * E->zoom_sm + extra_size);
         return float2{x, y};
     };
-    E->num_after_filtering = 0;
+    int num_after_filtering = 0;
     int filtlen = find_end_of_line(E, 0);
     int new_filter_hash = fnv1_hash(E->str, E->str + filtlen);
     bool autozoom = (new_filter_hash != E->filter_hash) || E->zoom<=0.f;
     E->filter_hash = new_filter_hash;
     float minx=1e10, miny=1e10;
     float maxx=-1e10, maxy=-1e10;
+    int parsed_number = 0;
+    const char *line = NULL;
+    const char *colon = NULL;
+    float fromt = 0.f;
+    float tot = 1.f;
+    if (E->cursor_y>0) {
+        // parse the line
+        int start_idx = find_start_of_line(E, E->cursor_idx);
+        int end_idx = find_end_of_line(E, E->cursor_idx);
+        line = temp_cstring_from_span(E->str + start_idx, E->str + end_idx);
+        colon=strchr(line,':');
+        if (!colon) colon=line+strlen(line); else parsed_number=atoi(colon+1);
+        const char *s=colon;
+        while (*s && !isspace(*s)) s++;
+        const char *from = strstr(s," from ");
+        const char *to = strstr(s," to ");
+        if (from) fromt=clamp(atof(from+5), 0.f, 1.f);
+        if (to) tot=clamp(atof(to+3), 0.f, 1.f);
+        if (fromt>=tot) {
+            float t=fromt; fromt=tot; tot=t;
+        }
+    }
+    float2 matched_p = float2{0.f, 0.f};
     for (int i = 0; i < n; ++i) {
         sample_embedding_t *e = &E->embeddings[i];
+        if (e->sound_idx==-1) continue;
+        const char *soundname = G->sounds[e->sound_idx].value->name;
+        char soundname_with_colon[1024];
+        snprintf(soundname_with_colon, sizeof soundname_with_colon, "%s:%d", soundname, e->sound_number);
         bool matched = true;
-        if (filtlen) {
-            if (e->sound_idx==-1) continue;
-            const char *soundname = G->sounds[e->sound_idx].value->name;
+        if (E->cursor_y>0) {
+            matched = strncasecmp(soundname, line, colon-line)==0 && parsed_number==e->sound_number;
+        }
+        else if (filtlen) {
             matched = false;
             // find the words separated by whitespace in E->str
             const char *ws = E->str;
@@ -1076,30 +1105,32 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                 const char *we = ws;
                 while (we < end && !isspace(*we)) we++;
                 if (we>ws) {
-                    for (const char *s=soundname; *s; s++) {
+                    for (const char *s=soundname_with_colon; *s; s++) {
                         if (strncasecmp(s, ws, we-ws)==0) { matched = true; break; }
                     }
                 }
                 ws=we;
             }
         }
-        bool matched_or_shift = matched || (last_mods & GLFW_MOD_SHIFT);
+        bool matched_or_shift = matched || ((last_mods & GLFW_MOD_SHIFT) && E->cursor_y==0);
         float2 p = draw_point(i, 1.f, matched_or_shift);
         if (matched) {
             minx = min(minx, e->x);
             miny = min(miny, e->y);
             maxx = max(maxx, e->x);
             maxy = max(maxy, e->y);
-            E->num_after_filtering++;
+            matched_p = p;
+            num_after_filtering++;
         }
         if (matched_or_shift) {
             float d2 = square(G->mx - p.x) + square(G->my - p.y);
             if (d2 < closest_d2) {
                 closest_d2 = d2;
                 closest_idx = i;
+                closest_x = p.x;
+                closest_y = p.y;
             }
-        }
-        
+        }        
     }
     draw_point(closest_idx, 30.f, true);
     if (E->old_closest_idx != closest_idx) {
@@ -1123,13 +1154,15 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     if (E->closest_sound_idx != -1) {
         Sound *s = G->sounds[E->closest_sound_idx].value;
         const char *name = s->name;
-        print_to_screen(ptr, G->mx / E->font_width + 2.f, G->my / E->font_height - 0.5f, C_SELECTION, false, "%s:%d", name,
+        print_to_screen(ptr, closest_x / E->font_width + 2.f, closest_y / E->font_height - 0.5f, C_SELECTION, false, "%s:%d", name,
                         E->closest_sound_number);
         if (closest_idx!=-1) {
-            wave_t *w = &G->waves[E->embeddings[closest_idx].wave_idx];
+            sample_embedding_t *e = &E->embeddings[closest_idx];
+            wave_t *w = &G->waves[e->wave_idx];
             int smp0 = 0;
             for (int x=48;x<fbw-48.f;++x) {
-                int smp1 = ((int)(x * (float)w->num_frames / (fbw-96.f))) * w->channels;
+                float f = (x - 48.f) / (fbw-96.f);
+                int smp1 = ((int)(f * w->num_frames)) * w->channels;
                 float mn=1e10, mx=-1e10;
                 for (int s=smp0;s<smp1;++s) {
                     float v = w->frames[s];
@@ -1137,16 +1170,23 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                     mx = max(mx, v);
                 }
                 float ymid = fbh-128.f;
-                add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, 0x80808080, 2.f);
+                add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, (f>=fromt && f<tot) ? e->col : 0x80808080, 2.f);
                 smp0 = smp1;
             }
         }
     }
+    if (num_after_filtering==1 && (matched_p.x < 32.f || matched_p.x > fbw-32.f || matched_p.y < 32.f || matched_p.y > fbh-32.f)) {
+        autozoom = true;
+    }
     if (autozoom) {
-        E->zoom = min(fbw*0.75f / (maxx - minx), fbh*0.9f / (maxy - miny));
+        if (num_after_filtering>1) {
+            E->zoom = min(fbw*0.75f / (maxx - minx + 10.f), fbh*0.9f / (maxy - miny + 10.f));
+        }
+        E->zoom = clamp(E->zoom, 0.01f, 100.f);
         E->centerx = fbw / 2.f - (maxx + minx) / 2.f * E->zoom;
         E->centery = fbh / 2.f - (maxy + miny) / 2.f * E->zoom;
     }
+    E->zoom = clamp(E->zoom, 0.01f, 100.f);
     E->zoom_sm += (E->zoom - E->zoom_sm) * 0.1f;
     E->centerx_sm += (E->centerx - E->centerx_sm) * 0.1f;
     E->centery_sm += (E->centery - E->centery_sm) * 0.1f;

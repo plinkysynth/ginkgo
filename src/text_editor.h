@@ -42,13 +42,13 @@ static_assert(sizeof(character_pos_t) == 4, "character_pos_t should be 4 bytes")
 
 typedef struct sample_embedding_t {
     char *key;
-    float x, y, r, g, b;
+    float x, y;
+    uint32_t col;
     float mindist;
     int wave_idx;
     int sound_idx;
     int sound_number;
 } sample_embedding_t;
-
 
 typedef struct EditorState {
     // all these arrays are stbds_arrs
@@ -100,7 +100,6 @@ typedef struct EditorState {
     int old_closest_idx;
     int closest_sound_idx;
     int closest_sound_number;
-    int num_after_filtering;
     int filter_hash;
     // end of sample picker
 } EditorState;
@@ -118,7 +117,6 @@ static inline int find_end_of_line(EditorState *E, int idx) {
         idx++;
     return idx;
 }
-
 
 // add_line but coords are text
 void add_line(EditorState *E, float p0x, float p0y, float p1x, float p1y, uint32_t col, float width) {
@@ -378,19 +376,20 @@ extern EditorState tabs[3];
 void set_tab(EditorState *newE);
 
 void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
-    if (click_count==1 && is_drag<0 && E->editor_type==2 && E->closest_sound_idx!=-1) {
+    if (click_count == 1 && is_drag < 0 && E->editor_type == 2 && E->closest_sound_idx != -1) {
         char buf[1024];
         snprintf(buf, sizeof(buf), "\n%s:%d", G->sounds[E->closest_sound_idx].value->name, E->closest_sound_number);
-        push_edit_op(E, 0, 0, buf, 0);
-        E->cursor_idx = find_end_of_line(E, 0)+1;
-        E->select_idx = E->cursor_idx;
-        E->cursor_idx = find_end_of_line(E, E->cursor_idx);
-        
-        //glfwSetClipboardString(win, buf);
-        //set_tab(&tabs[1]);
+        int i = find_end_of_line(E, 0);
+        push_edit_op(E, i, i, buf, 0);
+        E->cursor_idx = E->select_idx = find_end_of_line(E, 0);
+
+        // glfwSetClipboardString(win, buf);
+        // set_tab(&tabs[1]);
         return;
     }
     postpone_autocomplete_show(E);
+    if (E->editor_type == 2)
+        return;
     x += E->scroll_x;
     y += E->scroll_y;
     int tmw = (fbw - 64.f) / E->font_width;
@@ -492,7 +491,6 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
     }
 }
 
-
 int jump_to_found_text(EditorState *E, int backwards, int extra_char) {
     int delta = backwards ? -1 : 1;
     int ss = get_select_start(E);
@@ -529,7 +527,13 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     int reset_selection = 0;
     idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
     if (key == GLFW_KEY_ESCAPE && mods == 0) {
-        if (E->find_mode) {
+        if (E->editor_type == 2) {
+            int n = find_end_of_line(E, 0);
+            if (stbds_arrlen(E->str)==n)
+                n=0;
+            stbds_arrsetlen(E->str, n);
+            E->cursor_idx = E->select_idx = n;
+        } else if (E->find_mode) {
             E->find_mode = false;
         } else if (E->autocomplete_options) {
             E->autocomplete_options = NULL;

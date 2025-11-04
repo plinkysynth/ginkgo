@@ -56,10 +56,10 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         G->cpu_usage_smooth = cpu_usage;
     else
         G->cpu_usage_smooth = G->cpu_usage_smooth * 0.999f + cpu_usage * 0.001f;
-    // if (!wav_recording) {
-    //     wav_recording = fopen("recording.wav", "wb");
-    //     write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
-    // }
+    if (!wav_recording) {
+        wav_recording = fopen("recording.wav", "wb");
+        write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
+    }
     if (wav_recording) {
         fwrite(audio, sizeof(stereo), frames * OVERSAMPLE, wav_recording);
         int pos = ftell(wav_recording);
@@ -141,7 +141,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     int version = g_version + 1;
     mkdir("build", 0755);
     #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ build/ginkgo_lib.a "
-    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang " CLANG_OPTIONS "  -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
+    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang++ " CLANG_OPTIONS "  -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
     if (!fp) {

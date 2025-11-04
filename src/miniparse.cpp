@@ -91,8 +91,9 @@ Sound *add_alias_init_only(const char *alias, const char *name) {
 
 const char *print_midinote(int note) {
     static char buf[4];
-    if (note < 0 || note >= 128)
+    if (note < 12 || note >= 128)
         return "";
+    note-=12;
     const static char notenames[12] = {'c', 'c', 'd', 'd', 'e', 'f', 'f', 'g', 'g', 'a', 'a', 'b'};
     const static char notesharps[12] = {' ', 's', ' ', 's', ' ', ' ', 's', ' ', 's', ' ', 's', ' '};
     buf[0] = notenames[note % 12];
@@ -377,7 +378,7 @@ int parse_midinote(const char *s, const char *e, const char **end,
         return -1;
     if (end)
         *end = s;
-    return note + octave * 12;
+    return note + (octave+1) * 12;
 }
 
 static int parse_number(const char *s, const char *e, const char **end, float *number) {

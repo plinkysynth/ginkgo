@@ -1027,12 +1027,6 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     }
     //float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
     
-    if (G->mb == 1) {
-        E->centerx += G->mx - click_mx;
-        E->centery += G->my - click_my;
-        click_mx = G->mx;
-        click_my = G->my;
-    }
     if (G->mscrolly!=0.f) {
         float mx_e = (G->mx - E->centerx) / E->zoom;
         float my_e = (G->my - E->centery) / E->zoom;
@@ -1079,11 +1073,47 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         const char *from = strstr(s," from ");
         const char *to = strstr(s," to ");
         if (from) fromt=clamp(atof(from+5), 0.f, 1.f);
-        if (to) tot=clamp(atof(to+3), 0.f, 1.f);
+        if (to) { tot=clamp(atof(to+3), 0.f, 1.f); if (!tot) tot=1.f; }
         if (fromt>=tot) {
             float t=fromt; fromt=tot; tot=t;
         }
     }
+    if (E->drag_type != 0 && G->mb == 1) {
+        if (E->drag_type == 3) {
+            E->centerx += G->mx - click_mx;
+            E->centery += G->my - click_my;
+            click_mx = G->mx;
+            click_my = G->my;
+        } else {
+            if (E->drag_type == 1) {
+                fromt += (G->mx - click_mx) / (fbw-96.f);
+            } else if (E->drag_type == 2) {
+                tot += (G->mx - click_mx) / (fbw-96.f);
+            } else if (E->drag_type == 4) {
+                fromt += (G->mx - click_mx) / (fbw-96.f);
+                tot += (G->mx - click_mx) / (fbw-96.f);
+            }
+            click_mx = G->mx;
+            fromt = saturate(fromt);
+            tot = saturate(tot);
+            fromt = clamp(fromt, 0.f, tot);
+            tot = clamp(tot, fromt, 1.f);
+        if (E->cursor_y > 0) {
+                int start_idx = find_start_of_line(E, E->cursor_idx);
+                int end_idx = find_end_of_line(E, E->cursor_idx);
+                char buf[1024];
+                int n = snprintf(buf, sizeof(buf), "%s:%d from %0.5g to %0.5g", G->sounds[E->closest_sound_idx].value->name, E->closest_sound_number, fromt, tot);
+                stbds_arrdeln(E->str, start_idx, end_idx - start_idx);
+                stbds_arrinsn(E->str, start_idx, n);
+                memcpy(E->str + start_idx, buf, n);
+                E->cursor_idx = start_idx + n;
+                E->select_idx = E->cursor_idx;
+            }
+        }
+    }
+
+    ////////////// draw it!
+
     float2 matched_p = float2{0.f, 0.f};
     for (int i = 0; i < n; ++i) {
         sample_embedding_t *e = &E->embeddings[i];
@@ -1093,7 +1123,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         snprintf(soundname_with_colon, sizeof soundname_with_colon, "%s:%d", soundname, e->sound_number);
         bool matched = true;
         if (E->cursor_y>0) {
-            matched = strncasecmp(soundname, line, colon-line)==0 && parsed_number==e->sound_number;
+            matched = strlen(soundname) == colon-line && strncasecmp(soundname, line, colon-line)==0 && parsed_number==e->sound_number;
         }
         else if (filtlen) {
             matched = false;
@@ -1133,7 +1163,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         }        
     }
     draw_point(closest_idx, 30.f, true);
-    if (E->old_closest_idx != closest_idx) {
+    if (G->mb == 0 && (E->old_closest_idx != closest_idx || fromt!=G->preview_fromt || tot!=G->preview_tot)) {
         if (G->preview_wave_fade > 0.01f) {
             G->preview_wave_fade *= 0.999f; // start the fade
         } else {
@@ -1145,6 +1175,8 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                 E->old_closest_idx = closest_idx;
                 E->closest_sound_idx = E->embeddings[closest_idx].sound_idx;
                 E->closest_sound_number = E->embeddings[closest_idx].sound_number;
+                G->preview_fromt = fromt;
+                G->preview_tot = tot;
                 G->preview_wave_t = 0.;
                 G->preview_wave_idx_plus_one = wi + 1;
                 G->preview_wave_fade = 1.f;
@@ -1160,6 +1192,17 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             sample_embedding_t *e = &E->embeddings[closest_idx];
             wave_t *w = &G->waves[e->wave_idx];
             int smp0 = 0;
+            float startx = 48.f + fromt * (fbw-96.f);
+            float endx = 48.f + tot * (fbw-96.f);
+            if (w->num_frames) {
+                float playpos_frac = fromt + (G->preview_wave_t * w->sample_rate / w->num_frames);
+                if (playpos_frac >= fromt && playpos_frac < tot) {
+                    float playx = 48.f + playpos_frac * (fbw-96.f);
+                    add_line(playx, fbh-256.f, playx, fbh, 0xffffffff, 4.f);
+                }
+            }
+            add_line(startx, fbh-256.f, startx, fbh, 0xffeeeeee, 3.f);
+            add_line(endx, fbh-256.f, endx, fbh, 0xffeeeeee, 3.f);
             for (int x=48;x<fbw-48.f;++x) {
                 float f = (x - 48.f) / (fbw-96.f);
                 int smp1 = ((int)(f * w->num_frames)) * w->channels;
@@ -1170,7 +1213,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                     mx = max(mx, v);
                 }
                 float ymid = fbh-128.f;
-                add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, (f>=fromt && f<tot) ? e->col : 0x80808080, 2.f);
+                add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, (f>=fromt && f<tot) ? e->col : 0x40404040, 2.f);
                 smp0 = smp1;
             }
         }

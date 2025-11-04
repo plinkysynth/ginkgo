@@ -101,6 +101,7 @@ typedef struct EditorState {
     int closest_sound_idx;
     int closest_sound_number;
     int filter_hash;
+    int drag_type;
     // end of sample picker
 } EditorState;
 
@@ -388,8 +389,6 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
         return;
     }
     postpone_autocomplete_show(E);
-    if (E->editor_type == 2)
-        return;
     x += E->scroll_x;
     y += E->scroll_y;
     int tmw = (fbw - 64.f) / E->font_width;
@@ -405,6 +404,27 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
     if (E->mouse_hovering_chart && is_drag < 0) {
         E->mouse_clicked_chart = click_count > 0;
     }
+    if (E->editor_type == 2) {
+        if (is_drag == 0) {
+            if (y > fbh-256.f && E->cursor_y > 0) {
+                float mid = (G->preview_fromt + G->preview_tot) * 0.5f;
+                mid = 48.f + mid * (fbw-96.f);
+                float left = 48.f + G->preview_fromt * (fbw-96.f);
+                float right = 48.f + G->preview_tot * (fbw-96.f);
+                if (x < left + 8.f) {
+                    E->drag_type = 1;
+                } else if (x > right - 8.f) {
+                    E->drag_type = 2;
+                } else E->drag_type = 4;
+            } else {
+                E->drag_type = 3;
+            }
+        } else if (is_drag < 0) {
+            E->drag_type = 0;
+        }
+        return;
+    }
+
     if (!E->mouse_dragging_chart) {
         // sliders on the right interaction
 

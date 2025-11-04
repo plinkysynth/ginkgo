@@ -43,13 +43,13 @@ typedef double hap_time;
 static const hap_time hap_eps = 1.f / 1000.f; // as large as possible but smaller than the smallest note
 
 
-typedef struct hap_t { 
-    hap_time t0, t1; 
+typedef struct hap_t {
+    int hapid;
     int node; // index of the node that generated this hap.
     uint32_t valid_params; // which params have been assigned for this hap.
-    int hapid;
-    float params[P_LAST];
     int scale_bits;
+    hap_time t0, t1; 
+    float params[P_LAST];
     inline float get_param(int param, float default_value) const { return valid_params & (1 << param) ? params[param] : default_value; } 
     inline float get_param(int param) const { return valid_params & (1 << param) ? params[param] : param_defaults[param]; } 
     bool has_param(int param) const { return valid_params & (1 << param); }

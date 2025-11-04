@@ -2,12 +2,13 @@
 
 void merge_hap(hap_t *dst, hap_t *src) {
     int p = src->valid_params;
-    dst->valid_params |= p;
+    dst->valid_params |= p;    
     while (p) {
         int i = __builtin_ctz(p);
         dst->params[i] = src->params[i];
         p &= ~(1 << i);
     }
+    if (src->has_param(P_SCALEBITS)) dst->scale_bits = src->scale_bits;
 }
 
 
@@ -460,7 +461,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 wave_t *w = get_wave(get_sound_by_index(left_hap->params[P_SOUND]), 0);
                 if (w->num_frames) {
                     float ratio = w->num_frames / (((left_hap->t1 - left_hap->t0) / G->dt) / SAMPLE_RATE * w->sample_rate);
-                    float note = log2(ratio) * 12 + (12*3);
+                    float note = log2(ratio) * 12 + C3;
                     left_hap->params[P_NOTE] = note;
                     left_hap->valid_params |= 1 << P_NOTE;
                 }
@@ -628,9 +629,6 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         goto assign_value;
     case N_OP_CUTOFF:
         param = P_CUTOFF;
-        goto assign_value;
-    case N_OP_RESONANCE:
-        param = P_RESONANCE;
         goto assign_value;
     case N_OP_GAIN:
         param = P_GAIN;

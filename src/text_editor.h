@@ -1553,7 +1553,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         // stbds_arrsetcap(hilites, n);
                         for (int ni = 0; ni < n; ++ni) {
                             const token_info_t *se = &cur_pattern->bfs_start_end[ni];
-                            float time_since_trigger = (G->iTime - se->last_evaled_glfw_time) * 2.f;
+                            float time_since_trigger = (G->iTime - se->last_evaled_glfw_time) * 2.f + 0.1f;
                             if (time_since_trigger >= 0.f && time_since_trigger <= 1.f) {
                                 int col = C_HILITE_NOTE;
                                 hilite_region_t h = {se->start, se->end, col, (int)((1.f - time_since_trigger) * 256)};
@@ -1826,7 +1826,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         for (int j = current_hilite_region; j < nh; ++j) {
                             if (remapped_i >= hilites[j].start && remapped_i < hilites[j].end) {
                                 ccol = interp_color(ccol, (col & 0xfff00u) | hilites[current_hilite_region].color,
-                                                    hilites[current_hilite_region].alpha);
+                                                    clamp(hilites[current_hilite_region].alpha, 0, 127));
                             }
                             if (hilites[j].start > remapped_i + 32)
                                 break; // approximate: breaks for hilites longer than 32

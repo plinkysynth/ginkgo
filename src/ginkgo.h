@@ -50,6 +50,33 @@ typedef uint32_t U;
 #define ffsll __builtin_ffsll
 #define popcountll __builtin_popcountll
 
+typedef struct stereo {
+    float l, r;
+} stereo;
+
+inline stereo st(float l, float r) { return stereo{l, r}; }                                                                                                               \
+inline stereo mono2st(float l) { return stereo{l, l}; }
+#define mono2stereo mono2st
+static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
+static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }
+static inline stereo midside2st(float mid, float side) { return st(mid + side, mid - side); }
+
+static inline stereo operator+(stereo a, stereo b) { return st(a.l + b.l, a.r + b.r); }
+static inline stereo operator+(stereo a, float b) { return st(a.l + b, a.r + b); }
+static inline stereo operator-(stereo a, stereo b) { return st(a.l - b.l, a.r - b.r); }
+static inline stereo operator*(stereo a, float b) { return st(a.l * b, a.r * b); }
+static inline stereo operator*(stereo a, stereo b) { return st(a.l * b.l, a.r * b.r); }
+static inline stereo operator/(stereo a, float b) { return st(a.l / b, a.r / b); }
+static inline void operator+=(stereo &a, stereo b) { a.l += b.l; a.r += b.r; }
+static inline void operator+=(stereo &a, float b) { a.l += b; a.r += b; }
+static inline void operator-=(stereo &a, stereo b) { a.l -= b.l; a.r -= b.r; }
+static inline void operator-=(stereo &a, float b) { a.l -= b; a.r -= b; }
+static inline void operator*=(stereo &a, stereo b) { a.l *= b.l; a.r *= b.r; }
+static inline void operator*=(stereo &a, float b) { a.l *= b; a.r *= b; }
+static inline void operator/=(stereo &a, stereo b) { a.l /= b.l; a.r /= b.r; }
+static inline void operator/=(stereo &a, float b) { a.l /= b; a.r /= b; }
+
+
 #include "notes.h"
 
 typedef struct wave_t {
@@ -70,10 +97,6 @@ typedef struct float_pair_t {
     float k, v;
 } float_pair_t;
 
-typedef struct numbered_state_t {
-    size_t key;
-    float *value;
-} numbered_state_t;
 
 static inline int compare_int_pair(int_pair_t a, int_pair_t b) { return (a.k != b.k) ? a.k - b.k : a.v - b.v; }
 
@@ -130,21 +153,35 @@ struct reverb_state_t {
     float lpf2 = 0.f;
 };
 
+struct delay_state_t {
+    stereo delaybuf[65536];
+    int delay_pos;
+};
+
 typedef struct pattern_t pattern_t;
+
+typedef struct env_follower_t {
+    float lp;
+    float y;
+    float thresh;
+    int line;
+} env_follower_t;
 
 typedef struct basic_state_t {
     int _ver;
     int _size;
-    numbered_state_t curstate; // used via a thread local state_buffer_t to keep floats from one 'sample' to the next.
-    numbered_state_t *states; // stbds_hm 
     float bpm;
     float cpu_usage;
     float cpu_usage_smooth;
     double t; // the current musical time! as a double
     double dt; // change of t per sample
+    stereo preview; // the preview audio. will be mixed at the end, so the shader code can modify it as it wishes.
     int64_t t_q32; // the current musical time! as a 32.32 fixed point number
     uint8_t midi_cc[128];
-    uint32_t midi_cc_gen[128];
+    env_follower_t env_followers[64];
+    int env_followers_idx;
+    int env_followers_hwm;
+    //uint32_t midi_cc_gen[128];
     int cursor_x, cursor_y;
     float mx, my;
     float mscrollx, mscrolly;
@@ -158,6 +195,7 @@ typedef struct basic_state_t {
     pattern_t *patterns_map; // stbds_sh
     wave_request_t *load_requests;
     reverb_state_t R;
+    delay_state_t D;
     double preview_wave_t;
     int preview_wave_idx_plus_one;
     float preview_wave_fade;
@@ -168,8 +206,11 @@ typedef struct basic_state_t {
     
 } basic_state_t;
 
+
 extern basic_state_t *_BG;
 #define G _BG
+
+#define cc(x) (G->midi_cc[16+((x)&7)]/127.f)
 
 #define PI 3.14159265358979323846f
 #define TAU 6.28318530717958647692f
@@ -244,50 +285,6 @@ static inline int euclid_rhythm(int stepidx, int numset, int numsteps, int rot) 
     return ((stepidx * numset) % numsteps) < numset;
 }
 
-typedef struct stereo {
-    float l, r;
-} stereo;
-
-inline stereo st(float l, float r) { return stereo{l, r}; }                                                                                                               \
-inline stereo mono2st(float l) { return stereo{l, l}; }
-#define mono2stereo mono2st
-static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
-static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }
-static inline stereo midside2st(float mid, float side) { return st(mid + side, mid - side); }
-
-static inline stereo operator+(stereo a, stereo b) { return st(a.l + b.l, a.r + b.r); }
-static inline stereo operator+(stereo a, float b) { return st(a.l + b, a.r + b); }
-static inline stereo operator-(stereo a, stereo b) { return st(a.l - b.l, a.r - b.r); }
-static inline stereo operator*(stereo a, float b) { return st(a.l * b, a.r * b); }
-static inline stereo operator*(stereo a, stereo b) { return st(a.l * b.l, a.r * b.r); }
-static inline stereo operator/(stereo a, float b) { return st(a.l / b, a.r / b); }
-static inline void operator+=(stereo &a, stereo b) { a.l += b.l; a.r += b.r; }
-static inline void operator+=(stereo &a, float b) { a.l += b; a.r += b; }
-static inline void operator-=(stereo &a, stereo b) { a.l -= b.l; a.r -= b.r; }
-static inline void operator-=(stereo &a, float b) { a.l -= b; a.r -= b; }
-static inline void operator*=(stereo &a, stereo b) { a.l *= b.l; a.r *= b.r; }
-static inline void operator*=(stereo &a, float b) { a.l *= b; a.r *= b; }
-static inline void operator/=(stereo &a, stereo b) { a.l /= b.l; a.r /= b.r; }
-static inline void operator/=(stereo &a, float b) { a.l /= b; a.r /= b; }
-
-inline size_t set_state(size_t key) { // returns the old key
-    size_t oldkey = G->curstate.key;
-    // update the current state in the map.
-    stbds_hmputs(G->states, G->curstate);
-    // get the new state from the map.
-    int i = stbds_hmgeti(G->states, key);
-    if (i<0) { G->curstate = { key, NULL}; } else G->curstate = G->states[i];
-    return oldkey;
-}
-
-inline float *get_state(int n) { 
-    size_t oldcap = stbds_arrcap(G->curstate.value);
-    float *rv = stbds_arraddnptr(G->curstate.value, n);
-    if (RARE(stbds_arrcap(G->curstate.value) != oldcap)) {
-        memset(rv, 0, 4*n);
-    }
-    return rv;
-}
 
 inline float fast_tanh(float x) {
     float x2 = x * x;
@@ -316,8 +313,7 @@ static inline float tanhXdX(float x) {
 // double f = tan(M_PI * cutoff);
 // double r = (40.0/9.0) * resonance;
 
-static inline float ladder(float inp, float f, float r) {
-    float *s = get_state(5);
+static inline float ladder(float s[5],float inp, float f, float r) {
     r *= 40.f / 9.f;
     // input with half delay, for non-linearities
     // we use s[4] as zi in the original code
@@ -406,53 +402,47 @@ static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc consta
 
 static inline float svf_R(float q) { return 1.f / q; }
 
-static inline float lpf(float x, float fc, float q) {
-    float *state = get_state(2);
+static inline float lpf(float state[2], float x, float fc, float q) {
     float y = svf_process_2pole(state, x, svf_g(fc), svf_R(q)).lp;
     return y;
 }
 
-static inline float hpf(float x, float fc, float q) {
-    float *state = get_state(2);
+static inline float hpf(float state[2], float x, float fc, float q) {
     return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).hp;
 }
 
-static inline float bpf(float x, float fc, float q) {
-    float *state = get_state(2);
+static inline float bpf(float state[2], float x, float fc, float q) {
     return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).bp;
 }
 
 // 4 pole lowpass
-static inline float lpf4(float x, float fc, float q) {
-    float *state = get_state(4);
+static inline float lpf4(float state[4], float x, float fc, float q) {
     float g = svf_g(fc), r = svf_R(q);
     x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).lp;
     return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).lp;
 }
 
 // 4 pole hipass
-static inline float hpf4(float x, float fc, float q) {
-    float *state = get_state(4);
+static inline float hpf4(float state[4], float x, float fc, float q) {
     float g = svf_g(fc), r = svf_R(q);
     x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).hp;
     return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).hp;
 }
 
-static inline float peakf(float x, float gain, float fc, float q) {
-    float *state = get_state(2);
+static inline float peakf(float state[2], float x, float gain, float fc, float q) {
     float R = svf_R(q);
     svf_output_t o = svf_process_2pole(state, x, svf_g(fc), R);
     return x + (gain - 1.f) * o.bp * R;
 }
 
-static inline float notchf(float x, float fc, float q) {
-    float *state = get_state(2);
+static inline float notchf(float state[2], float x, float fc, float q) {
     svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
     return o.lp + o.hp;
 }
 
 void init_basic_state(void);
 stereo reverb(stereo inp);
+stereo delay(stereo inp, float ltime, float rtime, float feedback);
 wave_t *request_wave_load(wave_t *wave);
 
 // for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
@@ -475,7 +465,7 @@ static inline wave_t *get_wave(Sound *sound, int index, float *note= NULL) {
     int n = stbds_arrlen(sound->wave_indices);
     if (!n)
         return NULL;
-    if (note  && sound->midi_notes) {
+    if (note && sound->midi_notes && index==0) {
         int inote = (int)*note;
         int_pair_t pair = {.k = inote, .v = index};
         int nmn = stbds_arrlen(sound->midi_notes);
@@ -516,9 +506,9 @@ static inline wave_t *get_wave_by_name(const char *name) {
 
 static inline stereo sample_wave(wave_t *w, float pos, float loops=1.f, float loope=1.f, float fromt=0.f, float tot=1.f, bool *at_end=NULL) {
     if (!w || !w->frames) {if (at_end) *at_end = true; return {0.f, 0.f};}
-    int nsamps = w->num_frames * saturate(tot-fromt);
+    int nsamps = w->num_frames * abs(tot-fromt);
     if (nsamps<=0) {if (at_end) *at_end = true; return {0.f, 0.f};}
-    int firstsamp = w->num_frames * saturate(fromt);
+    int firstsamp = w->num_frames * saturate(min(fromt, tot));
     //pos *= w->sample_rate;
     if (loops < loope && pos > loops) {
         loops *= nsamps;
@@ -528,6 +518,7 @@ static inline stereo sample_wave(wave_t *w, float pos, float loops=1.f, float lo
         if (at_end) *at_end = true;
         return {0.f, 0.f};
     }
+    if (fromt>tot) pos=nsamps-pos;
     int i = (int)floorf(pos);
     float t = pos - (float)i;
     i %= nsamps;
@@ -593,11 +584,6 @@ static const float minblep_table[129] = { // minBLEP correction for a unit step 
     -0.000953324f, -0.000495978f, -0.000134058f, 0.000123860f,  0.000276211f,  0.000327791f,  0.000288819f,  0.000173761f,
     0.000000000f};
 
-static inline float sino(float dphase) {
-    float *state = get_state(1);
-    state[0] = frac(state[0] + dphase);
-    return sinf(TAU * state[0]);
-}
 
 static inline float minblep(float phase, float dphase) {
     if (dphase <= 0.f)
@@ -609,8 +595,7 @@ static inline float minblep(float phase, float dphase) {
     return minblep_table[i] + (minblep_table[i + 1] - minblep_table[i]) * (bleppos - i);
 }
 
-static inline float rndsmooth(float dphase) {
-    float *state = get_state(5);
+static inline float rndsmooth(float state[5], float dphase) {
     float ph = state[0] + dphase;
     if (ph >= 1.f) {
         state[1] = state[2];
@@ -623,46 +608,36 @@ static inline float rndsmooth(float dphase) {
     return catmull_rom(state[1], state[2], state[3], state[4], ph);
 }
 
-static inline float sawo(float dphase) {
-    float *state = get_state(1);
-    float ph = frac(state[0]);
-    float saw = ph * 2.f - 1.f;
-    saw -= 2.f * minblep(ph, dphase);
-    state[0] = ph + dphase;
+static inline float sino(float phase) {
+    return sinf(TAU * phase);
+}
+
+
+static inline float sawo(float phase, float dphase) {
+    float saw = phase * 2.f - 1.f - 2.f * minblep(phase, dphase);
     return saw;
 }
 
-static inline float pwmo(float dphase, float duty) {
-    float *state = get_state(1);
-    float ph = frac(state[0]);
-    float saw = ph * 2.f - 1.f;
-    saw -= 2.f * minblep(ph, dphase);
-    state[0] = ph + dphase;
-    ph = frac(ph + duty);
-    saw -= ph * 2.f - 1.f;
-    saw += 2.f * minblep(ph, dphase);
-    return saw;
+static inline float pwmo(float phase, float dphase, float duty, float squareness = 1.f) {
+    float saw1 = sawo(phase, dphase);
+    float saw2 = sawo(frac(phase + duty), dphase);
+    return saw1 - saw2 * squareness;
 }
 
-static inline float squareo(float dphase) { return pwmo(dphase, 0.5f); }
+static inline float squareo(float phase, float dphase, float squareness = 1.f) { return pwmo(phase, dphase, 0.5f, squareness); }
 
-static inline float trio(float dphase) {
-    float *state = get_state(2);
-    float ph = frac(state[0] + dphase);
-    float tri = ph * 4.f - 1.f;
+static inline float trio(float phase, float dphase) {
+    float tri = phase * 4.f - 1.f;
     if (tri > 1.f)
         tri = 2.f - tri;
-    return state[1] += (tri - state[1]) * 0.25f;
+    return tri;
 }
 
-static inline float sawo_aliased(float dphase) {
-    float *state = get_state(1);
-    float ph = frac(state[0] + dphase);
-    return 2.f * ph - 1.f;
+static inline float sawo_aliased(float phase, float dphase) {
+    return 2.f * phase - 1.f;
 }
 
-static inline float lpf1(float x, float f) {
-    float *state = get_state(1);
+static inline float lpf1(float state[1], float x, float f) {
     return state[0] += (x - state[0]) * f;
 }
 
@@ -671,8 +646,34 @@ static inline float env_k(float x) {
     return 1.f - exp(-0.00001f / (x*x+0.00025f));
 }
 
-static inline float adsr(bool note_down, float a_k, float d_k, float s, float r_k, bool retrig=false) {
-    float *state = get_state(1);
+static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=right
+    if (balance>0.f) {
+        return st(inp.l * (1.f-balance), inp.r + inp.l * balance);
+    } else {
+        return st(inp.l + inp.r * -balance, inp.r * (1.f+balance));
+    }
+}
+
+#define envfollow(x, ...) (update_envfollow(__LINE__, x, ##__VA_ARGS__))
+
+
+static inline float update_envfollow(int line, float x, float thresh = 0.25f, float decay=0.1f, float attack = 0.f) {
+    int idx = G->env_followers_idx++;
+    if (idx >= 64) return x;
+    env_follower_t *ef = &G->env_followers[idx];
+    ef->line = line;
+    ef->thresh = thresh;
+    x = ef->lp += (x-ef->lp)*0.01f;
+    float d = x-ef->y;
+    ef->y += d * env_k((d>0.f) ? attack : decay);
+    return max(ef->y, thresh);
+}
+
+static inline float update_envfollow(int line, stereo x, float thresh = 0.25f, float decay=0.1f, float attack = 0.f) {
+    return update_envfollow(line, max(fabsf(x.l), fabsf(x.r)), thresh, decay, attack);
+}
+
+static inline float adsr(float state[1], bool note_down, float a_k, float d_k, float s, float r_k, bool retrig=false) {
     if (retrig) *state = fabsf(*state);
     if (note_down) {
         if (state[0] >= 0.f) {
@@ -752,6 +753,8 @@ static inline float rompler(const char *fname) {
 	return wave->frames[smpl*wave->channels];    
 }
 
+stereo prepare_preview(void);
+
 #ifdef LIVECODE
 typedef struct state state;
 stereo do_sample(stereo inp);
@@ -766,25 +769,60 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
     int dt_q32 = G->playing ? G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)) : 0; // on the order of 22000
     G->dt = dt_q32 *(1./4294967296.);
     for (int i = 0; i < frames; i++) {
+        G->env_followers_idx = 0;
         probe = {};
-        // rewind all states to the beginning of the buffer.
-        set_state(0);
-        stbds_arrsetlen(G->curstate.value, 0);
-        int nstates = stbds_hmlen(G->states);
-        for (int j=0;j<nstates;j++) stbds_arrsetlen(G->states[j].value, 0);
+        G->t=G->t_q32*(1./4294967296.);
+        prepare_preview();
         audio[i] = do_sample(audio[i]);
+        audio[i] += G->preview;
         audio[i + frames] = probe;
         G->sampleidx++;
         G->t_q32 += dt_q32;
-        G->t=G->t_q32*(1./4294967296.);
         G->reloaded = 0;
     }
+    G->env_followers_hwm = G->env_followers_idx;
     return G;
 }
 
 #endif
 
-stereo synth(const char *pattern_name);
+typedef double hap_time;
+
+static const hap_time hap_eps = 1.f / 5000.f; // as large as possible but smaller than the smallest note
+
+enum {
+    #define X(x, ...) x,
+    #include "params.h"
+    P_LAST
+};
+
+typedef struct hap_t {
+    int hapid;
+    int node; // index of the node that generated this hap.
+    uint32_t valid_params; // which params have been assigned for this hap.
+    int scale_bits;
+    hap_time t0, t1; 
+    float params[P_LAST];
+    inline float get_param(int param, float default_value) const { return valid_params & (1 << param) ? params[param] : default_value; } 
+    //inline float get_param(int param) const { return valid_params & (1 << param) ? params[param] : param_defaults[param]; } 
+    bool has_param(int param) const { return valid_params & (1 << param); }
+} hap_t;
+
+
+typedef struct voice_state_t {
+    hap_t h;
+    float env;
+    double phase;
+    float vibphase;
+} voice_state_t;
+
+typedef struct synth_state_t {
+    const static int max_voices = 16;
+    stereo audio[96];
+    voice_state_t v[max_voices]; // one voice per voice.
+} synth_state_t;
+
+stereo synth(synth_state_t *synth, const char *pattern_name, int max_voices = 16);
 
 #define STATE_VERSION(version, ...)                                                                                                \
     typedef struct state : public basic_state_t{__VA_ARGS__} state;                                                                \

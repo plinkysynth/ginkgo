@@ -559,6 +559,22 @@ static int parse_expr_inner(pattern_maker_t *p) {
             ++p->i;
         uint32_t name_hash = literal_hash_span(p->s + start_i, p->s + p->i);
         switch (name_hash) {
+        case HASH("cc0"):
+            return make_node(p, N_CC0, -1, -1, start_i, p->i);
+        case HASH("cc1"):
+            return make_node(p, N_CC1, -1, -1, start_i, p->i);
+        case HASH("cc2"):
+            return make_node(p, N_CC2, -1, -1, start_i, p->i);
+        case HASH("cc3"):
+            return make_node(p, N_CC3, -1, -1, start_i, p->i);
+        case HASH("cc4"):
+            return make_node(p, N_CC4, -1, -1, start_i, p->i);
+        case HASH("cc5"):
+            return make_node(p, N_CC5, -1, -1, start_i, p->i);
+        case HASH("cc6"):
+            return make_node(p, N_CC6, -1, -1, start_i, p->i);
+        case HASH("cc7"):
+            return make_node(p, N_CC7, -1, -1, start_i, p->i);
         case HASH("sin"):
         case HASH("sine"):
             return make_node(p, N_SIN, -1, -1, start_i, p->i);

@@ -141,6 +141,7 @@ typedef struct slider_spec_t {
     int end_idx;
     int value_start_idx;
     int value_end_idx;
+    int cc; // -1 if not a cc, otherwise the cc number
     float minval, maxval, curval;
 } slider_spec_t;
 
@@ -214,6 +215,14 @@ int looks_like_slider_comment(const char *str, int n, int idx,
     while (i < n && isspace(str[i]))
         i++;
     out->value_start_idx = i;
+    out->cc = -1;
+    // ok it has to be followed either by a number or the exact string cc(i) for some integer i
+    if (i+5 < n && str[i] == 'c' && str[i+1] == 'c' && str[i+2] == '(' && str[i+3] >= '0' && str[i+3] <= '7' && str[i+4] == ')') {
+        out->value_end_idx = i+5;
+        out->cc = str[i+3] - '0';
+        out->curval = cc(out->cc);
+        return 1;
+    }
     if (!try_parse_number(str, n, i, &out->curval, &i, 0.f))
         return 0;
     out->value_end_idx = i;
@@ -404,6 +413,18 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
     if (E->mouse_hovering_chart && is_drag < 0) {
         E->mouse_clicked_chart = click_count > 0;
     }
+    if (is_drag == 0 && x >= fbw-240.f && y >= fbh-E->font_height-128.f) {
+        E->drag_type = 100 + clamp(int((x-fbw+240.f)/30.f), 0, 7); // cc!
+    }
+    if (E->drag_type >= 100 && E->drag_type < 108) {
+        if (is_drag <0) 
+            E->drag_type = 0;
+        else {
+            int cc = E->drag_type - 100;
+            G->midi_cc[cc+0x10] = clamp(int((fbh-E->font_height)-y), 0, 127);
+        }
+        return ;
+    }
     if (E->editor_type == 2) {
         if (is_drag == 0) {
             if (y > fbh-256.f && E->cursor_y > 0) {
@@ -467,25 +488,29 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
                 v = clamp(v, slider_spec.minval, slider_spec.maxval);
                 // printf("slider value: %f\n", v);
                 if (v != slider_spec.curval) {
-                    char buf[32];
-                    int numdecimals = clamp(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0.f, 5.f);
-                    char fmtbuf[32];
-                    snprintf(fmtbuf, sizeof(fmtbuf), "%%0.%df", numdecimals);
-                    snprintf(buf, sizeof(buf), fmtbuf, v);
-                    char *end = buf + strlen(buf);
-                    if (strrchr(buf, '.'))
-                        while (end > buf && end[-1] == '0')
-                            --end;
-                    *end = 0;
-                    // TODO : undo merging. for now, just poke the text in directly.
-                    stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
-                    stbds_arrdeln(E->new_idx_to_old_idx, slider_spec.value_start_idx,
-                                  slider_spec.value_end_idx - slider_spec.value_start_idx);
-                    stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
-                    memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
-                    stbds_arrinsn(E->new_idx_to_old_idx, slider_spec.value_start_idx, strlen(buf));
-                    for (int i = slider_spec.value_start_idx; i < slider_spec.value_start_idx + strlen(buf); i++) {
-                        E->new_idx_to_old_idx[i] = -1;
+                    if (slider_spec.cc >= 0) {
+                        G->midi_cc[16+slider_spec.cc] = clamp(int(v * 127.f), 0, 127);
+                    } else {
+                        char buf[32];
+                        int numdecimals = clamp(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0.f, 5.f);
+                        char fmtbuf[32];
+                        snprintf(fmtbuf, sizeof(fmtbuf), "%%0.%df", numdecimals);
+                        snprintf(buf, sizeof(buf), fmtbuf, v);
+                        char *end = buf + strlen(buf);
+                        if (strrchr(buf, '.'))
+                            while (end > buf && end[-1] == '0')
+                                --end;
+                        *end = 0;
+                        // TODO : undo merging. for now, just poke the text in directly.
+                        stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
+                        stbds_arrdeln(E->new_idx_to_old_idx, slider_spec.value_start_idx,
+                                    slider_spec.value_end_idx - slider_spec.value_start_idx);
+                        stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
+                        memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
+                        stbds_arrinsn(E->new_idx_to_old_idx, slider_spec.value_start_idx, strlen(buf));
+                        for (int i = slider_spec.value_start_idx; i < slider_spec.value_start_idx + strlen(buf); i++) {
+                            E->new_idx_to_old_idx[i] = -1;
+                        }
                     }
                 }
                 if (is_drag < 0) {
@@ -975,20 +1000,8 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 #define C_CHART_HILITE 0x4643b500u
 #define C_NOTE 0x0000f400u
 
-#define C_SLIDER 0x11148f00u
-#define C_SLIDER_RED 0x111e4300u
-#define C_SLIDER_RED2 0x111e7400u
-#define C_SLIDER_ORANGE 0x111fa400u
-#define C_SLIDER_ORANGE2 0x111fc300u
-#define C_SLIDER_YELLOW 0x111ee200u
-#define C_SLIDER_YELLOW2 0x111efa00u
-#define C_SLIDER_WHITE 0x111eff00u
-#define C_SLIDER_WHITE2 0x1118cf00u
 
-static const uint32_t slidercols[17] = {C_SLIDER_RED,     C_SLIDER_RED2,    C_SLIDER_ORANGE, C_SLIDER_ORANGE2, C_SLIDER_YELLOW,
-                                        C_SLIDER_YELLOW2, C_SLIDER_WHITE,   C_SLIDER_WHITE2, C_SLIDER_RED,     C_SLIDER_RED2,
-                                        C_SLIDER_ORANGE,  C_SLIDER_ORANGE2, C_SLIDER_YELLOW, C_SLIDER_YELLOW2, C_SLIDER_WHITE,
-                                        C_SLIDER_WHITE2,  C_SLIDER};
+#define C_SLIDER 0x11148f00u
 
 uint32_t invert_color(uint32_t col) { // swap fg and bg
     return ((col >> 12) & 0xfff00) + ((col & 0xfff00) << 12) + (col & 0xff);
@@ -1008,7 +1021,7 @@ void set_status_bar(uint32_t color, const char *msg, ...) {
     status_bar_time = glfwGetTime();
 }
 
-float *closest_slider[16] = {}; // 16 closest sliders to the cursor, for midi cc
+//float *closest_slider[16] = {}; // 16 closest sliders to the cursor, for midi cc
 
 void parse_error_log(EditorState *E) {
     hmfree(E->error_msgs);
@@ -1386,9 +1399,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
     bool wasinclude = false;
     int se = get_select_start(E);
     int ee = get_select_end(E);
-    float *sliders[TMH] = {};
-    int sliderindices[TMH];
-    float *new_closest_slider[16] = {};
+    //float *sliders[TMH] = {};
+    //int sliderindices[TMH];
+    //float *new_closest_slider[16] = {};
     /*
     for (int slideridx = 0; slideridx < 16; ++slideridx) {
         for (int i = 0; i < G->sliders_hwm[slideridx]; i += 2) {
@@ -1408,7 +1421,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             }
         }
     }*/
-    memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
+    //memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
     int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
     E->max_width = 0;
@@ -1512,6 +1525,19 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     if (!(E->cursor_idx >= i && E->cursor_idx < j) || (G && G->mb != 0))
                         token_is_slider = true;
                     col = C_SLIDER;
+                    if (slider_spec.cc >= 0) {
+                        const static uint32_t slider_cols[] = {
+                          0x111e4300u,
+                          0x111e4300u,
+                          0x111e7400u,
+                          0x111e7400u,
+                          0x111fc300u,
+                          0x111fc300u,
+                          0x111ffe00u,
+                          0x111ffe00u,
+                        };
+                        col = slider_cols[slider_spec.cc & 7];
+                    }
                 }
             } else if (pattern_mode) {
                 col = C_STR;
@@ -1689,6 +1715,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
         col = C_KW;                                                                                                                \
         break;
 #include "tokens.h"
+/*
                         CASE8("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7") : CASE2("S8", "S9") : {
                             int slideridx = (t.str[i + 1] - '0');
                             if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll_y)
@@ -1713,6 +1740,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     case HASH("S_"):
                         col = C_SLIDER;
                         break;
+                        */
                     case HASH("include"):
                         wasinclude = true;
                         col = C_PREPROC;
@@ -1828,6 +1856,26 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         t.x++;
                     }
                 }
+                // add any vu meters
+                for (int i =0; i< G->env_followers_hwm; i++) {
+                    env_follower_t *ef = &G->env_followers[i];
+                    if (ef->line-1 == ysc) {
+                        float leftx = t.x+1.f;
+                        float lvlx = saturate(1.f+lin2db(ef->y)/48.f) * 16.f + leftx;
+                        float threshx = saturate(1.f+lin2db(ef->thresh)/48.f) * 16.f + leftx;
+                        float maxx = leftx + 16.f;
+                        if (lvlx<threshx) {
+                            add_line(E, leftx, t.y + 0.5f, lvlx, t.y + 0.5f, 0xff108010, -E->font_height);
+                            add_line(E, lvlx, t.y + 0.5f, threshx, t.y + 0.5f, 0x40404040, -E->font_height);
+                            add_line(E, threshx, t.y + 0.5f, maxx, t.y + 0.5f, 0x40101040, -E->font_height);
+                        } else {
+                            add_line(E, leftx, t.y + 0.5f, threshx, t.y + 0.5f, 0xff108010, -E->font_height);
+                            add_line(E, threshx, t.y + 0.5f, lvlx, t.y + 0.5f, 0xff4040c0, -E->font_height);
+                            add_line(E, lvlx, t.y + 0.5f, maxx, t.y + 0.5f, 0x40101040, -E->font_height);
+                        }
+                    }
+                }
+
                 // add any haps that need visualizing
                 // if (grid_line_start != INVALID_LINE && viz_haps.e > viz_haps.s) {
                 //     int hapy = ysc - grid_line_start - 1;

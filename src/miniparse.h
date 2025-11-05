@@ -6,11 +6,6 @@ Sound *add_alias_init_only(const char *short_alias, const char *long_name);
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix); 
 
     
-enum {
-    #define X(x, ...) x,
-    #include "params.h"
-    P_LAST
-};
 
 const static float param_defaults[P_LAST] = {
     #define X(x, shortname, def, ...) def,
@@ -38,22 +33,6 @@ typedef struct Node {
     float min_value, max_value; // parsed value of the node
 } Node;
 
-typedef double hap_time;
-
-static const hap_time hap_eps = 1.f / 1000.f; // as large as possible but smaller than the smallest note
-
-
-typedef struct hap_t {
-    int hapid;
-    int node; // index of the node that generated this hap.
-    uint32_t valid_params; // which params have been assigned for this hap.
-    int scale_bits;
-    hap_time t0, t1; 
-    float params[P_LAST];
-    inline float get_param(int param, float default_value) const { return valid_params & (1 << param) ? params[param] : default_value; } 
-    inline float get_param(int param) const { return valid_params & (1 << param) ? params[param] : param_defaults[param]; } 
-    bool has_param(int param) const { return valid_params & (1 << param); }
-} hap_t;
 
 void merge_hap(hap_t *dst, hap_t *src); // copy valid fields from src onto dst
 

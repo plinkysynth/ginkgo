@@ -169,7 +169,7 @@ const char *kVS_fat = SHADER(
     uniform vec2 fScreenPx;
     void main() {
         vec2 p1 = in_p1, p2 = in_p2;
-        float hw = 0.5 * in_width;
+        float hw = abs(0.5 * in_width);
         vec2 dir = p2-p1;
         float len = length(dir);
         vec2 t = (len<1e-6) ? vec2(hw, 0.0) : dir * -(hw/len);
@@ -178,8 +178,10 @@ const char *kVS_fat = SHADER(
         // 2/4    3
         int corner = gl_VertexID % 6;
         vec2 p = p1;
-        vec2 uv = vec2(-hw,-hw);
-        if ((corner&1)==1) { t=-t; p = p2; uv.y = len+hw;}
+        float vhw = hw; 
+        if (in_width < 0.) { vhw = 0.; t=vec2(0.); } // square cap if in_width is negative
+        vec2 uv = vec2(-hw,-vhw);
+        if ((corner&1)==1) { t=-t; p = p2; uv.y = len+vhw;}
         if (corner>=2 && corner<=4) { n=-n; uv.x=-uv.x;}
         p=p+t+n;
         v_uv  = uv;
@@ -1438,6 +1440,7 @@ void on_midi_input(uint8_t data[3], void *user) {
         int oldccdata = G->midi_cc[cc];
         int newccdata = data[2];
         G->midi_cc[cc] = newccdata;
+        /*
         uint32_t gen = G->midi_cc_gen[cc]++;
         if (gen == 0)
             oldccdata = newccdata;
@@ -1455,6 +1458,7 @@ void on_midi_input(uint8_t data[3], void *user) {
                 closest_slider[cc - 16][0] = newccdata / 127.f;
             }
         }
+            */
     }
     // printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
 }
@@ -2077,6 +2081,25 @@ int main(int argc, char **argv) {
                 col = 0;
             add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
         }
+
+        static const uint32_t cc_cols[] = {
+            0x3344ee,
+            0x3344ee,
+            0x4477ee,
+            0x4477ee,
+            0x33ccff,
+            0x33ccff,
+            0xffffee,
+            0xffffee,
+        };
+        for (int i =0; i < 8; ++i) {
+            float x = fbw+(i-7.5f)*30.f;
+            float y = fbh - curE->font_height;
+            float y2 = y - G->midi_cc[i+0x10];
+            add_line(x, y-128.f, x, y, 0x3f000000 | ((cc_cols[i]>>2)&0x3f3f3f), -20.f); // negative width is square cap
+            add_line(x, y, x, y2, 0x3f000000 | (cc_cols[i]), -20.f);
+        }
+
         draw_logo(iTime - start_time);
         // test_svf_gain();
 

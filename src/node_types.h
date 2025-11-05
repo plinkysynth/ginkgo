@@ -37,6 +37,14 @@ NODE(N_SAW2)
 NODE(N_RAND)
 NODE(N_RAND2)
 NODE(N_RANDI) // takes a max value
+NODE(N_CC0) // for now, 0-7 starting from cc 32
+NODE(N_CC1)
+NODE(N_CC2)
+NODE(N_CC3)
+NODE(N_CC4)
+NODE(N_CC5)
+NODE(N_CC6)
+NODE(N_CC7)
 NODE(N_CAT)
 NODE(N_FASTCAT)
 NODE(N_GRID)
@@ -78,8 +86,11 @@ OP(N_OP_GAIN, "gain", 1, 0)
 OP(N_OP_PAN, "pan", 1, 0)
 OP(N_OP_LOOPS, "loops", 1, 0)
 OP(N_OP_LOOPE, "loope", 1, 0)
+OP(N_OP_FROM, "from", 1, 0)
+OP(N_OP_TO, "to", 1, 0)
 OP(N_OP_CUTOFF, "cut", 1, 0)
 OP(N_OP_RESONANCE, "res", 1, 0)
-
+OP(N_OP_VIB, "vib", 1, 0)
+OP(N_OP_VIB_FREQ, "vibf", 1, 0)
 #undef OP
 #undef NODE

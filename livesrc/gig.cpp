@@ -1,24 +1,43 @@
 
 #ifdef PATTERNS
 
+/*
+HELLO LONDON OPENSLOTS
+
+this is GINKGO - she is new and unfinished / buggy so 
+gotta keep it simple and...
+
+sorry if crash / glitch / etc
+
+also my first time algoraving so forgive me for preparing 
+some patterns in case it all goes wrong
+
+*/
 
 /crunch misc:1? | - | shaker_large:4 
 /rim AkaiXR10_sd:0 gain 0.3 sus 0 dec 0.2
 /drum_pattern [ - hh:3 - hh:3 - hh:3 [ - hh:3?0.7 ] hh:3 ] gain 0.5 sus 0 dec 0.2
 	// ,[/crunch]*16
-	,[- - /crunch - /rim - rim:3 gain 0.4 subroc3d:7 dec 0.05-0.2 sus 0 ]
-	,[bd:14 - - - - bd:14 - -]
+	//,[- - /crunch - /rim - rim:3 gain 0.4 subroc3d:7 dec 0.05-0.2 sus 0 ]
+	//,[bd:14]
 	,[[snare_modern:17 from 0.7 to 0 gain 0.4]  snare_modern:17 : g3 gain 0.7]
-	, break_riffin/2 fit gain [0.7 mul cc1]
+    
+/breakz [break_riffin*8] fitn 16
+    	from [[0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 ]/2 round div 16]
 
-/bassline <a1*2 a2*2 g1*6 g2*4 f1*2 f2*6 [e1 e1 ] [- [e2 e3 e1 e2]]> gain 1 : 1.3 sus 0 dec 0.2 : -0.5
+/bassline <a1*2 a2  g1*6 g2*2 f1*2 f2*6 [e1 e1 ] [- [e2 e3 e1 e2]]> gain 1 : 1.3 sus 0 dec 0.2 : -0.5
+
 /sub <<a1 g1 f1 e1> : -0.99 att 0.1 rel 0.3 gain 0.4>/2
-/cafe2 <[a3,e5,a5,e4] [a3,e5,g5,d4] [f3,c5,a5,f4] [e3,b4,b5,c4,e4]>/2 gain 0.6 att 1.9 rel 0.9 : -1 //: fmpiano
-	<a [ - a2 a3 a2] [g g2] g f f2 [e e2] [c c2 b2 b]> clip 1 sus 0.5 dec 0.1 rel 0.2 add 36 pan 0-1 gain [0.2-0.5 | 0.4 | 0.8] : -1,
 
-/chord <[a2,c3,e3,a3,c4] [g2,d3,g3,b3] [f2,c3,f3,a3] [e2,e3,g3,b3]>/2 : recorder_tenor_vib att 0.5 rel 0.5
+/organ <[a3,e5,a5,e4] [a3,e5,g5,d4] [f3,c5,a5,f4] [e3,b4,b5,c4,e4]>/2
+/plink <- - - - - - - -> //<a [ - a2 a3 a2] [g g2] g f f2 [e e2] [c c2 b2 b]>
 
-/cafe /cafe2,/sub
+/cafe /organ gain 0.7 att 1.9 rel 0.9 : -1
+	/plink clip 1 sus 0.5 dec 0.1 rel 0.2 add 36 pan 0-1 gain [0.2-0.5 | 0.4 | 0.8] : -1,
+    /sub
+
+/recorder <[a2,c3,e3,a3,c4] [g2,d3,g3,b3] [f2,c3,f3,a3] [e2,e3,g3,b3]>/2 : recorder_tenor_vib att 0.5 rel 0.5 gain 0.4
+
 
 /numbers <- - - num : 0-16> gain 0.5
 
@@ -29,32 +48,43 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 STATE_VERSION(1,  
-	synth_state_t pads, drums, bass, vocals, chords;
-    float lpf1[2], lpf0[2],lpf2[2];
+	synth_state_t pads, drums, bass, vocals, chords, breakz;
+    float lpf1[2], lpf0[2],lpf2[2],hpf[4];
     stereo ottstate[16];
+    reverb_state_t R;
+    delay_state_t delay0, delay1;
 )
 
 stereo lol_ott(stereo rv, float amount);
 
+// all the DSP and signal routing is just C :) lol.
 stereo do_sample(stereo inp) {
     stereo rv = {};
-    stereo drums = synth(&G->drums, "/drum_pattern", 		/*======*/cc(0)); // drums
-    														/*======*/cc(1); // breakbeat
+    stereo drums = synth(&G->drums, "/drum_pattern");F dlvl=/*======*/cc(0);  // drums
+    stereo breakz = synth(&G->breakz, "/breakz", 			/*======*/cc(1)); // breakbeat
     stereo bass = synth(&G->bass, "/bass", 					/*======*/cc(2)); // bass
-    stereo chords = synth(&G->chords, "/chord",				/*======*/cc(3)); // chords
+    stereo chords = synth(&G->chords, "/recorder",			/*======*/cc(3)); // chords
     stereo vocals = synth(&G->vocals, "/numbers",			/*======*/cc(4)); // vocals
-    float envf = envfollow(drums, 0.25f, 0.5);
+    
+    // side-chain
+    drums += breakz;
+    float envf = envfollow(drums, 0.1f, 0.5);
+    drums *= dlvl*dlvl;
     stereo pads = synth(&G->pads, "/cafe",              0.3*/*======*/cc(5)); // pads
     pads+=chords;
     G->preview *= 0.5 * 									/*========*/cc(6); // preview
-    pads += delay(pads + vocals*0.4, st(1.5,1.), 1., 1.2) * 0.5;
-    pads+=vocals;
-  	pads+=reverb(pads*0.2f + G->preview * 0.1f);
-    pads/=envf - 0.1;
+    pads += delay(&G->delay0, pads + vocals*0.4, st(1.5,1.), 1., 1.2) * 0.5;
+    bass += hpf(G->hpf, delay(&G->delay1, bass, st(0.75, 1.5), 0.25f, 1.2f) * 0.25, 500.f);
+    //pads+=vocals * 0.1;
+  	pads+=reverb(&G->R, pads*0.5f + G->preview * 0.02f);
+    //drums3+=reverb(&G->R, drums*0.2f);
+    pads/=envf;
     //bass/=(envf - 0.1) * 8.;
 
-	rv = drums + bass + pads;
-	rv = lol_ott(rv, /*======*/0.77);
+
+
+	rv = drums + bass + pads + vocals * 2.;
+	rv = lol_ott(rv, /*======*/0.379);
     
     rv = rv * 					/*=========*/cc(7); // master volume
     // final vu meter for fun

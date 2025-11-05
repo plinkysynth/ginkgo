@@ -347,7 +347,7 @@ static inline int scale_index_to_note(int scalebits, int root, int index) {
 }
 
 int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_time t0, hap_time t1) {
-    if (!right_hap || param_idx >= P_LAST)
+    if (!right_hap[0] || param_idx >= P_LAST)
         return 1;
     int src_idx = param_idx;
     if (!right_hap[0]->has_param(src_idx)) {
@@ -359,6 +359,26 @@ int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_tim
     target->valid_params |= 1 << param_idx;
     return 1;
 }
+
+int apply_fit_func(hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_time t0, hap_time t1) {
+    if (!right_hap || param_idx >= P_LAST)
+        return 1;
+    if (!right_hap[0]->has_param(P_NUMBER))
+        return 1;
+    float n = right_hap[0]->params[P_NUMBER];
+    if (n<=0.f) n=1.f;
+    if (left_hap->has_param(P_SOUND) && G->dt != 0.) {
+        wave_t *w = get_wave(get_sound_by_index(left_hap->params[P_SOUND]), 0);
+        if (w->num_frames) {
+            float ratio = w->num_frames / (((left_hap->t1 - left_hap->t0) / G->dt * n) / SAMPLE_RATE * w->sample_rate);
+            float note = log2(ratio) * 12 + C3;
+            left_hap->params[P_NOTE] = note;
+            left_hap->valid_params |= 1 << P_NOTE;
+        }
+    }
+    return 1;
+}
+
 
 int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time t0, hap_time t1) { // param_idx 1=sub
     if (!right_hap || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
@@ -618,6 +638,17 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             },
             0);
         break;
+    case N_OP_ROUND:
+        _apply_unary_op(
+            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
+                if (!target->valid_params) return 1;
+                int param_idx = __builtin_ctz(target->valid_params);
+                target->params[param_idx] = roundf(target->params[param_idx]);
+                return 1;
+            },
+            0);
+        break;
     case N_OP_DIV:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
@@ -688,6 +719,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     assign_value:
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, apply_value_func, param);
         break;
+    case N_OP_FITN:
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, apply_fit_func, 0);
+        break;
+
     case N_OP_CLIP:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,

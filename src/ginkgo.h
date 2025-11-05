@@ -196,8 +196,6 @@ typedef struct basic_state_t {
     wave_t *waves;
     pattern_t *patterns_map; // stbds_sh
     wave_request_t *load_requests;
-    reverb_state_t R;
-    delay_state_t D;
     double preview_wave_t;
     int preview_wave_idx_plus_one;
     float preview_wave_fade;
@@ -406,18 +404,41 @@ static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc consta
 
 static inline float svf_R(float q) { return 1.f / q; }
 
-static inline float lpf(float state[2], float x, float fc, float q) {
+static inline float lpf(float state[2], float x, float fc, float q= QBUTTER) {
     float y = svf_process_2pole(state, x, svf_g(fc), svf_R(q)).lp;
     return y;
 }
 
-static inline float hpf(float state[2], float x, float fc, float q) {
+static inline float hpf(float state[2], float x, float fc, float q= QBUTTER) {
     return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).hp;
 }
 
-static inline float bpf(float state[2], float x, float fc, float q) {
+static inline float bpf(float state[2], float x, float fc, float q= QBUTTER) {
     return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).bp;
 }
+
+static inline stereo lpf(float state[4], stereo x, float fc, float q= QBUTTER) {
+    float g= svf_g(fc), r=svf_R(q);;
+    float yl = svf_process_2pole(state, x.l, g, r).lp;
+    float yr = svf_process_2pole(state+2, x.r, g, r).lp;
+    return st(yl,yr);
+}
+
+static inline stereo hpf(float state[4], stereo x, float fc, float q= QBUTTER) {
+    float g= svf_g(fc), r=svf_R(q);;
+    float yl = svf_process_2pole(state, x.l, g, r).hp;
+    float yr = svf_process_2pole(state+2, x.r, g, r).hp;
+    return st(yl,yr);
+}
+
+static inline stereo bpf(float state[4], stereo x, float fc, float q= QBUTTER) {
+    float g= svf_g(fc), r=svf_R(q);;
+    float yl = svf_process_2pole(state, x.l, g, r).bp;
+    float yr = svf_process_2pole(state+2, x.r, g, r).bp;
+    return st(yl,yr);
+}
+
+
 
 // 4 pole lowpass
 static inline float lpf4(float state[4], float x, float fc, float q) {
@@ -445,8 +466,8 @@ static inline float notchf(float state[2], float x, float fc, float q) {
 }
 
 void init_basic_state(void);
-stereo reverb(stereo inp);
-stereo delay(stereo inp, stereo time_qn={0.75f, 0.75f}, float feedback=0.5f, float rotate = 0.f);
+stereo reverb(reverb_state_t *R, stereo inp);
+stereo delay(delay_state_t *D, stereo inp, stereo time_qn={0.75f, 0.75f}, float feedback=0.5f, float rotate = 0.f);
 wave_t *request_wave_load(wave_t *wave);
 
 stereo ott(stereo x, stereo state[16]);

@@ -17,8 +17,8 @@ void init_basic_state(void) { _BG->bpm = 120.f; }
 
 #define RVMASK 65535
 
-static float k_reverb_fade = 220 / 256.f; // 240 originally
-static float k_reverb_shim = 80 / 256.f;
+static float k_reverb_fade = 240 / 256.f; // 240 originally
+static float k_reverb_shim = 10 / 256.f; // 80?
 static float k_reverb_wob = 0.3333f;                     // amount of wobble
 static const float lforate1 = 1.f / 32777.f * 9.4f;      // * 2.f; // speed of wobble
 static const float lforate2 = 1.3f / 32777.f * 3.15971f; // * 2.f; // speed of wobble
@@ -31,8 +31,7 @@ static inline float LINEARINTERPRV(const float *buf, int basei, float wobpos) { 
     return ((a0 * (1.f - wobpos) + a1 * wobpos));
 }
 
-stereo plinky_reverb(stereo input) {
-    reverb_state_t *R = &G->R;
+stereo plinky_reverb(reverb_state_t *R, stereo input) {
     float *reverbbuf = R->reverbbuf;
     int i = R->reverb_pos;
     float outl = 0, outr = 0;
@@ -162,23 +161,22 @@ stereo plinky_reverb(stereo input) {
     return st(outl, outr);
 }
 
-stereo delay(stereo inp, stereo time_qn, float feedback, float rotate_angle) {
-    delay_state_t *D = &G->D;
+stereo delay(delay_state_t *D, stereo inp, stereo time_qn, float feedback, float rotate_angle) {
     stereo ret;
     time_qn *= (SAMPLE_RATE * 60.f) / G->bpm;
     stereo readpos = mono2st(D->delay_pos) - time_qn;
-    int il = int(floorf(readpos.l)) & 65535;
-    int ir = int(floorf(readpos.r)) & 65535;
-    ret.l = lerp(D->delaybuf[il].l, D->delaybuf[(il + 1) & 65535].l, frac(readpos.l));
-    ret.r = lerp(D->delaybuf[ir].r, D->delaybuf[(ir + 1) & 65535].r, frac(readpos.r));
+    int il = int(floorf(readpos.l)) & (D->delaybuf_size-1);
+    int ir = int(floorf(readpos.r)) & (D->delaybuf_size-1);
+    ret.l = lerp(D->delaybuf[il].l, D->delaybuf[(il + 1) & (D->delaybuf_size-1)].l, frac(readpos.l));
+    ret.r = lerp(D->delaybuf[ir].r, D->delaybuf[(ir + 1) & (D->delaybuf_size-1)].r, frac(readpos.r));
     ret = rotate(ret, cosf(rotate_angle), sinf(rotate_angle));
     D->delaybuf[D->delay_pos] = ssclip(inp + ret * feedback);
-    D->delay_pos = (D->delay_pos + 1) & 65535;
+    D->delay_pos = (D->delay_pos + 1) & (D->delaybuf_size-1);
     return ret;
 }
 
-stereo reverb(stereo inp) {
-    float *state = G->R.filter_state;
+stereo reverb(reverb_state_t *R, stereo inp) {
+    float *state = R->filter_state;
     stereo *state2 = (stereo *)(state + 8);
     ////////////////////////// 4x DOWNSAMPLE
     inp = (stereo){
@@ -187,7 +185,7 @@ stereo reverb(stereo inp) {
     };
     int outslot = (G->sampleidx >> 2) & 3;
     if ((G->sampleidx & 3) == 0) {
-        state2[outslot] = plinky_reverb(inp);
+        state2[outslot] = plinky_reverb(R, inp);
     }
     ////////////////////////// 4x CATMULL ROM UPSAMPLE
     int t0 = (outslot - 3) & 3, t1 = (outslot - 2) & 3, t2 = (outslot - 1) & 3, t3 = outslot;
@@ -333,17 +331,17 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
 }
 
 stereo monosynth(const char *pattern_name, float glide, monosynth_state_t *state) {
-    return {};  // TODO - pull out the innards of synth, and make it work for a mono synth with glide.
+    return {}; // TODO - pull out the innards of synth, and make it work for a mono synth with glide.
 }
-
 
 stereo synth(synth_state_t *synth, const char *pattern_name, float level, int max_voices) {
     if (max_voices > synth_state_t::max_voices)
         max_voices = synth_state_t::max_voices;
     if (max_voices < 1)
         return {};
-    if (level < 0.f) level = 0.f;
-    level = level*level;
+    if (level < 0.f)
+        level = 0.f;
+    level = level * level;
     if ((G->sampleidx % 96) == 0) {
         memset(synth->audio, 0, sizeof(synth->audio));
         pattern_t *p = stbds_shgetp_null(G->patterns_map, pattern_name);
@@ -352,7 +350,7 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
         hap_t haps[8];
         hap_span_t hs = {};
         if (p && G->playing)
-            hs = p->make_haps({haps, haps + 8}, 8, (level>0.f) ? G->iTime : -1.f, from, to);
+            hs = p->make_haps({haps, haps + 8}, 8, (level > 0.f) ? G->iTime : -1.f, from, to);
         pretty_print_haps(hs, from, to);
         uint32_t retrig = 0;
         for (hap_t *h = hs.s; h < hs.e; h++) {

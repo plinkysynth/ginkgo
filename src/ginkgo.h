@@ -60,7 +60,7 @@ inline stereo mono2st(float l) { return stereo{l, l}; }
 static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }
 static inline stereo midside2st(float mid, float side) { return st(mid + side, mid - side); }
-
+static inline stereo rotate(stereo x, float c, float s) { return st(x.l * c - x.r * s, x.l * s + x.r * c); }
 static inline stereo operator+(stereo a, stereo b) { return st(a.l + b.l, a.r + b.r); }
 static inline stereo operator+(stereo a, float b) { return st(a.l + b, a.r + b); }
 static inline stereo operator-(stereo a, stereo b) { return st(a.l - b.l, a.r - b.r); }
@@ -154,7 +154,8 @@ struct reverb_state_t {
 };
 
 struct delay_state_t {
-    stereo delaybuf[65536];
+    const static int delaybuf_size = 65536*2;
+    stereo delaybuf[delaybuf_size];
     int delay_pos;
 };
 
@@ -171,6 +172,7 @@ typedef struct basic_state_t {
     int _ver;
     int _size;
     float bpm;
+    // float swing; // TODO
     float cpu_usage;
     float cpu_usage_smooth;
     double t; // the current musical time! as a double
@@ -239,6 +241,8 @@ static inline float clamp(float a, float min, float max) { return a < min ? min 
 static inline float square(float x) { return x * x; }
 static inline float frac(float x) { return x - floorf(x); }
 static inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+static inline stereo lerp(stereo a, stereo b, float t) { return a+(b-a)*t; }
 
 static inline float pow2(float x) { return x * x; }
 static inline float pow3(float x) { return x * x * x; }
@@ -442,8 +446,10 @@ static inline float notchf(float state[2], float x, float fc, float q) {
 
 void init_basic_state(void);
 stereo reverb(stereo inp);
-stereo delay(stereo inp, float ltime, float rtime, float feedback);
+stereo delay(stereo inp, stereo time_qn={0.75f, 0.75f}, float feedback=0.5f, float rotate = 0.f);
 wave_t *request_wave_load(wave_t *wave);
+
+stereo ott(stereo x, stereo state[16]);
 
 // for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
 // however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
@@ -655,9 +661,18 @@ static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=
 }
 
 #define envfollow(x, ...) (update_envfollow(__LINE__, x, ##__VA_ARGS__))
+#define vu(x, ...) (add_vu(__LINE__, x, ##__VA_ARGS__))
 
+static inline void add_vu(int line, float x, float thresh) {
+    int idx = G->env_followers_idx++;
+    if (idx >= 64) return ;
+    env_follower_t *ef = &G->env_followers[idx];
+    ef->y = x;
+    ef->line = line;
+    ef->thresh = thresh;
+}
 
-static inline float update_envfollow(int line, float x, float thresh = 0.25f, float decay=0.1f, float attack = 0.f) {
+static inline float update_envfollow(int line, float x, float thresh = 0.25f, float decay=0.2f, float attack = 0.f) {
     int idx = G->env_followers_idx++;
     if (idx >= 64) return x;
     env_follower_t *ef = &G->env_followers[idx];
@@ -669,7 +684,7 @@ static inline float update_envfollow(int line, float x, float thresh = 0.25f, fl
     return max(ef->y, thresh);
 }
 
-static inline float update_envfollow(int line, stereo x, float thresh = 0.25f, float decay=0.1f, float attack = 0.f) {
+static inline float update_envfollow(int line, stereo x, float thresh = 0.25f, float decay=0.2f, float attack = 0.f) {
     return update_envfollow(line, max(fabsf(x.l), fabsf(x.r)), thresh, decay, attack);
 }
 
@@ -822,7 +837,17 @@ typedef struct synth_state_t {
     voice_state_t v[max_voices]; // one voice per voice.
 } synth_state_t;
 
-stereo synth(synth_state_t *synth, const char *pattern_name, int max_voices = 16);
+typedef struct monosynth_state_t {
+    hap_t h;
+    float phase;
+    float vibphase;
+    float dphase; // for glide
+} monosynth_state_t;
+
+hap_t *pat2hap(const char *pattern_name, hap_t *cache);
+stereo synth(synth_state_t *synth, const char *pattern_name, float level=1.f, int max_voices = 16);
+stereo monosynth(const char *pattern_name, float glide, monosynth_state_t *state);
+void multiband_split(stereo x, stereo out[3], stereo state[12]);
 
 #define STATE_VERSION(version, ...)                                                                                                \
     typedef struct state : public basic_state_t{__VA_ARGS__} state;                                                                \

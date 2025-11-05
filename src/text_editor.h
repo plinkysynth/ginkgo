@@ -4,6 +4,11 @@
 #include "miniparse.h"
 #include <ctype.h>
 
+enum {
+    #include "node_types.h"
+        N_LAST
+    };
+    
 void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width);
 
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
@@ -398,6 +403,8 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
         return;
     }
     postpone_autocomplete_show(E);
+    double mx=x; // unscrolled copies
+    double my=y;
     x += E->scroll_x;
     y += E->scroll_y;
     int tmw = (fbw - 64.f) / E->font_width;
@@ -413,28 +420,28 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
     if (E->mouse_hovering_chart && is_drag < 0) {
         E->mouse_clicked_chart = click_count > 0;
     }
-    if (is_drag == 0 && x >= fbw-240.f && y >= fbh-E->font_height-128.f) {
-        E->drag_type = 100 + clamp(int((x-fbw+240.f)/30.f), 0, 7); // cc!
+    if (is_drag == 0 && mx >= fbw-240.f && my >= fbh-E->font_height-128.f) {
+        E->drag_type = 100 + clamp(int((mx-fbw+240.f)/30.f), 0, 7); // cc!
     }
     if (E->drag_type >= 100 && E->drag_type < 108) {
-        if (is_drag <0) 
+        if (is_drag <0)     
             E->drag_type = 0;
         else {
             int cc = E->drag_type - 100;
-            G->midi_cc[cc+0x10] = clamp(int((fbh-E->font_height)-y), 0, 127);
+            G->midi_cc[cc+0x10] = clamp(int((fbh-E->font_height)-my), 0, 127);
         }
         return ;
     }
     if (E->editor_type == 2) {
         if (is_drag == 0) {
-            if (y > fbh-256.f && E->cursor_y > 0) {
+            if (my > fbh-256.f && E->cursor_y > 0) {
                 float mid = (G->preview_fromt + G->preview_tot) * 0.5f;
                 mid = 48.f + mid * (fbw-96.f);
                 float left = 48.f + G->preview_fromt * (fbw-96.f);
                 float right = 48.f + G->preview_tot * (fbw-96.f);
-                if (x < left + 8.f) {
+                if (mx < left + 8.f) {
                     E->drag_type = 1;
-                } else if (x > right - 8.f) {
+                } else if (mx > right - 8.f) {
                     E->drag_type = 2;
                 } else E->drag_type = 4;
             } else {
@@ -977,7 +984,9 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 #define C_TRACKER_BG_4 0x22400000u
 #define C_TRACKER_BG_8 0x33500000u
 #define C_TRACKER_BG_HILITE 0x44600000u
-#define C_HILITE_NOTE 0xe4900000u
+#define C_HILITE_LEAF 0xe4900000u
+#define C_HILITE_NOTE 0x0f400000u
+#define C_HILITE_CALL 0x94e00000u
 
 #define C_AUTOCOMPLETE_SECONDARY 0x111c4800u
 #define C_AUTOCOMPLETE 0xc4800000u
@@ -1555,8 +1564,9 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             const token_info_t *se = &cur_pattern->bfs_start_end[ni];
                             float time_since_trigger = (G->iTime - se->last_evaled_glfw_time) * 2.f + 0.1f;
                             if (time_since_trigger >= 0.f && time_since_trigger <= 1.f) {
-                                int col = C_HILITE_NOTE;
-                                hilite_region_t h = {se->start, se->end, col, (int)((1.f - time_since_trigger) * 256)};
+                                int type = cur_pattern->bfs_nodes[ni].type;
+                                int hcol = type==N_CALL ? C_HILITE_CALL : ((col<<3)&0xfff00000u);
+                                hilite_region_t h = {se->start, se->end, hcol, (int)((1.f - time_since_trigger) * 256)};
                                 stbds_arrpush(hilites, h);
                             }
                         }

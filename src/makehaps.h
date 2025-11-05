@@ -386,7 +386,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         int patidx = (int)bfs_min_max_value[nodeidx].mx;
         if (patidx >= 0 && patidx < stbds_shlen(G->patterns_map)) {
             pattern_t *pat = &G->patterns_map[patidx];
-            pat->_make_haps(dst, tmp_size, viz_time, 0, a, b, hapid, merge_repeated_leaves);
+            hap_span_t hs = pat->_make_haps(dst, tmp_size, viz_time, 0, a, b, hapid, merge_repeated_leaves);
+            if (hs.e > dst.s) {
+                appended = true; 
+            }
         }
         break;
     }

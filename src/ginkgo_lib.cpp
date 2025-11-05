@@ -352,7 +352,7 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
         hap_t haps[8];
         hap_span_t hs = {};
         if (p && G->playing)
-            hs = p->make_haps({haps, haps + 8}, 8, level>0.f ? G->iTime : -1.f, from, to);
+            hs = p->make_haps({haps, haps + 8}, 8, (level>0.f) ? G->iTime : -1.f, from, to);
         pretty_print_haps(hs, from, to);
         uint32_t retrig = 0;
         for (hap_t *h = hs.s; h < hs.e; h++) {

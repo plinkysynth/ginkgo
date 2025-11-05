@@ -6,7 +6,7 @@
 /rim AkaiXR10_sd:0 gain 0.3 sus 0 dec 0.2
 /drum_pattern [ - hh:3 - hh:3 - hh:3 [ - hh:3?0.7 ] hh:3 ] gain 0.5 sus 0 dec 0.2
 	// ,[/crunch]*16
-	// ,[- - /crunch - /rim - rim:3 gain 0.4 subroc3d:7 dec 0.05-0.2 sus 0 ]
+	,[- - /crunch - /rim - rim:3 gain 0.4 subroc3d:7 dec 0.05-0.2 sus 0 ]
 	,[bd:14 - - - - bd:14 - -]
 	,[[snare_modern:17 from 0.7 to 0 gain 0.4]  snare_modern:17 : g3 gain 0.7]
 	, break_riffin/2 fit gain [0.7 mul cc1]

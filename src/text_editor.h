@@ -1565,7 +1565,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             float time_since_trigger = (G->iTime - se->last_evaled_glfw_time) * 2.f + 0.1f;
                             if (time_since_trigger >= 0.f && time_since_trigger <= 1.f) {
                                 int type = cur_pattern->bfs_nodes[ni].type;
-                                int hcol = type==N_CALL ? C_HILITE_CALL : ((col<<3)&0xfff00000u);
+                                int hcol = C_HILITE_LEAF; //  type==N_CALL ? C_HILITE_CALL : ((col<<3)&0xfff00000u);
                                 hilite_region_t h = {se->start, se->end, hcol, (int)((1.f - time_since_trigger) * 256)};
                                 stbds_arrpush(hilites, h);
                             }
@@ -1836,7 +1836,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         for (int j = current_hilite_region; j < nh; ++j) {
                             if (remapped_i >= hilites[j].start && remapped_i < hilites[j].end) {
                                 ccol = interp_color(ccol, (col & 0xfff00u) | hilites[current_hilite_region].color,
-                                                    clamp(hilites[current_hilite_region].alpha, 0, 127));
+                                                    clamp(hilites[current_hilite_region].alpha, 0, 192));
                             }
                             if (hilites[j].start > remapped_i + 32)
                                 break; // approximate: breaks for hilites longer than 32

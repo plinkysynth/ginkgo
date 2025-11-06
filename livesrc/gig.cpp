@@ -124,9 +124,6 @@ stereo lol_ott(stereo rv, float amount) {
     vu(m*mgain, lothreshm * makeupm);
     vu(h*hgain, lothreshh * makeuph);
     rv=sclip(bands[0] * bgain + bands[1] * mgain + bands[2] * hgain);
-    int *p = 0;
-    *p=3;
-
     return rv;
 }
 

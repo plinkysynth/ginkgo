@@ -3,6 +3,7 @@
 
 /*
 HELLO LONDON OPENSLOTS
+
 this is GINKGO - she is new and unfinished / buggy so 
 gotta keep it simple and...
 
@@ -14,8 +15,8 @@ sorry if crash / glitch / etc
 /rim AkaiXR10_sd:0 gain 0.3 sus 0 dec 0.2
 /drum_pattern [ - hh:3 - hh:3 - hh:3 [ - hh:3?0.7 ] hh:3 ] gain 0.5 sus 0 dec 0.2
 	// ,[/crunch]*16
-	,[- - /crunch - /rim - rim:3 gain 0.4 subroc3d:7 dec 0.05-0.2 sus 0 ]
-	,[bd:14]
+	//,[- - /crunch - /rim - rim:3 gain 0.4 subroc3d:7 dec 0.05-0.2 sus 0 ]
+	//,[bd:14]
 	,[[snare_modern:17 from 0.7 to 0 gain 0.4]  snare_modern:17 : g3 gain 0.7]
     
 /breakz [break_riffin*8] fitn 16
@@ -23,12 +24,10 @@ sorry if crash / glitch / etc
 
 /bassline <a1*2 a2  g1*6 g2*2 f1*2 f2*6 [e1 e1 ] [- [e2 e3 e1 e2]]> gain 1 : 1.3 sus 0 dec 0.2 : -0.5
 
-/sub <<a1 g1 f1 e1> : -0.99 att 0.1 rel 0.3 gain 0.3>/2
+/sub <<a1 g1 f1 e1> : -0.99 att 0.1 rel 0.3 gain 0.4>/2
 
 /organ <[a3,e5,a5,e4] [a3,e5,g5,d4] [f3,c5,a5,f4] [e3,b4,b5,c4,e4]>/2
-/plink <a [ - a2 a3 a2] [g g2] g f f2 [e e2] [c c2 b2 b]>
-
-
+/plink <- - - - - - - -> //<a [ - a2 a3 a2] [g g2] g f f2 [e e2] [c c2 b2 b]>
 
 /cafe /organ gain 0.7 att 1.9 rel 0.9 : -1
 	/plink clip 1 sus 0.5 dec 0.1 rel 0.2 add 36 pan 0-1 gain [0.2-0.5 | 0.4 | 0.8] : -1,
@@ -82,19 +81,19 @@ stereo do_sample(stereo inp) {
 
 
 	rv = drums + bass + pads + vocals * 2.;
-	rv = lol_ott(rv, /*======*/0.376);
+	rv = lol_ott(rv, /*======*/0.379);
     
-    rv = rv  *				/*=========*/cc(7); // master volume
+    rv = rv * 					/*=========*/cc(7); // master volume
     // final vu meter for fun
     envfollow(rv.l);
     envfollow(rv.r);
-    return rv;
+    return rv * 0.5;
 }
 
 // inf upward, 4:1 downward
 inline float compgain(float inp, float lothresh, float hithresh, float makeup) {
-	if (inp > hithresh) return min(32.f,sqrtf(sqrtf(hithresh/inp)) * makeup);
-    if (inp < lothresh) return min(32.f,lothresh/inp * makeup);
+	if (inp > hithresh) return sqrtf(sqrtf(hithresh/inp)) * makeup;
+    if (inp < lothresh) return lothresh/inp * makeup;
     return makeup;
 }
 
@@ -124,9 +123,6 @@ stereo lol_ott(stereo rv, float amount) {
     vu(m*mgain, lothreshm * makeupm);
     vu(h*hgain, lothreshh * makeuph);
     rv=sclip(bands[0] * bgain + bands[1] * mgain + bands[2] * hgain);
-    int *p = 0;
-    *p=3;
-
     return rv;
 }
 

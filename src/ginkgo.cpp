@@ -35,6 +35,7 @@
 #include "morton.h"
 #include "json.h"
 #include "logo.h"
+#include "crash.h"
 
 #define RESW 1920
 #define RESH 1080
@@ -1815,6 +1816,8 @@ void set_aradjust(GLuint shader, int fbw, int fbh) {
 
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
+    void install_crash_handler(void);
+    install_crash_handler();
     if (!glfwInit())
         die("glfwInit failed");
     int count = 0;

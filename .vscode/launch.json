@@ -11,7 +11,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/ginkgo",
             "cwd": "${workspaceFolder}",
-            "args": [],
+            "args": ["-f"],
             "env": {},
             "terminal": "integrated",
             "preLaunchTask": "make",

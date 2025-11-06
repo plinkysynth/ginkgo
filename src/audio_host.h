@@ -46,6 +46,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     }
     // this causes the dll's copy of G to be copied to the main program's copy of G.
     uint64_t t0 = nsec_now();
+
     if (dsp)
         G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp);
     uint64_t t1 = nsec_now();

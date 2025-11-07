@@ -416,7 +416,7 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
     if (E->mouse_hovering_chart && is_drag < 0) {
         E->mouse_clicked_chart = click_count > 0;
     }
-    float cc_bar_x = fbw - E->font_width * 14.f;
+    float cc_bar_x = fbw - E->font_width * 16.f;
     float cc_bar_height = E->font_height;
     if (is_drag == 0 && mx >= cc_bar_x-240.f && my >= fbh-cc_bar_height) {
         E->drag_type = 100 + clamp(int((mx-cc_bar_x+240.f)/30.f), 0, 7); // cc!

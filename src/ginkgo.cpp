@@ -2255,7 +2255,7 @@ int main(int argc, char **argv) {
             0xffffee,
             0xffffee,
         };
-        float cc_bar_x = fbw - curE->font_width * 14.f;
+        float cc_bar_x = fbw - curE->font_width * 16.f;
         float cc_bar_height = curE->font_height;
         for (int i =0; i < 8; ++i) {
             float x = cc_bar_x + (i-7.5f)*30.f;

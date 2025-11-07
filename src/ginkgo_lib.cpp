@@ -400,7 +400,7 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
             int sound = h->get_param(P_SOUND, 0);
             int first_smpl = (h->t0 - from) / G->dt;
             if (first_smpl >= 96) {
-                printf("FIRST SAMPLE OUT OF BOUNDS. SKIPPING %d\n", i);
+                //printf("FIRST SAMPLE OUT OF BOUNDS. SKIPPING %d\n", i);
                 continue;
             }
             if (first_smpl < 0)

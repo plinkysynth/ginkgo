@@ -386,7 +386,7 @@ static inline void postpone_autocomplete_show(EditorState *E) { E->autocomplete_
 extern EditorState tabs[3];
 void set_tab(EditorState *newE);
 
-void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, float y, int is_drag, int click_count) {
+void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, float y, int is_drag, int click_count) {
     if (click_count == 1 && is_drag < 0 && E->editor_type == 2 && E->closest_sound_idx != -1) {
         char buf[1024];
         snprintf(buf, sizeof(buf), "\n%s:%d", G->sounds[E->closest_sound_idx].value->name, E->closest_sound_number);

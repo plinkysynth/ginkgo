@@ -90,9 +90,9 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         // saturation on output...
         stereo acc, probe;
         if (OVERSAMPLE == 2) {
-            probe = (audio[k*2+0+frames*2]+audio[k*2+1+frames*2]); // cheap downsample for probe ;)
-            history[history_pos & 63] = (ensure_finite(audio[k*2+0]));
-            history[(history_pos + 1) & 63] = (ensure_finite(audio[k*2+1]));
+            probe = (audio[k*2+0+frames*2]+audio[k*2+1+frames*2]); // cheap downsample for probe ;) 
+            history[history_pos & 63] = limiter(G->limiter_state, ensure_finite(audio[k*2+0]));
+            history[(history_pos + 1) & 63] = limiter(G->limiter_state, ensure_finite(audio[k*2+1]));
             history_pos += 2;
             // 2x downsample FIR
             int center_idx = history_pos - K * 2;
@@ -107,7 +107,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
             }
         } else {
             probe = audio[k+frames];
-            acc = (ensure_finite(audio[k]));
+            acc = limiter(G->limiter_state, ensure_finite(audio[k]));
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;
@@ -158,7 +158,8 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
 #else
     #define SANITIZE_OPTIONS ""
 #endif
-    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
+    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\n#include \\\"ginkgo_post.h\\\"\" |clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
+    printf("[%s]\n", cmd);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
     if (!fp) {

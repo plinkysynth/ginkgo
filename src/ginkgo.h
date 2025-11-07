@@ -147,7 +147,17 @@ typedef struct wave_request_t {
     wave_t *key;
 } wave_request_t;
 
-struct reverb_state_t {
+typedef struct lfo_t {
+    float state[2];
+    inline float operator()(float sin_dphase) { // quadrature oscillator magic
+        state[0] -= (state[1] * sin_dphase);
+        return state[1] += (state[0] * sin_dphase);
+    }
+} lfo_t;
+
+
+
+struct reverb_t {
     float filter_state[16];
     float reverbbuf[65536];
     int reverb_pos;
@@ -155,17 +165,22 @@ struct reverb_state_t {
     int shimmerpos2 = 1000;
     int shimmerfade = 0;
     int dshimmerfade = 32768 / 4096;
-    float aplfo[2] = {1.f, 0.f};
-    float aplfo2[2] = {1.f, 0.f};
+    lfo_t aplfo = {1.f, 0.f};
+    lfo_t aplfo2 = {1.f, 0.f};
     float fb1 = 0;
     float lpf = 0.f, dc = 0.f;
     float lpf2 = 0.f;
+
+    stereo operator()(stereo inp);
+    stereo _run_internal(stereo inp);
 };
 
-struct delay_state_t {
+struct delay_t {
     const static int delaybuf_size = 65536*2;
     stereo delaybuf[delaybuf_size];
     int delay_pos;
+
+    stereo operator()(stereo inp, stereo time_qn={0.75f, 0.75f}, float feedback=0.5f, float rotate = 0.f);
 };
 
 typedef struct pattern_t pattern_t;
@@ -177,8 +192,7 @@ typedef struct env_follower_t {
     int line;
 } env_follower_t;
 
-typedef struct basic_state_t {
-    int _ver;
+typedef struct song_base_t {
     int _size;
     float bpm;
     // float swing; // TODO
@@ -210,14 +224,14 @@ typedef struct basic_state_t {
     float preview_wave_fade;
     float preview_fromt;
     float preview_tot;
+    float limiter_state[2];
     uint8_t reloaded;
     uint8_t playing;
     
-} basic_state_t;
+} song_base_t;
 
 
-extern basic_state_t *_BG;
-#define G _BG
+extern song_base_t *G;
 
 #define cc(x) (G->midi_cc[16+((x)&7)]/127.f)
 
@@ -265,27 +279,6 @@ static inline float lin2db(float x) { return 8.6858896381f * logf(max(1e-20f, x)
 static inline float db2lin(float x) { return expf(x / 8.6858896381f); }
 static inline float squared2db(float x) { return 4.342944819f * logf(max(1e-20f, x)); }
 static inline float db2squared(float x) { return expf(x / 4.342944819f); }
-
-static inline float update_lfo(float state[2], float sin_dphase) { // quadrature oscillator magic
-    state[0] -= (state[1] * sin_dphase);
-    return state[1] += (state[0] * sin_dphase);
-}
-
-static inline float lfo(float state[2], float dphase) {
-    update_lfo(state, dphase);
-    return state[1];
-}
-
-static inline const float *lfo2(float state[2],float dphase) { // quadrature output
-    update_lfo(state, dphase);
-    return state;
-}
-
-static inline float slew(float state[1],float x, float upfac = 1e-5, float downfac = 1e-5) {
-    float old = state[0];
-    state[0] = old + (x - old) * ((x > old) ? upfac : downfac);
-    return state[0];
-}
 
 // TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.
 // but this is simple so we'll go with simple.
@@ -413,73 +406,87 @@ static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc consta
 
 static inline float svf_R(float q) { return 1.f / q; }
 
-static inline float lpf(float state[2], float x, float fc, float q= QBUTTER) {
-    float y = svf_process_2pole(state, x, svf_g(fc), svf_R(q)).lp;
-    return y;
-}
+typedef struct filter_t {
+    float state[4];
+    inline float lpf(float x, float fc, float q= QBUTTER) {
+        return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).lp;
+    }
+    inline stereo lpf(stereo x, float fc, float q= QBUTTER) {
+        float g= svf_g(fc), r=svf_R(q);
+        float yl = svf_process_2pole(state, x.l, g, r).lp;
+        float yr = svf_process_2pole(state+2, x.r, g, r).lp;
+        return st(yl,yr);
+    }
+    inline float lpf4(float x, float fc, float q= QBUTTER) {
+        float g= svf_g(fc), r=svf_R(q);
+        x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).lp;
+        return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).lp;
+    }
+    inline float hpf(float x, float fc, float q= QBUTTER) {
+        return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).hp;
+    }
+    inline stereo hpf(stereo x, float fc, float q= QBUTTER) {
+        float g= svf_g(fc), r=svf_R(q);
+        float yl = svf_process_2pole(state, x.l, g, r).hp;
+        float yr = svf_process_2pole(state+2, x.r, g, r).hp;
+        return st(yl,yr);
+    }
+    inline float hpf4(float x, float fc, float q= QBUTTER) {
+        float g= svf_g(fc), r=svf_R(q);
+        x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).hp;
+        return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).hp;
+    }
+    inline float bpf(float x, float fc, float q= QBUTTER) {
+        return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).bp;
+    }
+    inline stereo bpf(stereo x, float fc, float q= QBUTTER) {
+        float g= svf_g(fc), r=svf_R(q);
+        float yl = svf_process_2pole(state, x.l, g, r).bp;
+        float yr = svf_process_2pole(state+2, x.r, g, r).bp;
+        return st(yl,yr);
+    }
+    inline float peakf(float x, float gain, float fc, float q) {
+        float R = svf_R(q);
+        svf_output_t o = svf_process_2pole(state, x, svf_g(fc), R);
+        return x + (gain - 1.f) * o.bp * R;
+    }    
+    inline stereo peakf(stereo x, float gain, float fc, float q) {
+        float R = svf_R(q), g= svf_g(fc);
+        svf_output_t o_l = svf_process_2pole(state, x.l, g, R);
+        svf_output_t o_r = svf_process_2pole(state+2, x.r, g, R);
+        stereo rv;
+        rv.l = x.l + (gain - 1.f) * o_l.bp * R;
+        rv.r = x.r + (gain - 1.f) * o_r.bp * R;
+        return rv;
+    }
+    inline float notchf(float x, float fc, float q) {
+        svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
+        return o.lp + o.hp;
+    }
+    inline stereo notchf(stereo x, float fc, float q) {
+        float g= svf_g(fc), r=svf_R(q);
+        svf_output_t o_l = svf_process_2pole(state, x.l, g, r);
+        svf_output_t o_r = svf_process_2pole(state+2, x.r, g, r);
+        stereo rv;
+        rv.l = o_l.lp + o_l.hp;
+        rv.r = o_r.lp + o_r.hp;
+        return rv;
+    }
 
-static inline float hpf(float state[2], float x, float fc, float q= QBUTTER) {
-    return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).hp;
-}
-
-static inline float bpf(float state[2], float x, float fc, float q= QBUTTER) {
-    return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).bp;
-}
-
-static inline stereo lpf(float state[4], stereo x, float fc, float q= QBUTTER) {
-    float g= svf_g(fc), r=svf_R(q);;
-    float yl = svf_process_2pole(state, x.l, g, r).lp;
-    float yr = svf_process_2pole(state+2, x.r, g, r).lp;
-    return st(yl,yr);
-}
-
-static inline stereo hpf(float state[4], stereo x, float fc, float q= QBUTTER) {
-    float g= svf_g(fc), r=svf_R(q);;
-    float yl = svf_process_2pole(state, x.l, g, r).hp;
-    float yr = svf_process_2pole(state+2, x.r, g, r).hp;
-    return st(yl,yr);
-}
-
-static inline stereo bpf(float state[4], stereo x, float fc, float q= QBUTTER) {
-    float g= svf_g(fc), r=svf_R(q);;
-    float yl = svf_process_2pole(state, x.l, g, r).bp;
-    float yr = svf_process_2pole(state+2, x.r, g, r).bp;
-    return st(yl,yr);
-}
-
-
-
-// 4 pole lowpass
-static inline float lpf4(float state[4], float x, float fc, float q) {
-    float g = svf_g(fc), r = svf_R(q);
-    x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).lp;
-    return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).lp;
-}
-
-// 4 pole hipass
-static inline float hpf4(float state[4], float x, float fc, float q) {
-    float g = svf_g(fc), r = svf_R(q);
-    x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).hp;
-    return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).hp;
-}
-
-static inline float peakf(float state[2], float x, float gain, float fc, float q) {
-    float R = svf_R(q);
-    svf_output_t o = svf_process_2pole(state, x, svf_g(fc), R);
-    return x + (gain - 1.f) * o.bp * R;
-}
-
-static inline float notchf(float state[2], float x, float fc, float q) {
-    svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
-    return o.lp + o.hp;
-}
+} filter_t;
 
 void init_basic_state(void);
-stereo reverb(reverb_state_t *R, stereo inp);
-stereo delay(delay_state_t *D, stereo inp, stereo time_qn={0.75f, 0.75f}, float feedback=0.5f, float rotate = 0.f);
 wave_t *request_wave_load(wave_t *wave);
 
-stereo ott(stereo x, stereo state[16]);
+typedef struct multiband_t {
+    stereo state[12];
+    void  operator()(stereo x, stereo out[3]);
+} multiband_t;
+
+typedef struct ott_t {
+    multiband_t multiband;
+    stereo operator()(stereo rv, float amount);
+} ott_t;
 
 // for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
 // however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
@@ -631,18 +638,21 @@ static inline float minblep(float phase, float dphase) {
     return minblep_table[i] + (minblep_table[i + 1] - minblep_table[i]) * (bleppos - i);
 }
 
-static inline float rndsmooth(float state[5], float dphase) {
-    float ph = state[0] + dphase;
-    if (ph >= 1.f) {
-        state[1] = state[2];
-        state[2] = state[3];
-        state[3] = state[4];
-        state[4] = rndt();
-        ph -= 1.f;
+typedef struct rndsmooth_t {
+    float state[5];
+    inline float operator()(float dphase) {
+        float ph = state[0] + dphase;
+        if (ph >= 1.f) {
+            state[1] = state[2];
+            state[2] = state[3];
+            state[3] = state[4];
+            state[4] = rndt();
+            ph -= 1.f;
+        }
+        state[0] = ph;
+        return catmull_rom(state[1], state[2], state[3], state[4], ph);
     }
-    state[0] = ph;
-    return catmull_rom(state[1], state[2], state[3], state[4], ph);
-}
+} rndsmooth_t;
 
 static inline float sino(float phase) {
     return sinf(TAU * phase);
@@ -673,10 +683,6 @@ static inline float sawo_aliased(float phase, float dphase) {
     return 2.f * phase - 1.f;
 }
 
-static inline float lpf1(float state[1], float x, float f) {
-    return state[0] += (x - state[0]) * f;
-}
-
 static inline float env_k(float x) {
     // 0.00001 (e^-11) is a few seconds; 0.5 is fast.
     return 1.f - exp(-0.00001f / (x*x+0.00025f));
@@ -690,7 +696,8 @@ static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=
     }
 }
 
-#define envfollow(x, ...) (update_envfollow(__LINE__, x, ##__VA_ARGS__))
+#define envfollow(x, ...) (update_envfollow(__LINE__, x, ##__VA_ARGS__)) // has a vu meter...
+#define envfollow_novu(x, ...) (update_envfollow(-1, x, ##__VA_ARGS__)) // no vu meter...
 #define vu(x, ...) (add_vu(__LINE__, x, ##__VA_ARGS__))
 
 static inline void add_vu(int line, float x, float thresh) {
@@ -718,73 +725,29 @@ static inline float update_envfollow(int line, stereo x, float thresh = 0.25f, f
     return update_envfollow(line, max(fabsf(x.l), fabsf(x.r)), thresh, decay, attack);
 }
 
-static inline float adsr(float state[1], bool note_down, float a_k, float d_k, float s, float r_k, bool retrig=false) {
-    if (retrig) *state = fabsf(*state);
-    if (note_down) {
-        if (state[0] >= 0.f) {
-            state[0] += (1.05f - state[0]) * a_k; // attack (state is positive)
-            if (state[0] > 1.f) { state[0] = -1.f; return 1.f; } // go into decay...
-            return state[0];
+typedef struct adsr_t {
+    float state[1];
+    inline float operator()(bool note_down, float a_k, float d_k, float s, float r_k, bool retrig=false) {
+        if (retrig) *state = fabsf(*state);
+        if (note_down) {
+            if (state[0] >= 0.f) {
+                state[0] += (1.05f - state[0]) * a_k; // attack (state is positive)
+                if (state[0] > 1.f) { state[0] = -1.f; return 1.f; } // go into decay...
+                return state[0];
+            } else {
+                state[0] += (-s - state[0]) * d_k; // decay (state is negative)
+                return -state[0];
+            }
         } else {
-            state[0] += (-s - state[0]) * d_k; // decay (state is negative)
-            return -state[0];
+            if (state[0] < 0.f) state[0] = -state[0];
+            state[0] -= state[0] * r_k; // release (state is positive)
+            return state[0];
         }
-    } else {
-        if (state[0] < 0.f) state[0] = -state[0];
-        state[0] -= state[0] * r_k; // release (state is positive)
-        return state[0];
     }
-}
+} adsr_t;
 
-static inline stereo limiter(float state[2] , stereo inp) {
-    const static float k_attack_ms = 0.5f;
-    const static float k_decay_ms = 60.f;
-    const static float k_attack = 1.f - expf(-1.f / (SAMPLE_RATE * k_attack_ms * 0.001f));
-    const static float k_decay = 1.f - expf(-1.f / (SAMPLE_RATE * k_decay_ms * 0.001f));
-    float peak = max(fabsf(inp.l), fabsf(inp.r));
-    float &env_follow = state[0];
-    float &hold_time = state[1];
-    if (peak > env_follow) {
-        hold_time = SAMPLE_RATE / 100; // 10ms hold time
-        env_follow += (peak - env_follow) * k_attack;
-    } else {
-        if (hold_time > 0.f)
-            hold_time--;
-        else
-            env_follow += (peak - env_follow) * k_decay;
-    }
-    float gain = 0.9f / (max(env_follow, 0.9f));
-    //printf("gain: %f\n", lin2db(gain));
-    return sclip(inp * gain);
-}
+stereo limiter(float state[2] , stereo inp);
 
-/*
-static inline void lorenz_euler(float s[3], float dt, float sigma, float beta, float rho) {
-    if (dt > 1e-3f)
-        dt = 1e-3f;
-    float x = s[0], y = s[1], z = s[2];
-    float dx = sigma * (y - x);
-    float dy = x * (rho - z) - y;
-    float dz = x * y - beta * z;
-    s[0] = x + dt * dx;
-    s[1] = y + dt * dy;
-    s[2] = z + dt * dz;
-}
-
-static inline float *lorenz(float dt) {
-    float *s = ba_get(&G->audio_bump, 3);
-    if (s[0] == 0.f && s[1] == 0.f && s[2] == 0.f) {
-        s[0] = -1.f;
-        s[1] = 1.f;
-        s[2] = 10.f;
-    }
-    lorenz_euler(s, dt, 10.f, 2.66666666666666666666f, 28.f);
-    return s;
-}*/
-
-// midi note 69 is A4 (440hz)
-// what note is 48khz?
-// 150.2326448623 :)
 
 static inline float note2dphase(float midi) { return exp2f((midi - 150.2326448623f) * (1.f / 12.f)); }
 
@@ -796,7 +759,7 @@ static inline float note2freq(float midi) { return expf(midi*LN2_OVER_12 + LN440
 
 // #define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
 
-typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G, stereo *audio, int frames, int reloaded);
+typedef song_base_t *(*dsp_fn_t)(song_base_t *G, stereo *audio, int frames, int reloaded);
 
 #define LOG(...)                                                                                                                   \
     {                                                                                                                              \
@@ -808,7 +771,7 @@ typedef basic_state_t *(*dsp_fn_t)(basic_state_t *G, stereo *audio, int frames, 
         }                                                                                                                          \
     }
 
-void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_size, int version, void (*init_state)(void));
+void *dsp_preamble(song_base_t *_G, stereo *audio, int reloaded, size_t state_size, void (*init_state)(void));
 
 static inline float rompler(const char *fname) {
 	wave_t *wave=get_wave_by_name(fname);
@@ -822,16 +785,15 @@ static inline float rompler(const char *fname) {
 stereo prepare_preview(void);
 
 #ifdef LIVECODE
-typedef struct state state;
+struct song;
 stereo do_sample(stereo inp);
 void init_state(void);
 __attribute__((weak)) void init_state(void) {}
 
 size_t get_state_size(void);
-int get_state_version(void);
 stereo probe;
-__attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audio, int frames, int reloaded) {
-    G = (basic_state_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), get_state_version(), init_state);
+__attribute__((visibility("default"))) void *dsp(song_base_t *_G, stereo *audio, int frames, int reloaded) {
+    G = (song_base_t *)dsp_preamble(_G, audio, reloaded, get_state_size(), init_state);
     int dt_q32 = G->playing ? G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)) : 0; // on the order of 22000
     G->dt = dt_q32 *(1./4294967296.);
     for (int i = 0; i < frames; i++) {
@@ -875,39 +837,30 @@ typedef struct hap_t {
 
 typedef struct voice_state_t {
     hap_t h;
-    float env;
+    adsr_t adsr;
     double phase;
     float vibphase;
     bool retrig;
 } voice_state_t;
 
-typedef struct synth_state_t {
+typedef struct synth_t {
     const static int max_voices = 16;
     stereo audio[96];
-    voice_state_t v[max_voices]; // one voice per voice.
-} synth_state_t;
+    voice_state_t voices[max_voices]; // one voice per voice.
+    stereo operator()(const char *pattern_name, float level=1.f, int max_voices = 16);
+} synth_t;
 
-typedef struct monosynth_state_t {
+typedef struct monosynth_t {
     hap_t h;
     float phase;
     float vibphase;
     float dphase; // for glide
-} monosynth_state_t;
+    stereo operator()(const char *pattern_name, float glide);
+} monosynth_t;
+
 
 hap_t *pat2hap(const char *pattern_name, hap_t *cache);
-stereo synth(synth_state_t *synth, const char *pattern_name, float level=1.f, int max_voices = 16);
-stereo monosynth(const char *pattern_name, float glide, monosynth_state_t *state);
-void multiband_split(stereo x, stereo out[3], stereo state[12]);
 
-#define STATE_VERSION(version, ...)                                                                                                \
-    typedef struct state : public basic_state_t{__VA_ARGS__} state;                                                                \
-    size_t get_state_size(void) { return sizeof(state); }                                                                          \
-    int get_state_version(void) { return version; }
-
-#ifdef LIVECODE
-#undef G
-#define G ((state *)_BG)
-#endif
 #ifdef __cplusplus
 }
 #endif

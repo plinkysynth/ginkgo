@@ -48,6 +48,7 @@ static void crash_handler(int sig, siginfo_t *info, void *ucontext) {
         // skip obvious system libs; adjust if you like
         if (!strncmp(p, "/usr/lib/", 9)) continue;
         if (!strncmp(p, "/System/Library/", 16)) continue;
+        if (!strncmp(p, "/Library/", 9)) continue;
 
         uintptr_t base = (uintptr_t)dli.dli_fbase;
 

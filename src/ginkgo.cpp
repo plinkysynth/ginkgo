@@ -1,6 +1,3 @@
-
-// clang -std=c11 -O2 gpu.c -o gpu -I$(brew --prefix glfw)/include -L$(brew --prefix glfw)/lib -lglfw -framework OpenGL -framework
-// Cocoa -framework IOKit -framework CoreVideo
 #define STB_IMAGE_IMPLEMENTATION
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
@@ -80,8 +77,60 @@ void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float wi
     line_count++;
 }
 
+static void uniform1i(GLuint shader, const char *uniform_name, int value) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform1i(loc, value);
+}
+static void uniform1ui(GLuint shader, const char *uniform_name, uint32_t value) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform1ui(loc, value);
+}
+static void uniform2i(GLuint shader, const char *uniform_name, int value1, int value2) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform2i(loc, value1, value2);
+}
+static void uniform1f(GLuint shader, const char *uniform_name, float value) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform1f(loc, value);
+}
+static void uniform2f(GLuint shader, const char *uniform_name, float value1, float value2) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform2f(loc, value1, value2);
+}
+static void uniform3f(GLuint shader, const char *uniform_name, float value1, float value2, float value3) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform3f(loc, value1, value2, value3);
+}
+static void uniform4f(GLuint shader, const char *uniform_name, float value1, float value2, float value3, float value4) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform4f(loc, value1, value2, value3, value4);
+}
+static void uniformMatrix4fv(GLuint shader, const char *uniform_name, int count, GLboolean transpose, const float *value) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniformMatrix4fv(loc, count, transpose, value);
+}
+
 static void bind_texture_to_slot(GLuint shader, int slot, const char *uniform_name, GLuint texture, GLenum mag_filter) {
-    glUniform1i(glGetUniformLocation(shader, uniform_name), slot);
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform1i(loc, slot);
     glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
@@ -131,8 +180,8 @@ static void draw_fullscreen_pass(GLuint fbo, int viewport_w, int viewport_h, GLu
 }
 
 static void set_bloom_uniforms(GLuint shader, int resw, int resh, float kernel_size, float fade_factor) {
-    glUniform2f(glGetUniformLocation(shader, "duv"), kernel_size / resw, kernel_size / resh);
-    glUniform1f(glGetUniformLocation(shader, "fade"), fade_factor);
+    uniform2f(shader, "duv", kernel_size / resw, kernel_size / resh);
+    uniform1f(shader, "fade", fade_factor);
 }
 
 static GLuint link_program(GLuint vs, GLuint fs) {
@@ -222,12 +271,14 @@ out vec4 o_color;
 in vec2 v_uv; 
 uniform uint iFrame;
 uniform float iTime; 
+uniform float t; // bpm synced time
 uvec4 seed; 
 uniform sampler2D uFP; 
 uniform ivec2 uScreenPx;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
-
+uniform vec4 levels;
+uniform vec4 levels_smooth;
 uniform vec2 scroll; 
 uniform vec4 cursor; 
 uniform float ui_alpha;
@@ -264,7 +315,8 @@ vec2 wave_read(float x, int y_base) {
     vec2 s1 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
     return mix(s0, s1, fract(x));
 }
-vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * (1.f/128.f); }
+//vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * (1.f/128.f); }
+float fft(float x) { return (wave_read(x, 256 - 12).x) * (1.f/256.f); }
 
 float saturate(float x) { return clamp(x, 0.0, 1.0); }
 vec4 rnd4() { return vec4(pcg4d()) * (1.f / 4294967296.f); }
@@ -526,14 +578,18 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
             vec2 nexty = wave_read(nextx, base_y) * ampscale;
             vec2 miny = min(prevy, nexty);
             vec2 maxy = max(prevy, nexty);
-            vec2 beam = 1.f - smoothstep(miny - 0.5f, maxy + 1.f, pix.xx);
+            vec2 beam = smoothstep(maxy + 1.f, miny - 0.5f, pix.xx);
+            vec3 beamcol;
             if (is_fft) {
-                beam *= 0.25;
+                //beam *= 0.25;
+                float lum = maxy.x / 128.f;
+                //lum*=lum;
+                beamcol = 0.1f + vec3(lum, lum*lum, lum*lum*lum);
+                beamcol *= beam.y;
             } else {
-                beam *= smoothstep(miny - 2.f, maxy - 0.5f, pix.xx);
-                beam *= 1.5f / (maxy - miny + 1.f);
+                beam *= smoothstep((64.f-maxy) -0.5f, (64.f-miny) +1.f, pix.xx);
+                beamcol = vec3(0.2, 0.07, 0.02) * beam.x + vec3(0.02, 0.07, 0.2) * beam.y;
             }
-            vec3 beamcol = vec3(0.2, 0.4, 0.8) * beam.x + vec3(0.8, 0.4, 0.2) * beam.y;
             if (gl_FragCoord.x<64. && gl_FragCoord.y<64.) {
                 int idx = int(gl_FragCoord.x) + int(gl_FragCoord.y) * 64;
                 uvec4 xyscope = texelFetch(uText, ivec2(idx & 511, (256-20) + (idx >> 9)), 0);
@@ -589,10 +645,28 @@ static float4 c_lookat;
 static float fov = 0.4f;
 static float focal_distance = 5.f;
 static float aperture = 0.01f;
+
 void set_tab(EditorState *newE) {
     ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
     curE = newE;
 }
+
+void parse_named_patterns_in_source(void) {
+    extern pattern_t *new_pattern_map_during_parse;
+    new_pattern_map_during_parse = NULL; // stbds_hm
+    // merge all patterns across the first 2 tabs....
+    for (int tabi = 0; tabi < 2; ++tabi) {
+        EditorState *E = &tabs[tabi];
+        const char *s = E->str, *real_e = E->str + stbds_arrlen(E->str);
+        init_remapping(E);
+        parse_named_patterns_in_source(E->str, E->str + stbds_arrlen(E->str));
+    }
+    // TODO - let the old pattern table leak because concurrency etc
+    G->patterns_map = new_pattern_map_during_parse;
+    new_pattern_map_during_parse = NULL;
+    
+}
+
 
 static void dump_settings(void) {
     FILE *f = fopen("settings.json", "w");
@@ -948,7 +1022,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key == GLFW_KEY_P) {
             if (!G->playing) {
                 // also compile...
-                parse_named_patterns_in_c_source(&tabs[1]);
+                parse_named_patterns_in_source();
             }
             G->playing = !G->playing;
         }
@@ -974,8 +1048,8 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     if (rename("editor.tmp", E->fname) == 0) {
                         set_status_bar(C_OK, "saved");
                         init_remapping(E);
-                        if (E->editor_type==1)
-                            parse_named_patterns_in_c_source(E);
+                        if (E->editor_type<2)
+                            parse_named_patterns_in_source();
                     } else {
                         f = 0;
                     }
@@ -988,8 +1062,8 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key == GLFW_KEY_ENTER || key == '\n') {
             if (E->editor_type==0)
                 try_to_compile_shader(E);
-            else if (E->editor_type==1)
-                parse_named_patterns_in_c_source(E);
+            if (E->editor_type<2)
+                parse_named_patterns_in_source();
         }
     }
 
@@ -1306,7 +1380,6 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
         }
         click_time = t;
         editor_click(win, curE, G, mx, my, 0, click_count);
-        curE->need_scroll_update = true;
     }
     if (action == GLFW_RELEASE) {
         // printf("mouse button: %d, mods: %d\n", button, mods);
@@ -1321,11 +1394,10 @@ static void mouse_button_callback(GLFWwindow *win, int button, int action, int m
             click_count = 0;
         }
         editor_click(win, curE, G, mx, my, -1, click_count);
-        curE->need_scroll_update = true;
     }
 }
 
-void editor_update(EditorState *E, GLFWwindow *win) {
+float4 editor_update(EditorState *E, GLFWwindow *win) {
     double mx, my;
     glfwGetCursorPos(win, &mx, &my);
     mx *= retina;
@@ -1341,7 +1413,6 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     G->cursor_y = E->cursor_y;
     if (m0) {
         editor_click(win, E, G, mx, my, 1, 0);
-        E->need_scroll_update = true;
     }
 
     int tmw = fbw / E->font_width;
@@ -1358,6 +1429,11 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     if (E->scroll_y < 0)
         E->scroll_y = 0;
 
+    float tot_lvl = 0.f, tot_tot = 0.f;
+    float kick_lvl = 0.f, kick_tot = 0.f;
+    float snare_lvl = 0.f, snare_tot = 0.f;
+    float hat_lvl = 0.f, hat_tot = 0.f;
+    
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[pbo_index]);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, textBytes, NULL, GL_STREAM_DRAW);
     uint32_t *ptr = (uint32_t *)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, textBytes,
@@ -1395,29 +1471,13 @@ void editor_update(EditorState *E, GLFWwindow *win) {
         }
         E->scroll_target_x = clamp(E->scroll_target_x, 0.f, float((E->max_width - tmw + 4) * E->font_width));
         E->scroll_target_y = clamp(E->scroll_target_y, 0.f, float((E->num_lines - tmh + 4) * E->font_height));
-        // now find a zero crossing in the scope, and copy the relevant section
-        // scope cant be more than 2048 as that's how many slots we have in the texture.
-        uint32_t scope_start = scope_pos - 1024;
-        uint32_t scan_max = 1024;
-        int bestscani = 0;
-        float bestscan = 0.f;
-        for (int i = 1; i < scan_max; ++i) {
-            float mono = stmid(scope[(scope_start - i) & SCOPE_MASK]);
-            float mono_next = stmid(scope[(scope_start - i + 1) & SCOPE_MASK]);
-            float delta = mono - mono_next;
-            if (mono > 0.f && mono_next < 0.f && delta > bestscan) {
-                bestscan = delta;
-                bestscani = i;
-                break;
-            }
-        }
-        scope_start -= 1024 + bestscani;
+        uint32_t scope_start = (scope_pos>>8);
         uint32_t *scope_dst = ptr + (TMH - 4) * TMW;
-        for (int i = 0; i < 2048; ++i) {
-            stereo sc = scope[(scope_start + i) & SCOPE_MASK];
-            uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * 32767.f + 32768.f);
-            uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * 32767.f + 32768.f);
-            scope_dst[i] = (l16 >> 8) | (r16 & 0xff00);
+        for (int i = 0; i < TMW*4-128; ++i) {
+            stereo sc = slow_scope[(scope_start- i/2) & SCOPE_MASK];
+            uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * (32767.f) + 32768.f);
+            uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * (32767.f) + 32768.f);
+            scope_dst[i+128] = (l16 >> 8) | (r16 & 0xff00);
         }
         scope_dst = ptr + (TMH - 20) * TMW;
         for (int y = 0; y < 64; ++y) {
@@ -1442,38 +1502,70 @@ void editor_update(EditorState *E, GLFWwindow *win) {
                 float x = i * scale;
                 fft_window[i] = a0 - a1 * cosf(x) + a2 * cosf(2.0f * x);
             }
+            for (int i = 0; i < FFT_SIZE/2; ++i) {
+                main_db_smooth[i] = -1e10f;
+                probe_db_smooth[i] = -1e10f;
+            }
         }
 
         uint32_t fft_start = scope_pos - FFT_SIZE;
-        float fft_buf[3][FFT_SIZE];
+        float fft_buf[2][FFT_SIZE];
         for (int i = 0; i < FFT_SIZE; ++i) {
             stereo sc = scope[(fft_start + i) & SCOPE_MASK];
             stereo pr = probe_scope[(fft_start + i) & SCOPE_MASK];
-            fft_buf[0][i] = sc.l * fft_window[i];
-            fft_buf[1][i] = sc.r * fft_window[i];
-            fft_buf[2][i] = (pr.l + pr.r) * fft_window[i];
+            fft_buf[0][i] = (sc.l + sc.r) * fft_window[i];
+            fft_buf[1][i] = (pr.l + pr.r) * fft_window[i];
         }
         pffft_transform_ordered(fft_setup, fft_buf[0], fft_buf[0], fft_work, PFFFT_FORWARD);
         pffft_transform_ordered(fft_setup, fft_buf[1], fft_buf[1], fft_work, PFFFT_FORWARD);
-        pffft_transform_ordered(fft_setup, fft_buf[2], fft_buf[2], fft_work, PFFFT_FORWARD);
         scope_dst = ptr + (TMH - 12) * TMW;
-        float peak_mag = squared2db(square(0.25f * FFT_SIZE)); // assuming hann, coherent gain is 0.5
+        float peak_mag = squared2db(square(0.25f * FFT_SIZE)) - 3.f; // assuming hann, coherent gain is 0.5
         // int min=0, max=0;
         // float minv=1000.f, maxv=-1000.f;
         for (int i = 0; i < 4096; ++i) {
-            float magl_db =
-                squared2db(fft_buf[0][i * 2] * fft_buf[0][i * 2] + fft_buf[0][i * 2 + 1] * fft_buf[0][i * 2 + 1]) - peak_mag;
-            float magr_db =
-                squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) - peak_mag;
+            float binfreq = (i+0.5f) * (float)SAMPLE_RATE_OUTPUT / (float)FFT_SIZE;
+            float binoctave = log2f(binfreq / 1000.f);
+            float tilt_db = 4.5f * binoctave;
+            float mag_db =
+                squared2db(fft_buf[0][i * 2] * fft_buf[0][i * 2] + fft_buf[0][i * 2 + 1] * fft_buf[0][i * 2 + 1]) - peak_mag + tilt_db;
             float probe_db =
-                squared2db(fft_buf[2][i * 2] * fft_buf[2][i * 2] + fft_buf[2][i * 2 + 1] * fft_buf[2][i * 2 + 1]) - peak_mag + 6.f;
-            probe_db_smooth[i] = probe_db_smooth[i] + (probe_db - probe_db_smooth[i]) * 0.05f;
+                squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) - peak_mag + tilt_db;
+            float &smoothed_mag_db = main_db_smooth[i];
+            float &probe_smoothed_db = probe_db_smooth[i];
+            if (mag_db > smoothed_mag_db) {
+                smoothed_mag_db = mag_db;
+            } else {
+                smoothed_mag_db += (mag_db - smoothed_mag_db) * 0.001f;
+            }
+            if (probe_db > probe_smoothed_db) {
+                probe_smoothed_db = probe_db;
+            } else {
+                probe_smoothed_db += (probe_db - probe_smoothed_db) * 0.001f;
+            }
+            float peakiness = mag_db + 40.f;
+            tot_lvl += peakiness;
+            tot_tot++;
+            if (binfreq>=30.f && binfreq<150.f) {
+                kick_lvl += peakiness;
+                kick_tot++;
+            } else if (binfreq>=500.f && binfreq<1000.f) {
+                snare_lvl += peakiness;
+                snare_tot++;
+            } else if (binfreq>=5000.f) {
+                hat_lvl += peakiness;
+                hat_tot++;
+            }
             // if (magl_db < minv) {minv = magl_db;min = i;}
             // if (magl_db > maxv) {maxv = magl_db;max = i;}
-            uint8_t l8 = (uint8_t)(clamp(255.f + magl_db * 6.f, 0.f, 255.f));
-            uint8_t r8 = (uint8_t)(clamp(255.f + magr_db * 6.f, 0.f, 255.f));
+            uint8_t l8 = (uint8_t)(clamp(255.f + mag_db * 6.f, 0.f, 255.f));
+            uint8_t r8 = (uint8_t)(clamp(255.f + smoothed_mag_db * 6.f, 0.f, 255.f));
             scope_dst[i] = (l8 << 0) | (r8 << 8);
         }
+        tot_lvl = max(0.f,tot_lvl / (tot_tot * 15.f));
+        kick_lvl = max(0.f,kick_lvl / (kick_tot * 20.f));
+        snare_lvl = max(0.f,snare_lvl / (snare_tot * 15.f));
+        hat_lvl = max(0.f,hat_lvl / (hat_tot * 10.f));
+        // printf("kick: %f, snare: %f, hat: %f, tot: %f\n", kick_lvl, snare_lvl, hat_lvl, tot_lvl);
         // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, min, maxv, max);
 
         glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
@@ -1484,6 +1576,7 @@ void editor_update(EditorState *E, GLFWwindow *win) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     pbo_index = (pbo_index + 1) % 3;
     check_gl("update text tex");
+    return float4{kick_lvl, snare_lvl, hat_lvl, tot_lvl};
 }
 
 void on_midi_input(uint8_t data[3], void *user) {
@@ -1619,9 +1712,9 @@ static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int n
     bind_texture_to_slot(taa_pass, 1, "uFP_prev", texFPRT[(iFrame + 1) % 2], GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glUniformMatrix4fv(glGetUniformLocation(taa_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
-    glUniformMatrix4fv(glGetUniformLocation(taa_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
-    glUniform1f(glGetUniformLocation(taa_pass, "fov"), fov);
+    uniformMatrix4fv(taa_pass, "c_cam2world", 1, GL_FALSE, (float *)c_cam2world);
+    uniformMatrix4fv(taa_pass, "c_cam2world_old", 1, GL_FALSE, (float *)c_cam2world_old);
+    uniform1f(taa_pass, "fov", fov);
     draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
 }
 
@@ -1864,15 +1957,18 @@ void set_aradjust(GLuint shader, int fbw, int fbh) {
     float input_ar = RESW / float(RESH);
     float scale = output_ar / input_ar;
     if (scale > 1.f) { // output is wider than input - black bars at sides
-        glUniform2f(glGetUniformLocation(shader, "uARadjust"), scale, 1.f);
+        uniform2f(shader, "uARadjust", scale, 1.f);
     } else { // black bars at top and bottom
-        glUniform2f(glGetUniformLocation(shader, "uARadjust"), 1.f, 1.f / scale);
+        uniform2f(shader, "uARadjust", 1.f, 1.f / scale);
     }
     check_gl("set_aradjust");
 }
 
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
+#if USING_ASAN
+    printf(COLOR_RED "Address sanitizer enabled\n" COLOR_RESET);
+#endif
     void install_crash_handler(void);
     install_crash_handler();
     if (!glfwInit())
@@ -1929,7 +2025,7 @@ int main(int argc, char **argv) {
     load_file_into_editor(&tabs[0]);
     load_file_into_editor(&tabs[1]);
     try_to_compile_shader(&tabs[0]);
-    parse_named_patterns_in_c_source(&tabs[1]);
+    parse_named_patterns_in_source();
 
     texFont = load_texture("assets/font_sdf.png");
 
@@ -1975,7 +2071,6 @@ int main(int argc, char **argv) {
     glGenBuffers(2, spheretbos);
     check_gl("init sphere buffer post");
 
-    double t0 = glfwGetTime();
     glfwSetKeyCallback(win, key_callback);
     glfwSetCharCallback(win, char_callback);
     glfwSetScrollCallback(win, scroll_callback);
@@ -1985,18 +2080,24 @@ int main(int argc, char **argv) {
     init_audio_midi(&dev);
 
     double start_time = glfwGetTime();
+    double prev_frame_time = 0.;
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
         glfwGetFramebufferSize(win, &fbw, &fbh);
 
-        double iTime = glfwGetTime() - t0;
+        double iTime = glfwGetTime() - start_time;
+        double frame_time = max(1./240., iTime - prev_frame_time);
+        prev_frame_time = iTime;
         static uint32_t iFrame = 0;
 
         glDisable(GL_DEPTH_TEST);
-        editor_update(curE, win);
+        static float4 lvl_smooth = {0.f, 0.f, 0.f, 0.f};
+        float4 lvl_peaks = editor_update(curE, win);
+        float smooth_decay = powf(0.25f, frame_time * 10.f);
+        lvl_smooth = max(lvl_smooth * smooth_decay, lvl_peaks);
+        stbds_arrpush(tabs[0].str, 0);
         const char *s = tabs[0].str;
         const char *e = tabs[0].str + stbds_arrlen(tabs[0].str);
-        stbds_arrpush(tabs[0].str, 0);
         const char *sky_name = strstr(s, "// sky ");
         const char *want_taa_str = strstr(s, "// taa");
         if (want_taa_str && want_taa_str[6] == ' ' && want_taa_str[7] == '0')
@@ -2049,16 +2150,18 @@ int main(int argc, char **argv) {
             glClear(GL_COLOR_BUFFER_BIT);
         } else {
             glUseProgram(user_pass);
-            glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), RESW, RESH);
-            glUniform1f(glGetUniformLocation(user_pass, "iTime"), (float)iTime);
-            glUniform1ui(glGetUniformLocation(user_pass, "iFrame"), iFrame);
-            glUniform2i(glGetUniformLocation(user_pass, "uScreenPx"), fbw, fbh);
-            glUniform2i(glGetUniformLocation(user_pass, "uFontPx"), curE->font_width, curE->font_height);
-            glUniform1i(glGetUniformLocation(user_pass, "status_bar_size"), status_bar_color ? 1 : 0);
-            glUniform2f(glGetUniformLocation(user_pass, "scroll"), curE->scroll_x - curE->intscroll_x * curE->font_width,
+            uniform2i(user_pass, "uScreenPx", RESW, RESH);
+            uniform1f(user_pass, "iTime", (float)iTime);
+            uniform1f(user_pass, "t", (float)G->t);
+            uniform1ui(user_pass, "iFrame", iFrame);
+            uniform2i(user_pass, "uScreenPx", fbw, fbh);
+            uniform2i(user_pass, "uFontPx", curE->font_width, curE->font_height);
+            uniform1i(user_pass, "status_bar_size", status_bar_color ? 1 : 0);
+            uniform2f(user_pass, "scroll", curE->scroll_x - curE->intscroll_x * curE->font_width,
                         curE->scroll_y - curE->intscroll_y * curE->font_height);
-            glUniform1f(glGetUniformLocation(user_pass, "ui_alpha"), ui_alpha);
-
+            uniform1f(user_pass, "ui_alpha", ui_alpha);
+            uniform4f(user_pass, "levels", lvl_peaks.x, lvl_peaks.y, lvl_peaks.z, lvl_peaks.w);
+            uniform4f(user_pass, "levels_smooth", lvl_smooth.x, lvl_smooth.y, lvl_smooth.z, lvl_smooth.w);
             bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
             bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
             bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
@@ -2066,16 +2169,16 @@ int main(int argc, char **argv) {
             // bind_texture_to_slot(user_pass, 4, "uPaperDiff", paper_diff, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 5, "uPaperDisp", paper_disp, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 6, "uPaperNorm", paper_norm, GL_LINEAR);
-            glUniform1i(glGetUniformLocation(user_pass, "uSpheres"), 7);
+            uniform1i(user_pass, "uSpheres", 7);
             glActiveTexture(GL_TEXTURE7);
             glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
 
-            glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world"), 1, GL_FALSE, (float *)c_cam2world);
-            glUniformMatrix4fv(glGetUniformLocation(user_pass, "c_cam2world_old"), 1, GL_FALSE, (float *)c_cam2world_old);
-            glUniform4f(glGetUniformLocation(user_pass, "c_lookat"), c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
-            glUniform1f(glGetUniformLocation(user_pass, "fov"), fov);
-            glUniform1f(glGetUniformLocation(user_pass, "focal_distance"), focal_distance);
-            glUniform1f(glGetUniformLocation(user_pass, "aperture"), aperture);
+            uniformMatrix4fv(user_pass, "c_cam2world", 1, GL_FALSE, (float *)c_cam2world);
+            uniformMatrix4fv(user_pass, "c_cam2world_old", 1, GL_FALSE, (float *)c_cam2world_old);
+            uniform4f(user_pass, "c_lookat", c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
+            uniform1f(user_pass, "fov", fov);
+            uniform1f(user_pass, "focal_distance", focal_distance);
+            uniform1f(user_pass, "aperture", aperture);
 
             draw_fullscreen_pass(fbo[want_taa ? 2 : iFrame % 2], RESW, RESH, vao);
             unbind_textures_from_slots(7);
@@ -2100,21 +2203,21 @@ int main(int argc, char **argv) {
         bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
         set_aradjust(ui_pass, fbw, fbh);
 
-        glUniform2i(glGetUniformLocation(ui_pass, "uScreenPx"), fbw, fbh);
-        glUniform2i(glGetUniformLocation(ui_pass, "uFontPx"), curE->font_width, curE->font_height);
-        glUniform1i(glGetUniformLocation(ui_pass, "status_bar_size"), status_bar_color ? 1 : 0);
-        glUniform1f(glGetUniformLocation(ui_pass, "iTime"), (float)iTime);
-        glUniform2f(glGetUniformLocation(ui_pass, "scroll"), curE->scroll_x - curE->intscroll_x * curE->font_width,
+        uniform2i(ui_pass, "uScreenPx", fbw, fbh);
+        uniform2i(ui_pass, "uFontPx", curE->font_width, curE->font_height);
+        uniform1i(ui_pass, "status_bar_size", status_bar_color ? 1 : 0);
+        uniform1f(ui_pass, "iTime", (float)iTime);
+        uniform2f(ui_pass, "scroll", curE->scroll_x - curE->intscroll_x * curE->font_width,
                     curE->scroll_y - curE->intscroll_y * curE->font_height);
-        glUniform1f(glGetUniformLocation(ui_pass, "ui_alpha"), ui_alpha);
+        uniform1f(ui_pass, "ui_alpha", ui_alpha);
         // if there's a second monitor, we can afford to fade the render a bit more
         // to make the code more readable.
         float fade_render = lerp(1.f, winFS ? 0.5f : 0.8f, ui_alpha);
-        glUniform1f(glGetUniformLocation(ui_pass, "fade_render"), fade_render);
+        uniform1f(ui_pass, "fade_render", fade_render);
 
         float f_cursor_x = (curE->cursor_x - curE->intscroll_x) * curE->font_width;
         float f_cursor_y = (curE->cursor_y - curE->intscroll_y) * curE->font_height;
-        glUniform4f(glGetUniformLocation(ui_pass, "cursor"), f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
+        uniform4f(ui_pass, "cursor", f_cursor_x, f_cursor_y, curE->prev_cursor_x, curE->prev_cursor_y);
         curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
         curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
 
@@ -2152,11 +2255,13 @@ int main(int argc, char **argv) {
             0xffffee,
             0xffffee,
         };
+        float cc_bar_x = fbw - curE->font_width * 14.f;
+        float cc_bar_height = curE->font_height;
         for (int i =0; i < 8; ++i) {
-            float x = fbw+(i-7.5f)*30.f;
-            float y = fbh - curE->font_height;
-            float y2 = y - G->midi_cc[i+0x10];
-            add_line(x, y-128.f, x, y, 0x3f000000 | ((cc_cols[i]>>2)&0x3f3f3f), -20.f); // negative width is square cap
+            float x = cc_bar_x + (i-7.5f)*30.f;
+            float y = fbh;
+            float y2 = y - G->midi_cc[i+0x10] * cc_bar_height / 128.f;
+            add_line(x, y-cc_bar_height, x, y, 0x3f000000 | ((cc_cols[i]>>2)&0x3f3f3f), -20.f); // negative width is square cap
             add_line(x, y, x, y2, 0x3f000000 | (cc_cols[i]), -20.f);
         }
 
@@ -2176,7 +2281,7 @@ int main(int argc, char **argv) {
             glBindBuffer(GL_ARRAY_BUFFER, fatvbo[iFrame % 2]);
             glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
             glUseProgram(fat_prog);
-            glUniform2f(glGetUniformLocation(fat_prog, "fScreenPx"), fbw, fbh);
+            uniform2f(fat_prog, "fScreenPx", fbw, fbh);
             glDrawArraysInstanced(GL_TRIANGLES, 0, 6, line_count);
             glBindVertexArray(0);
             glBindBuffer(GL_ARRAY_BUFFER, 0);

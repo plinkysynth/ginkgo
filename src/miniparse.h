@@ -117,7 +117,7 @@ const char *print_midinote(int note);
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
 pattern_t parse_pattern(pattern_maker_t *pm, int index_to_add_to_start_end);
 void fill_curve_data_from_string(float *data, const char *s, int n); // responsible for the interpolation of lines
-void parse_named_patterns_in_c_source(const char *s, const char *e);
+void parse_named_patterns_in_source(const char *s, const char *e);
 
 const char *skip_path(const char *s, const char *e);
 const char *find_end_of_pattern(const char *s, const char *e);

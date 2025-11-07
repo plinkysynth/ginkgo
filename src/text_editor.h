@@ -135,11 +135,7 @@ void add_line(EditorState *E, float p0x, float p0y, float p1x, float p1y, uint32
 
 void init_remapping(EditorState *E);
 
-void parse_named_patterns_in_c_source(EditorState *E) {
-    const char *s = E->str, *real_e = E->str + stbds_arrlen(E->str);
-    init_remapping(E);
-    parse_named_patterns_in_c_source(E->str, E->str + stbds_arrlen(E->str));
-}
+void parse_named_patterns_in_source(void);
 
 typedef struct slider_spec_t {
     int start_idx;
@@ -420,15 +416,17 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
     if (E->mouse_hovering_chart && is_drag < 0) {
         E->mouse_clicked_chart = click_count > 0;
     }
-    if (is_drag == 0 && mx >= fbw-240.f && my >= fbh-E->font_height-128.f) {
-        E->drag_type = 100 + clamp(int((mx-fbw+240.f)/30.f), 0, 7); // cc!
+    float cc_bar_x = fbw - E->font_width * 14.f;
+    float cc_bar_height = E->font_height;
+    if (is_drag == 0 && mx >= cc_bar_x-240.f && my >= fbh-cc_bar_height) {
+        E->drag_type = 100 + clamp(int((mx-cc_bar_x+240.f)/30.f), 0, 7); // cc!
     }
     if (E->drag_type >= 100 && E->drag_type < 108) {
         if (is_drag <0)     
             E->drag_type = 0;
         else {
             int cc = E->drag_type - 100;
-            G->midi_cc[cc+0x10] = clamp(int((fbh-E->font_height)-my), 0, 127);
+            G->midi_cc[cc+0x10] = clamp(int((fbh-my) * 128.f / cc_bar_height), 0, 127);
         }
         return ;
     }
@@ -481,6 +479,7 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
         int click_idx = xy_to_idx_slow(E, cx, cy);
         if (!is_drag) {
             E->click_down_idx = click_idx;
+            E->need_scroll_update = true;
         }
         slider_spec_t slider_spec;
         if (looks_like_slider_comment(E->str, stbds_arrlen(E->str), E->click_down_idx, &slider_spec)) {
@@ -523,11 +522,12 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
                 }
                 if (is_drag < 0) {
                     // recompile on release
-                    parse_named_patterns_in_c_source(E);
+                    parse_named_patterns_in_source();
                 }
             }
         } else {
             E->cursor_idx = click_idx;
+            E->need_scroll_update = true;
             if (!is_drag)
                 E->select_idx = E->cursor_idx;
             idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
@@ -1845,12 +1845,13 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
             }
-            if (t.x < TMW && t.y >= 0 && t.y < TMH)
+            if (t.x>=0 && t.x < TMW && t.y >= 0 && t.y < TMH)
                 t.ptr[t.y * TMW + t.x] = (ccol) | (unsigned char)(ch);
             if (ch == '\t') {
                 int nextx = next_tab(t.x - left) + left;
                 while (t.x < nextx) {
-                    t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
+                    if (t.x>=0 && t.x < TMW && t.y >= 0 && t.y < TMH)
+                        t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     t.x++;
                 }
             } else if (ch == '\n' || ch == 0) {
@@ -1862,7 +1863,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     if (strncasecmp(errline, "warning:", 8) == 0)
                         errcol = C_WARNING;
                     for (; *errline && *errline != '\n'; errline++) {
-                        if (t.x < TMW && t.y >= 0 && t.y < TMH)
+                        if (t.x >=0 && t.x < TMW && t.y >= 0 && t.y < TMH)
                             t.ptr[t.y * TMW + t.x] = errcol | (unsigned char)(*errline);
                         t.x++;
                     }
@@ -1907,7 +1908,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 if (pattern_mode) {
                     if (t.y >= 0 && t.y < TMH) {
                         for (; t.x < tmw; t.x++) {
-                            t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
+                            if (t.x>=0) t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                         }
                     }
                     if (grid_line_start != INVALID_LINE && grid_line_start < t.y) {

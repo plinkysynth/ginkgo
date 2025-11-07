@@ -30,9 +30,9 @@ sorry if crash / glitch / etc
 
 
 
-/cafe /organ gain 0.7 att 1.9 rel 0.9 : -1
-	/plink clip 1 sus 0.5 dec 0.1 rel 0.2 add 36 pan 0-1 gain [0.2-0.5 | 0.4 | 0.8] : -1,
-    /sub
+/cafe /organ gain 0.3 att 1.9 rel 0.9 : -1
+	/plink clip 1 sus 0.5 dec 0.1 rel 0.2 add 36 pan 0-1 gain [0.1-0.25 | 0.2 | 0.4] : -1
+    ,/sub
 
 /recorder <[a2,c3,e3,a3,c4] [g2,d3,g3,b3] [f2,c3,f3,a3] [e2,e3,g3,b3]>/2 : recorder_tenor_vib att 0.5 rel 0.5 gain 0.4
 
@@ -83,9 +83,9 @@ stereo do_sample(stereo inp) {
 
 	rv = drums + bass + pads + vocals * 2. + G->preview * 2.;
     G->preview*=0.;
-	rv = lol_ott(rv, /*======*/0.);
+	rv = lol_ott(rv, /*======*/0.435);
     
-    rv = rv  *				/*=========*/cc(7); // master volume
+    rv = rv  * 2. *			/*=========*/cc(7); // master volume
     // final vu meter for fun
     envfollow(rv.l);
     envfollow(rv.r);

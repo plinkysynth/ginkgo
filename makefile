@@ -1,8 +1,8 @@
-CXXFLAGS  = -fPIC -g -std=c++11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include -Isrc/ -I. -Wno-vla-cxx-extension # -fsanitize=address
+CXXFLAGS  = -fPIC -g -std=c++11 -O0 -MMD -MP -I/opt/homebrew/opt/glfw/include -Isrc/ -I. -Wno-vla-cxx-extension -fsanitize=address
 CXXFLAGS += -Werror -Wno-string-plus-int
 CXXFLAGS += -fstandalone-debug -gdwarf-4 -fno-omit-frame-pointer
 LDFLAGS = -L/opt/homebrew/opt/glfw/lib -lglfw -lcurl \
-          -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework CoreMIDI # -fsanitize=address
+          -framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL -framework CoreMIDI -fsanitize=address
 
 LIB_NAME := ginkgo_lib.a                         # static lib on macOS
 LIB_SRC  := src/ginkgo_lib.cpp src/miniparse.cpp src/utils.cpp

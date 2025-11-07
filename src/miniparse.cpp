@@ -516,7 +516,8 @@ static int parse_leaf(pattern_maker_t *p) {
     return node;
 }
 
-static pattern_t *new_pattern_map_during_parse = NULL;
+extern pattern_t *new_pattern_map_during_parse;
+pattern_t *new_pattern_map_during_parse = NULL;
 
 pattern_t *get_pattern(const char *name) { return stbds_shgetp_null(G->patterns_map, name); }
 
@@ -873,23 +874,8 @@ const char *spanstr(const char *s, const char *e, const char *substr) {
     return NULL;
 }
 
-void parse_single_pattern(const char *pattern_start, const char *pattern_end, const char *code_start, const char *pathstart, const char *pathend) {
-    pattern_maker_t p = {.s = pattern_start, .n = (int)(pattern_end - pattern_start)};
-    pattern_t pat = parse_pattern(&p, pattern_start - code_start);
-    if (p.err <= 0) {
-        pat.key = stbstring_from_span(pathstart, pathend, 0);
-        stbds_shputs(new_pattern_map_during_parse, pat);
-        int idx = stbds_shgeti(new_pattern_map_during_parse, pat.key);
-        printf("found pattern: %.*s - index %d\n", (int)(pathend - pathstart), pathstart, idx);
-    } else {
-        printf("error: %.*s: %s\n", (int)(pathend - pathstart), pathstart, p.errmsg);
-        pat.unalloc();
-    }
-}
-
-void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
+void parse_named_patterns_in_source(const char *s, const char *real_e) {
     const char *code_start = s;
-    new_pattern_map_during_parse = NULL; // stbds_hm
     while (s < real_e) {
         s = spanstr(s, real_e, "#ifdef PATTERNS");
         if (!s)
@@ -916,10 +902,17 @@ void parse_named_patterns_in_c_source(const char *s, const char *real_e) {
                 continue; // not a pattern
             // printf("found pattern: %.*s - %.*s\n", (int)(pathend-pathstart), pathstart, (int)(s-pattern_start),
             // pattern_start);
-            parse_single_pattern(pattern_start, s, code_start, pathstart, pathend);
+            pattern_maker_t p = {.s = pattern_start, .n = (int)(s - pattern_start)};
+            pattern_t pat = parse_pattern(&p, pattern_start - code_start);
+            if (p.err <= 0) {
+                pat.key = stbstring_from_span(pathstart, pathend, 0);
+                stbds_shputs(new_pattern_map_during_parse, pat);
+                int idx = stbds_shgeti(new_pattern_map_during_parse, pat.key);
+                printf("found pattern: %.*s - index %d\n", (int)(pathend - pathstart), pathstart, idx);
+            } else {
+                printf("error: %.*s: %s\n", (int)(pathend - pathstart), pathstart, p.errmsg);
+                pat.unalloc();
+            }
         }
     }
-    // TODO - let the old pattern table leak because concurrency etc
-    G->patterns_map = new_pattern_map_during_parse;
-    new_pattern_map_during_parse = NULL;
 }

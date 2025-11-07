@@ -17,8 +17,8 @@ void init_basic_state(void) { _BG->bpm = 120.f; }
 
 #define RVMASK 65535
 
-static float k_reverb_fade = 240 / 256.f; // 240 originally
-static float k_reverb_shim = 10 / 256.f; // 80?
+static float k_reverb_fade = 240 / 256.f;                // 240 originally
+static float k_reverb_shim = 10 / 256.f;                 // 80?
 static float k_reverb_wob = 0.3333f;                     // amount of wobble
 static const float lforate1 = 1.f / 32777.f * 9.4f;      // * 2.f; // speed of wobble
 static const float lforate2 = 1.3f / 32777.f * 3.15971f; // * 2.f; // speed of wobble
@@ -165,13 +165,13 @@ stereo delay(delay_state_t *D, stereo inp, stereo time_qn, float feedback, float
     stereo ret;
     time_qn *= (SAMPLE_RATE * 60.f) / G->bpm;
     stereo readpos = mono2st(D->delay_pos) - time_qn;
-    int il = int(floorf(readpos.l)) & (D->delaybuf_size-1);
-    int ir = int(floorf(readpos.r)) & (D->delaybuf_size-1);
-    ret.l = lerp(D->delaybuf[il].l, D->delaybuf[(il + 1) & (D->delaybuf_size-1)].l, frac(readpos.l));
-    ret.r = lerp(D->delaybuf[ir].r, D->delaybuf[(ir + 1) & (D->delaybuf_size-1)].r, frac(readpos.r));
+    int il = int(floorf(readpos.l)) & (D->delaybuf_size - 1);
+    int ir = int(floorf(readpos.r)) & (D->delaybuf_size - 1);
+    ret.l = lerp(D->delaybuf[il].l, D->delaybuf[(il + 1) & (D->delaybuf_size - 1)].l, frac(readpos.l));
+    ret.r = lerp(D->delaybuf[ir].r, D->delaybuf[(ir + 1) & (D->delaybuf_size - 1)].r, frac(readpos.r));
     ret = rotate(ret, cosf(rotate_angle), sinf(rotate_angle));
     D->delaybuf[D->delay_pos] = ssclip(inp + ret * feedback);
-    D->delay_pos = (D->delay_pos + 1) & (D->delaybuf_size-1);
+    D->delay_pos = (D->delay_pos + 1) & (D->delaybuf_size - 1);
     return ret;
 }
 
@@ -297,12 +297,12 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
     if ((G->sampleidx % 96) != 0)
         return cache;
     hap_time from = G->t;
-    hap_time to = G->t + G->dt * 96.f;
+    hap_time to = G->t + G->dt * 96.5f; // go epsilon (half a sample) over to ensure no cracks :)
     hap_t haps[8];
     hap_span_t hs = {};
-    pattern_t *p = stbds_shgetp_null(G->patterns_map, pattern_name);
+    pattern_t *p = get_pattern(pattern_name);
     if (p && G->playing)
-        hs = p->make_haps({haps, haps + 8}, 8, G->iTime, to - G->dt * 0.5f);
+        hs = p->make_haps({haps, haps + 8}, 8, G->iTime, to + G->dt);
     // highest note priority
     float highest_note = -1;
     float highest_number = -1;
@@ -342,18 +342,14 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
     level = level * level;
     if ((G->sampleidx % 96) == 0) {
         memset(synth->audio, 0, sizeof(synth->audio));
-        pattern_t *p = stbds_shgetp_null(G->patterns_map, pattern_name);
+        pattern_t *p = get_pattern(pattern_name);
         hap_time from = G->t;
-        hap_time to = G->t + G->dt * 96.f;
-        if (from<=1 && to>1) {
-            int i =1;
-        }
+        hap_time to = G->t + G->dt * 96.5f; // go epsilon (half a sample) over to ensure no cracks :)
         hap_t haps[8];
         hap_span_t hs = {};
         if (p && G->playing)
-            hs = p->make_haps({haps, haps + 8}, 8, (level > 0.f) ? G->iTime : -1.f, to - G->dt * 0.5f);
+            hs = p->make_haps({haps, haps + 8}, 8, (level > 0.f) ? G->iTime : -1.f, to);
         pretty_print_haps(hs, from, to);
-        uint32_t retrig = 0;
         for (hap_t *h = hs.s; h < hs.e; h++) {
             if (h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from) {
                 int i = 0;
@@ -383,12 +379,17 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
                     dst->t0 = h->t0;
                     dst->t1 = h->t1;
                     synth->v[i].vibphase = rnd01();
-                    retrig |= (1 << i);
-                    printf("alloc voice %d - new = %d - len %f oldest %f\n", i, (int)h->get_param(P_NOTE, C3), h->t1 - h->t0,
-                           oldest_t);
+                    synth->v[i].retrig = true;
+                    printf("alloc voice %d - new = %d - len %f oldest %f - from %f to %f\n", i, (int)h->get_param(P_NOTE, C3), h->t1 - h->t0,
+                           oldest_t, from, to);
+                        merge_hap(dst, h);
+                } else {
+                    hap_t *existing_hap = &synth->v[i].h;
+                    if (existing_hap->get_param(P_FROM, 0.) != h->get_param(P_FROM,0.)) {
+                        printf("FROM CHANGED\n");
+                    }
+                    merge_hap(existing_hap, h);
                 }
-                hap_t *dst = &synth->v[i].h;
-                merge_hap(dst, h);
             }
         }
         for (int i = 0; i < max_voices; ++i) {
@@ -398,8 +399,10 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
                 continue;
             int sound = h->get_param(P_SOUND, 0);
             int first_smpl = (h->t0 - from) / G->dt;
-            if (first_smpl >= 96)
+            if (first_smpl >= 96) {
+                printf("FIRST SAMPLE OUT OF BOUNDS. SKIPPING %d\n", i);
                 continue;
+            }
             if (first_smpl < 0)
                 first_smpl = 0;
             float note = h->get_param(P_NOTE, C3);
@@ -429,21 +432,18 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
 
             float duty = number * 0.125f + 0.0625f;
             hap_time t = from + first_smpl * G->dt;
-            bool is_retrig = (retrig & (1 << i)) != 0;
+            bool is_retrig = v->retrig;
             if (!G->playing) {
                 v->h.hapid = 0;
             }
             for (int smpl = first_smpl; smpl < 96; smpl++, t += G->dt) {
                 ////////////// VOICE SAMPLE
-                bool keydown = G->playing && t < h->t1;
+                bool keydown = G->playing && t < h->t1 + G->dt*0.5f;
                 float env = adsr(&v->env, keydown, attack, decay, sustain, release, is_retrig);
                 if (is_retrig) {
                     v->phase = 0.f; /*printf("retrig %s\n", w->key);*/
                 }
                 bool at_end = false;
-                if (!w) {
-                    int i = 1;
-                }
                 stereo au;
                 if (w) {
                     au = sample_wave(w, v->phase, loops, loope, fromt, tot, &at_end);
@@ -468,12 +468,13 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
                 ////////////////// VOICE SAMPLE END
                 // voice_state_buffers[i] = t_state_buffer;
                 if (!keydown && (env < 0.01f || at_end)) {
-                    printf("voice %d released\n", h->hapid);
+                    printf("voice %d released - from %f to %f\n", i, from, to);
                     h->valid_params = 0;
                     h->t0 = -1e10; // mark it as 'old'.
                     break;
                 }
             } // voice sample loop
+            v->retrig = false;
         } // voice loop
     } // 96 sample block loop
     return synth->audio[G->sampleidx % 96];

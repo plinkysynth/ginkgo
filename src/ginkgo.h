@@ -10,6 +10,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+#define USING_ASAN 1
+#else
+#define USING_ASAN 0
+#endif
+
 #define STRINGIFY(x) #x
 
 #define OVERSAMPLE 2
@@ -61,6 +69,7 @@ static inline float stmid(stereo s) { return (s.l + s.r) * 0.5f; }
 static inline float stside(stereo s) { return (s.l - s.r) * 0.5f; }
 static inline stereo midside2st(float mid, float side) { return st(mid + side, mid - side); }
 static inline stereo rotate(stereo x, float c, float s) { return st(x.l * c - x.r * s, x.l * s + x.r * c); }
+static inline stereo abs(stereo s) { return st(fabsf(s.l), fabsf(s.r)); }
 static inline stereo operator+(stereo a, stereo b) { return st(a.l + b.l, a.r + b.r); }
 static inline stereo operator+(stereo a, float b) { return st(a.l + b, a.r + b); }
 static inline stereo operator-(stereo a, stereo b) { return st(a.l - b.l, a.r - b.r); }
@@ -727,6 +736,27 @@ static inline float adsr(float state[1], bool note_down, float a_k, float d_k, f
     }
 }
 
+static inline stereo limiter(float state[2] , stereo inp) {
+    const static float k_attack_ms = 0.5f;
+    const static float k_decay_ms = 60.f;
+    const static float k_attack = 1.f - expf(-1.f / (SAMPLE_RATE * k_attack_ms * 0.001f));
+    const static float k_decay = 1.f - expf(-1.f / (SAMPLE_RATE * k_decay_ms * 0.001f));
+    float peak = max(fabsf(inp.l), fabsf(inp.r));
+    float &env_follow = state[0];
+    float &hold_time = state[1];
+    if (peak > env_follow) {
+        hold_time = SAMPLE_RATE / 100; // 10ms hold time
+        env_follow += (peak - env_follow) * k_attack;
+    } else {
+        if (hold_time > 0.f)
+            hold_time--;
+        else
+            env_follow += (peak - env_follow) * k_decay;
+    }
+    float gain = 0.9f / (max(env_follow, 0.9f));
+    //printf("gain: %f\n", lin2db(gain));
+    return sclip(inp * gain);
+}
 
 /*
 static inline void lorenz_euler(float s[3], float dt, float sigma, float beta, float rho) {
@@ -848,6 +878,7 @@ typedef struct voice_state_t {
     float env;
     double phase;
     float vibphase;
+    bool retrig;
 } voice_state_t;
 
 typedef struct synth_state_t {

@@ -3,12 +3,15 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // hot reload and scope
 
-#define SCOPE_SIZE 65536
+#define SCOPE_SIZE 16384
 #define FFT_SIZE 8192
 #define SCOPE_MASK (SCOPE_SIZE - 1)
 stereo scope[SCOPE_SIZE];
+stereo slow_scope[SCOPE_SIZE];
 stereo probe_scope[SCOPE_SIZE];
 float probe_db_smooth[FFT_SIZE/2];
+float main_db_smooth[FFT_SIZE/2];
+        
 int xyscope[128][128];
 uint32_t scope_pos = 0;
 
@@ -88,8 +91,8 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         stereo acc, probe;
         if (OVERSAMPLE == 2) {
             probe = (audio[k*2+0+frames*2]+audio[k*2+1+frames*2]); // cheap downsample for probe ;)
-            history[history_pos & 63] = sclip(ensure_finite(audio[k*2+0]));
-            history[(history_pos + 1) & 63] = sclip(ensure_finite(audio[k*2+1]));
+            history[history_pos & 63] = (ensure_finite(audio[k*2+0]));
+            history[(history_pos + 1) & 63] = (ensure_finite(audio[k*2+1]));
             history_pos += 2;
             // 2x downsample FIR
             int center_idx = history_pos - K * 2;
@@ -104,10 +107,17 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
             }
         } else {
             probe = audio[k+frames];
-            acc = sclip(ensure_finite(audio[k]));
+            acc = (ensure_finite(audio[k]));
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;
+        int slow_scope_pos = (scope_pos >> 8) & SCOPE_MASK;
+        if ((scope_pos & 255) == 0) {
+            slow_scope[slow_scope_pos] = acc;
+        } else {
+            slow_scope[slow_scope_pos].l = max(slow_scope[slow_scope_pos].l, acc.l);
+            slow_scope[slow_scope_pos].r = max(slow_scope[slow_scope_pos].r, acc.r);
+        }
         probe_scope[scope_pos & SCOPE_MASK] = probe;
         // vector scope
         static uint32_t wipe = 0;
@@ -141,8 +151,14 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     char cmd[1024];
     int version = g_version + 1;
     mkdir("build", 0755);
-    #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment -Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ build/ginkgo_lib.a "
-    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang++ " CLANG_OPTIONS "  -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
+    #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment " \
+    "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ build/ginkgo_lib.a "
+#if USING_ASAN
+    #define SANITIZE_OPTIONS "-fsanitize=address"
+#else
+    #define SANITIZE_OPTIONS ""
+#endif
+    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\" |clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
     if (!fp) {

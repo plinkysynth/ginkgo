@@ -535,8 +535,7 @@ static inline stereo sample_wave(wave_t *w, float pos, float loops=1.f, float lo
     if (!w || !w->frames) {if (at_end) *at_end = true; return {0.f, 0.f};}
     int nsamps = w->num_frames * abs(tot-fromt);
     if (nsamps<=0) {if (at_end) *at_end = true; return {0.f, 0.f};}
-    int firstsamp = w->num_frames * saturate(min(fromt, tot));
-    //pos *= w->sample_rate;
+    int firstsamp = w->num_frames * (min(fromt, tot));
     if (loops < loope && pos > loops) {
         loops *= nsamps;
         loope *= nsamps;
@@ -548,8 +547,9 @@ static inline stereo sample_wave(wave_t *w, float pos, float loops=1.f, float lo
     if (fromt>tot) pos=nsamps-pos;
     int i = (int)floorf(pos);
     float t = pos - (float)i;
-    i %= nsamps;
     i+=firstsamp;
+    i %= w->num_frames;
+    if (i<0) i+=w->num_frames;
     bool wrap = (i==w->num_frames-1);
     if (w->channels>1) {
         i*=w->channels;
@@ -823,8 +823,6 @@ __attribute__((visibility("default"))) void *dsp(basic_state_t *_G, stereo *audi
 #endif
 
 typedef double hap_time;
-
-static const hap_time hap_eps = 1.f / 5000.f; // as large as possible but smaller than the smallest note
 
 enum {
     #define X(x, ...) x,

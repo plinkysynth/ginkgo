@@ -1,9 +1,13 @@
 
 #ifdef PATTERNS
 
-/pattern bd hh sd hh 
+///pattern break_riffin fitn 2 gain cos
+/pattern [break_riffin*8] fitn 16
+    	from [[0 1 2 3 4 5 6 7] floor div 16]
 
-/bpm 130
+
+/bpm 76.0
+// bpm 76 breaks it on beat 0.20 ie at time 0.5!
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

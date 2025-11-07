@@ -882,6 +882,50 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key >= GLFW_KEY_F1 && key <= GLFW_KEY_F3) {
             set_tab(&tabs[key - GLFW_KEY_F1]);
         }
+        if (key == GLFW_KEY_F12) {
+            // tap tempo
+            static double last_time = 0;
+            static double first_tap = 0;
+            static int tap_count = 0;
+            static uint64_t first_tap_t_q32;
+            double now = glfwGetTime();
+            if (now - last_time > 1.f) {
+                // more than one second passed..
+                tap_count = 1;
+                first_tap = now;
+                first_tap_t_q32 = (G->t_q32+(1<<28)) & ~((1 << 30) - 1);
+                G->t_q32 = first_tap_t_q32;
+            } else {
+                if (G->playing) 
+                    G->t_q32 = first_tap_t_q32 + (tap_count * (1ull<<30));
+                float bpm = (60.f / (now - first_tap)) * tap_count;
+                if (tap_count > 1) {
+                    fprintf(stdout, "tapped bpm: %f\n", bpm);
+                    pattern_t *bpm_pattern = get_pattern("/bpm");
+                    if (bpm_pattern && bpm_pattern->bfs_start_end) {
+                        EditorState *audioE = &tabs[1];
+                        char buf[64];
+                        snprintf(buf, sizeof(buf), "%.1f", bpm);
+                        int si = bpm_pattern->bfs_start_end[0].start;
+                        int ei = bpm_pattern->bfs_start_end[0].end;
+                        push_edit_op(audioE, si, ei, buf, 0);
+                        const char *pattern_start = audioE->str + si;
+                        const char *pattern_end = pattern_start + strlen(buf);
+                        pattern_maker_t p = {.s = pattern_start, .n = (int)(pattern_end - pattern_start)};
+                        pattern_t pat = parse_pattern(&p, pattern_start - audioE->str);
+                        if (p.err <= 0) {
+                            pat.key = bpm_pattern->key;
+                            *bpm_pattern = pat;
+                        } else {
+                            pat.unalloc();
+                        }
+                    }
+                }
+                tap_count++;
+            }
+            last_time = now;
+        }
+
     }
     if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
         glfwSetWindowShouldClose(win, GLFW_TRUE);
@@ -892,6 +936,15 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     if (key == GLFW_KEY_ENTER)
         key = '\n';
     if (mods == GLFW_MOD_SUPER) {
+        if (key == '[') {
+            int f = G->t_q32 & ((1 << 30) - 1);
+            G->t_q32 -= f;
+            if (f < 1<<29 && G->t_q32 >= (1<<30)) G->t_q32 -= 1<<30;
+        }
+        if (key == ']') {
+            G->t_q32 &= ~((1 << 30) - 1);
+            G->t_q32 += 1<<30;
+        }
         if (key == GLFW_KEY_P) {
             if (!G->playing) {
                 // also compile...
@@ -1484,22 +1537,26 @@ static void init_audio_midi(ma_device *dev) {
     }
 
     midi_init(on_midi_input, NULL);
+    printf("opening input %d\n", midi_input_idx);
     midi_open_input(midi_input_idx);
+    printf("starting audio - device config init\n");
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
     cfg.sampleRate = SAMPLE_RATE_OUTPUT;
     cfg.capture.format = cfg.playback.format = ma_format_f32;
     cfg.capture.channels = cfg.playback.channels = 2;
     cfg.dataCallback = audio_cb;
-
+    printf("ma_device_init\n");
     if (ma_device_init(NULL, &cfg, dev) != MA_SUCCESS) {
         die("ma_device_init failed");
     }
+    printf("ma_device_start\n");
     if (ma_device_start(dev) != MA_SUCCESS) {
         fprintf(stderr, "ma_device_start failed\n");
         ma_device_uninit(dev);
         exit(3);
     }
+    printf("ma_device_start success\n");
 }
 
 static void unbind_textures_from_slots(int num_slots) {

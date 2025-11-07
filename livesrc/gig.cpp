@@ -74,15 +74,16 @@ stereo do_sample(stereo inp) {
     pads += delay(&G->delay0, pads + vocals*0.4, st(1.5,1.), 1., 1.2) * 0.5;
     bass += hpf(G->hpf, delay(&G->delay1, bass, st(0.75, 1.5), 0.25f, 1.2f) * 0.25, 500.f);
     //pads+=vocals * 0.1;
-  	pads+=reverb(&G->R, pads*0.5f + G->preview * 0.02f);
+  	pads+=reverb(&G->R, pads*0.5f + G->preview * 0.05f);
     //drums3+=reverb(&G->R, drums*0.2f);
     pads/=envf;
     //bass/=(envf - 0.1) * 8.;
 
 
 
-	rv = drums + bass + pads + vocals * 2.;
-	rv = lol_ott(rv, /*======*/0.376);
+	rv = drums + bass + pads + vocals * 2. + G->preview * 2.;
+    G->preview*=0.;
+	rv = lol_ott(rv, /*======*/0.);
     
     rv = rv  *				/*=========*/cc(7); // master volume
     // final vu meter for fun
@@ -101,7 +102,7 @@ inline float compgain(float inp, float lothresh, float hithresh, float makeup) {
 stereo lol_ott(stereo rv, float amount) {
     stereo bands[3];
     // +5.2 on input then
-    const float inp_gain = db2lin(5.2);
+    const float inp_gain = db2lin(12.2);
     multiband_split(rv * inp_gain, bands, G->ottstate);
     // thresh, decay, attack
     float b=envfollow(bands[0],0.02f, 0.01f, 0.001f);

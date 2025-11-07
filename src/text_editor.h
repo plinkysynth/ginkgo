@@ -490,6 +490,7 @@ void editor_click(GLFWwindow *win, EditorState *E, basic_state_t *G, float x, fl
                 if (!is_drag) {
                     E->click_slider_value = slider_spec.curval;
                 }
+                E->cursor_idx = E->select_idx = slider_spec.value_end_idx;
                 float dv = fx - E->click_fx;
                 float v = E->click_slider_value + (slider_spec.maxval - slider_spec.minval) * (dv / (slider_x2 - slider_x1));
                 v = clamp(v, slider_spec.minval, slider_spec.maxval);

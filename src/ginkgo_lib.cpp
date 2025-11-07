@@ -215,17 +215,15 @@ void *dsp_preamble(basic_state_t *_G, stereo *audio, int reloaded, size_t state_
         (*init_state)();
     }
     // update bpm
-    if (_G->patterns_map) {
-        pattern_t *bpm_pattern = stbds_shgetp(_G->patterns_map, "/bpm");
-        if (bpm_pattern && bpm_pattern->key) {
-            hap_t haps[8];
-            hap_span_t hs = bpm_pattern->make_haps({haps, haps + 8}, 8, -1.f, _G->t, _G->t + hap_eps);
-            if (hs.s < hs.e) {
-                float newbpm = hs.s->get_param(P_NUMBER, _G->bpm);
-                if (newbpm > 20.f && newbpm < 400.f && newbpm != _G->bpm) {
-                    printf("setting bpm to %f\n", newbpm);
-                    _G->bpm = newbpm;
-                }
+    pattern_t *bpm_pattern = get_pattern("/bpm");
+    if (bpm_pattern && bpm_pattern->key) {
+        hap_t haps[8];
+        hap_span_t hs = bpm_pattern->make_haps({haps, haps + 8}, 8, -1.f, _G->t + _G->dt * 0.5f);
+        if (hs.s < hs.e) {
+            float newbpm = hs.s->get_param(P_NUMBER, _G->bpm);
+            if (newbpm > 20.f && newbpm < 400.f && newbpm != _G->bpm) {
+                printf("setting bpm to %f\n", newbpm);
+                _G->bpm = newbpm;
             }
         }
     }
@@ -304,7 +302,7 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
     hap_span_t hs = {};
     pattern_t *p = stbds_shgetp_null(G->patterns_map, pattern_name);
     if (p && G->playing)
-        hs = p->make_haps({haps, haps + 8}, 8, G->iTime, from, to);
+        hs = p->make_haps({haps, haps + 8}, 8, G->iTime, to - G->dt * 0.5f);
     // highest note priority
     float highest_note = -1;
     float highest_number = -1;
@@ -347,20 +345,25 @@ stereo synth(synth_state_t *synth, const char *pattern_name, float level, int ma
         pattern_t *p = stbds_shgetp_null(G->patterns_map, pattern_name);
         hap_time from = G->t;
         hap_time to = G->t + G->dt * 96.f;
+        if (from<=1 && to>1) {
+            int i =1;
+        }
         hap_t haps[8];
         hap_span_t hs = {};
         if (p && G->playing)
-            hs = p->make_haps({haps, haps + 8}, 8, (level > 0.f) ? G->iTime : -1.f, from, to);
+            hs = p->make_haps({haps, haps + 8}, 8, (level > 0.f) ? G->iTime : -1.f, to - G->dt * 0.5f);
         pretty_print_haps(hs, from, to);
         uint32_t retrig = 0;
         for (hap_t *h = hs.s; h < hs.e; h++) {
             if (h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from) {
                 int i = 0;
-                for (; i < max_voices; ++i)
-                    if (synth->v[i].h.hapid == h->hapid)
+                for (; i < max_voices; ++i) {
+                    hap_t *existing_hap = &synth->v[i].h;
+                    if (existing_hap->hapid == h->hapid && existing_hap->t0 == h->t0 && existing_hap->valid_params)
                         break;
+                }
                 if (i == max_voices) {
-                    if (h->t0 >= to + 0.001f || h->t0 < from - 0.001f)
+                    if (h->t0 >= to || h->t0 < from)
                         continue; // only trigger voices at the right time.
                     // ok its a new voice.
                     // find oldest one to steal

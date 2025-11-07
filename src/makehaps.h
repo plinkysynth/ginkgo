@@ -135,31 +135,6 @@ void pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int i
             copy_src[i] = '.';
     _pretty_print_nodes(src, srcend, p, i, depth, numsiblings);
 }
-/*
-TODO the compact-hap mode is: 6*4=24 bytes per hap. and then a bulky one off to the side.
-hap_time t0, t1;
-int node; // index of the node that generated this hap.
-uint32_t valid_params; // which params have been assigned for this hap.
-int hapid;
-float first_valid_value;
-
-
-(fast)cat:
-    loop over whole children  that overlap the query, and emit them. REMEMBER: QUERY IS ONLY AN OPTIMIZATION
-    *:
-        eval right side; for each right hap, eval left side, CLIP TO RIGHT HAP
-    : or assignment in genereal: 'structure from left'
-        eval left side; eval right side; for each left hap, find the right hap that contains its start point, and set the value
-    euclid:
-        eval numsteps in query range
-        find the earliest time that overlaps the query range; we can use the fact that they are subdivided to take the last
-'subdivided' one. eval setsteps & rot & 'left hand side' over this expanded range, and sort by t1 for each step-hap, subdivided
-suitably for each setstep hap that overlaps... for each rot hap that overlaps... if rhythm says yes and it overlaps query range, for
-each left hand side hap that overlaps... emit a new hap with timing from this rhythm, but value from the overlap structure: eval
-structure in range filter structure that is value '0' or rest or whatever eval the 'left' in the range of the remaining structure
-haps for each structure-hap, for each 'left' hap that overlaps... emit a new hap with timing from this structure, but value from the
-overlap
-*/
 
 float pattern_t::get_length(int nodeidx) {
     if (nodeidx < 0)
@@ -170,12 +145,12 @@ float pattern_t::get_length(int nodeidx) {
     return 1.f;
 }
 
-bool pattern_t::_append_number_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid, float value) {
-    if (dst.s >= dst.e || t0 > t1 || nodeidx < 0)
+bool pattern_t::_append_number_hap(hap_span_t &dst, int nodeidx, int hapid, float value) {
+    if (dst.s >= dst.e || nodeidx < 0)
         return false;
     hap_t *hap = dst.s++;
-    hap->t0 = t0;
-    hap->t1 = t1;
+    hap->t0 = -1e9;
+    hap->t1 = 1e9;
     hap->node = nodeidx;
     hap->hapid = hapid;
     hap->valid_params = 1 << P_NUMBER;
@@ -194,7 +169,7 @@ bool pattern_t::_append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_
     float_minmax_t minmax = bfs_min_max_value[nodeidx];
     float v;
     if (minmax.mn != minmax.mx && value_type != VT_SCALE) { // randomize in range
-        float t = (pcg_mix(pcg_next(hapid)) & 0xffffff) * (1.f / 0xffffff);
+        float t = (pcg_mix(pcg_next(hapid)) & 0xffffff) * (1.f / 0x1000000);
         v = lerp(minmax.mn, minmax.mx, t);
         if ((n->value_type == VT_NOTE || n->value_type == VT_SCALE) &&
             minmax.mx - minmax.mn >= 1.f) // if it's a range of at least two semitone,
@@ -216,28 +191,18 @@ bool pattern_t::_append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_
     return true;
 }
 
-// filter out haps that are outside the query range a-b as an optimization,
-// but ALSO filter out haps whose start is outside the from-to hap range.
-// this actually culls haps determinstically! eg [a b c] * [2 1] will have a rest in the second half.
-void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time tofs, hap_time a, hap_time b, hap_time from,
-                             hap_time to) {
+void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time tofs, hap_time when) {
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
         left_hap->t0 = (left_hap->t0 + tofs) / speed_scale;
         left_hap->t1 = (left_hap->t1 + tofs) / speed_scale;
-        // if we include this next line, it clips eg <c a f e>/2 to only have a hap in the first half of each note.
-        // so we should let haps overhang the right edge of the queried range, I guess is what Im saying.
-        // if (left_hap->t1 > to)
-        //     left_hap->t1 = to;
-        // this checks if the left_hap overlaps the query range, but also if its onset is inside the clipping range.
-        bool onset_outside = left_hap->t0 + hap_eps < from || left_hap->t0 - hap_eps > to;
-        if (left_hap->t0 > b || left_hap->t1 < a || onset_outside) {
+        if (left_hap->t0 > when || left_hap->t1 < when) {
             left_hap->valid_params = 0;
         }
     }
 }
 
 int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,
-                             filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time t0, hap_time t1, int num_rhs) {
+                             filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when, int num_rhs) {
     hap_time structure_t0 = structure_hap->t0;
     // structure_t0 = (t0+t1)*0.5;
     hap_t tmp_mem[tmp_size * num_rhs];
@@ -245,8 +210,7 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
     hap_span_t value_haps[num_rhs];
     for (int i = 0; i < num_rhs; i++) {
         hap_span_t tmp = {tmp_mem + i * tmp_size, tmp_mem + (i + 1) * tmp_size};
-        value_haps[i] = _make_haps(tmp, tmp_size, viz_time, value_node_idx + i, structure_t0, structure_t0 + hap_eps,
-                                   new_hap_id + i * 23, true);
+        value_haps[i] = _make_haps(tmp, tmp_size, viz_time, value_node_idx + i, structure_t0, new_hap_id + i * 23);
     }
     int count = 0;
     int structure_hapid = structure_hap->hapid;
@@ -268,9 +232,11 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
         if (right_hap && !right_hap->valid_params)
             continue;
         int new_hapid = hash2_pcg(structure_hapid, right_hap ? right_hap->hapid : 0);
-        int num_copies = filter_cb ? filter_cb(structure_hap, right_hap, new_hapid, t0, t1) : 1;
+        int num_copies = filter_cb ? filter_cb(structure_hap, right_hap, new_hapid, when) : 1;
         for (int i = 0; i < num_copies; i++) {
             hap_t *target = structure_hap;
+            if (!target->valid_params)
+                continue;
             if (count++) {
                 if (dst.s >= dst.e)
                     break;
@@ -279,7 +245,7 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
                 target->hapid = new_hapid;
             }
             if (value_cb) {
-                if (!value_cb(target, value_hap_i, context + i, t0, t1)) {
+                if (!value_cb(target, value_hap_i, context + i, when)) {
                     // cancel this copy!
                     count--;
                     if (count > 0)
@@ -293,17 +259,15 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
     return count;
 }
 
-void pattern_t::_apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, int parent_idx, hap_time t0, hap_time t1,
-                                int parent_hapid, bool merge_repeated_leaves, filter_cb_t filter_cb, value_cb_t value_cb,
-                                size_t context, int num_rhs) {
+void pattern_t::_apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, int parent_idx, hap_time when, int parent_hapid,
+                                filter_cb_t filter_cb, value_cb_t value_cb, size_t context, int num_rhs) {
     bfs_node_t *n = bfs_nodes + parent_idx;
     if (n->num_children < 1)
         return;
     int right_child = (n->num_children > 1) ? n->first_child + 1 : -1;
-    hap_span_t left_haps =
-        _make_haps(dst, tmp_size, viz_time, n->first_child, t0, t1, hash2_pcg(parent_hapid, n->first_child), merge_repeated_leaves);
+    hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(parent_hapid, n->first_child));
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-        _apply_values(dst, tmp_size, viz_time, left_hap, right_child, filter_cb, value_cb, context, t0, t1, num_rhs);
+        _apply_values(dst, tmp_size, viz_time, left_hap, right_child, filter_cb, value_cb, context, when, num_rhs);
     }
 }
 
@@ -346,7 +310,7 @@ static inline int scale_index_to_note(int scalebits, int root, int index) {
     return note;
 }
 
-int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_time t0, hap_time t1) {
+int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
     if (!right_hap[0] || param_idx >= P_LAST)
         return 1;
     int src_idx = param_idx;
@@ -360,13 +324,14 @@ int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_tim
     return 1;
 }
 
-int apply_fit_func(hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_time t0, hap_time t1) {
+int apply_fit_func(hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_time when) {
     if (!right_hap || param_idx >= P_LAST)
         return 1;
     if (!right_hap[0]->has_param(P_NUMBER))
         return 1;
     float n = right_hap[0]->params[P_NUMBER];
-    if (n<=0.f) n=1.f;
+    if (n <= 0.f)
+        n = 1.f;
     if (left_hap->has_param(P_SOUND) && G->dt != 0.) {
         wave_t *w = get_wave(get_sound_by_index(left_hap->params[P_SOUND]), 0);
         if (w->num_frames) {
@@ -379,8 +344,7 @@ int apply_fit_func(hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_tim
     return 1;
 }
 
-
-int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time t0, hap_time t1) { // param_idx 1=sub
+int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time when) { // param_idx 1=sub
     if (!right_hap || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
         return 1;
     int param_idx = __builtin_ctz(target->valid_params);
@@ -389,9 +353,8 @@ int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time t
     return 1;
 }
 
-hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time a, hap_time b, int hapid,
-                                 bool merge_repeated_leaves) {
-    if (nodeidx < 0 || a > b || !bfs_nodes)
+hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time when, int hapid) {
+    if (nodeidx < 0 || !bfs_nodes)
         return {};
     hap_span_t rv = {dst.s, dst.s};
     if (dst.s >= dst.e)
@@ -406,38 +369,38 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         int patidx = (int)bfs_min_max_value[nodeidx].mx;
         if (patidx >= 0 && patidx < stbds_shlen(G->patterns_map)) {
             pattern_t *pat = &G->patterns_map[patidx];
-            hap_span_t hs = pat->_make_haps(dst, tmp_size, viz_time, 0, a, b, hapid, merge_repeated_leaves);
+            hap_span_t hs = pat->_make_haps(dst, tmp_size, viz_time, 0, when, hapid);
             if (hs.e > dst.s) {
-                appended = true; 
+                appended = true;
             }
         }
         break;
     }
     case N_SIN:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, sinf(a * M_PI * 2) * 0.5f + 0.5f);
+        appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * M_PI * 2) * 0.5f + 0.5f);
         break;
     case N_SIN2:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, sinf(a * M_PI * 2));
+        appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * M_PI * 2));
         break;
     case N_COS:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, cosf(a * M_PI * 2) * 0.5f + 0.5f);
+        appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * M_PI * 2) * 0.5f + 0.5f);
         break;
     case N_COS2:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, cosf(a * M_PI * 2));
+        appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * M_PI * 2));
         break;
     case N_SAW:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, frac(a));
+        appended = _append_number_hap(dst, nodeidx, hapid, frac(when));
         break;
     case N_SAW2:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, frac(a) * 2.f - 1.f);
+        appended = _append_number_hap(dst, nodeidx, hapid, frac(when) * 2.f - 1.f);
         break;
     case N_RAND:
         appended =
-            _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, (pcg_mix(hash2_pcg(hapid, (int)a)) & 0xffff) / 65535.f);
+            _append_number_hap(dst, nodeidx, hapid, (pcg_mix(hash2_pcg(hapid, (int)floor(when) )) & 0xffff) / 65536.f);
         break;
     case N_RAND2:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid,
-                                      (pcg_mix(hash2_pcg(hapid, (int)a)) & 0xffff) / 32767.5f - 1.f);
+        appended = _append_number_hap(dst, nodeidx, hapid,
+                                      (pcg_mix(hash2_pcg(hapid, (int)floor(when) )) & 0xffff) / 32768.f - 1.f);
         break;
     case N_CC0:
     case N_CC1:
@@ -447,18 +410,17 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_CC5:
     case N_CC6:
     case N_CC7:
-        appended = _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid,
-                                      G->midi_cc[16+n->type-N_CC0]/127.f);
+        appended = _append_number_hap(dst, nodeidx, hapid, G->midi_cc[16 + n->type - N_CC0] / 127.f);
         break;
     case N_RANDI: {
         hap_t tmp_mem[tmp_size];
         hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
-        hap_span_t right_haps = _make_haps(tmp, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child), true);
+        hap_span_t right_haps = _make_haps(tmp, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
             int limit = (int)right_hap->get_param(P_NUMBER, 0.f);
-            int r = (pcg_mix(hash2_pcg(right_hap->hapid, (int)a)) & 0xffff);
+            int r = (pcg_mix(hash2_pcg(right_hap->hapid, (int)floor(when))) & 0xffff);
             r = limit ? (r % limit) : 0;
-            appended |= _append_number_hap(dst, nodeidx, floor(a), ceil(b), hapid, r);
+            appended |= _append_number_hap(dst, nodeidx, hapid, r);
         }
         break;
 
@@ -466,12 +428,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
 
     case N_LEAF: {
-        if (merge_repeated_leaves)
-            appended = _append_leaf_hap(dst, nodeidx, floor(a), ceil(b), hapid);
-        else
-            for (int i = floor(a); i < b; ++i) {
-                appended |= _append_leaf_hap(dst, nodeidx, i, i + 1, hash2_pcg(hapid, i));
-            }
+        float f = floor(when);
+        appended = _append_leaf_hap(dst, nodeidx, f, f+1.f, hash2_pcg(hapid, (int)f));
         break;
     }
     case N_POLY:
@@ -483,14 +441,13 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             break;
         for (int childidx = 0; childidx < n->num_children; ++childidx) {
             int child = n->first_child + childidx;
-            _make_haps(dst, tmp_size, viz_time, child, a * speed_scale, b * speed_scale, hash2_pcg(hapid, childidx),
-                       merge_repeated_leaves);
+            _make_haps(dst, tmp_size, viz_time, child, when * speed_scale, hash2_pcg(hapid, childidx));
         }
-        _filter_haps({rv.s, dst.s}, speed_scale, 0., a, b, floor(a), ceil(b));
+        _filter_haps({rv.s, dst.s}, speed_scale, 0., when);
         break;
     }
     case N_OP_FIT: {
-        hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, a, b, hapid, merge_repeated_leaves);
+        hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hapid);
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
             if (left_hap->has_param(P_SOUND) && G->dt != 0.) {
                 wave_t *w = get_wave(get_sound_by_index(left_hap->params[P_SOUND]), 0);
@@ -515,16 +472,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         if (n->num_children == 1) {
             if (n->type == N_OP_ELONGATE && bfs_min_max_value[nodeidx].mx != 0.f) {
                 hap_time speed_scale = 1.0 / bfs_min_max_value[nodeidx].mx;
-                hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, a * speed_scale, b * speed_scale,
-                                                  hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
-                _filter_haps(left_haps, speed_scale, 0., a, b, -1e9, 1e9);
+                hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale,
+                                                  hash2_pcg(hapid, n->first_child));
+                _filter_haps(left_haps, speed_scale, 0., when);
             }
             break;
         }
         hap_t tmp_mem[tmp_size];
         hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
         hap_span_t right_haps =
-            _make_haps(tmp, tmp_size, viz_time, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true);
+            _make_haps(tmp, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
             float num = right_hap->get_param(P_NUMBER, 0.f);
             hap_time speed_scale = 1.;
@@ -547,21 +504,18 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             }
             if (speed_scale <= 0.f)
                 continue;
-            hap_time from = (n->type == N_OP_ELONGATE || merge_repeated_leaves) ? -1e9 : right_hap->t0;
-            hap_time to = (n->type == N_OP_ELONGATE || merge_repeated_leaves) ? 1e9 : right_hap->t1;
-            hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, max(from, a) * speed_scale,
-                                              min(to, b) * speed_scale, hash2_pcg(hapid, right_hap->hapid), merge_repeated_leaves);
-            _filter_haps(left_haps, speed_scale, tofs, a, b, from, to);
+            hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale,
+                                              hash2_pcg(hapid, right_hap->hapid));
+            _filter_haps(left_haps, speed_scale, tofs, when);
         }
         break;
     }
     case N_RANDOM: {
         if (n->num_children <= 0)
             break;
-        for (int i = floor(a); i < b; ++i) {
-            int childidx = (hash2_pcg(hapid, i)) % n->num_children;
-            _make_haps(dst, tmp_size, viz_time, n->first_child + childidx, i, i + 1, hash2_pcg(hapid, i), merge_repeated_leaves);
-        }
+        int i = floor(when);
+        int childidx = (hash2_pcg(hapid, i)) % n->num_children;
+        _make_haps(dst, tmp_size, viz_time, n->first_child + childidx, when, hash2_pcg(hapid, i));
         break;
     }
     case N_OP_IDX: { // take structure from the left; value(s) from the right. copy as needed
@@ -569,8 +523,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             break;
         // the : operator is quite flexible for applying scales to notes or numbers.
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, nodeidx, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t param_idx, hap_time t0, hap_time t1) {
+            dst, tmp_size, viz_time, nodeidx, when, nodeidx, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
                 if (!right_hap[0] || !right_hap[0]->valid_params)
                     return 0;
                 param_idx = __builtin_ctz(right_hap[0]->valid_params);
@@ -608,8 +562,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_RANGE2:
     case N_OP_RANGE: {
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
+            dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !right_hap[1] || !right_hap[1]->has_param(P_NUMBER) ||
                     !target->valid_params)
                     return 1;
@@ -627,9 +581,9 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
     case N_OP_MUL:
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
-                if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
+            dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+                if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER))
                     return 1;
                 int param_idx = __builtin_ctz(target->valid_params);
                 float v = right_hap[0]->params[P_NUMBER];
@@ -640,19 +594,28 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     case N_OP_ROUND:
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
-                if (!target->valid_params) return 1;
+            dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 int param_idx = __builtin_ctz(target->valid_params);
                 target->params[param_idx] = roundf(target->params[param_idx]);
                 return 1;
             },
             0);
         break;
+    case N_OP_FLOOR:
+        _apply_unary_op(
+            dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+                int param_idx = __builtin_ctz(target->valid_params);
+                target->params[param_idx] = floorf(target->params[param_idx]);
+                return 1;
+            },
+            0);
+        break;
     case N_OP_DIV:
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) { // param_idx 1=sub
+            dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
                     return 1;
                 int param_idx = __builtin_ctz(target->valid_params);
@@ -663,10 +626,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             0);
         break;
     case N_OP_ADD:
-        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, add_value_func, 0);
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, add_value_func, 0);
         break;
     case N_OP_SUB:
-        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, add_value_func, 1);
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, add_value_func, 1);
         break;
     case N_OP_VIB:
         param = P_VIB;
@@ -717,16 +680,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         param = P_PAN;
         goto assign_value;
     assign_value:
-        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, apply_value_func, param);
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_value_func, param);
         break;
     case N_OP_FITN:
-        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr, apply_fit_func, 0);
+        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_fit_func, 0);
         break;
 
     case N_OP_CLIP:
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time t0, hap_time t1) {
+            dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) {
                 float value = right_hap[0] ? right_hap[0]->get_param(P_NUMBER, 0.5f) : 0.5f;
                 if (value <= 0.f)
                     target->valid_params = 0;
@@ -738,8 +701,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     case N_OP_DEGRADE: {
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, a, b, hapid, merge_repeated_leaves,
-            [](hap_t *target, hap_t *right_hap, int new_hapid, hap_time t0, hap_time t1) {
+            dst, tmp_size, viz_time, nodeidx, when, hapid, 
+            [](hap_t *target, hap_t *right_hap, int new_hapid, hap_time when) {
                 float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
                 if (value >= 1.f)
                     return 0;
@@ -757,19 +720,19 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_GRID: {
         if (kids_total_length <= 0.f || n->first_child < 0)
             break;
-        hap_time child_a = a * speed_scale, child_b = b * speed_scale;
-        int loopidx = floor(child_a / kids_total_length);
+        hap_time child_when = when * speed_scale;
+        int loopidx = floor(when / kids_total_length);
         hap_time from = loopidx * kids_total_length;
         hap_time loop_from = from;
         int childidx = 0;
         float lines_per_cycle = 1.f;
         if (n->type == N_GRID) {
-            bfs_start_end[nodeidx].local_time_of_eval = child_a;
+            bfs_start_end[nodeidx].local_time_of_eval = child_when;
             lines_per_cycle = bfs_min_max_value[nodeidx].mn;
             if (lines_per_cycle < 1.f)
                 break;
         }
-        while (from < child_b) {
+        while (from <= child_when) {
             int childnode = n->first_child + childidx;
             hap_time child_length = get_length(childnode);
             hap_time to = from + child_length;
@@ -785,12 +748,12 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 // if (next_grid_time_offset > grid_time_first_loop)
                 //     next_grid_time_offset = grid_time_first_loop;
                 to = loop_from + next_grid_time_offset;
-                if (from >= child_b)
+                if (from > child_when)
                     break;
             }
             if (to <= from)
                 break;
-            if (to > child_a) {
+            if (to > child_when) {
                 // we shift time so that the child feels like it's just looping on its own
                 hap_time child_from = loopidx * child_length;
                 hap_time child_to = (loopidx + 1) * child_length;
@@ -800,15 +763,15 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 // in that way, large query ranges dont return multiple copies of the children
                 // but also, small query ranges propagate down the callstack to keep things fast.
                 hap_span_t newhaps =
-                    _make_haps(dst, tmp_size, viz_time, childnode, max(child_a, from) - tofs, min(child_b, to) - tofs,
-                               hash2_pcg(hapid, childidx + loopidx * n->num_children), merge_repeated_leaves);
+                    _make_haps(dst, tmp_size, viz_time, childnode, child_when - tofs,
+                               hash2_pcg(hapid, childidx + loopidx * n->num_children));
                 for (hap_t *src_hap = newhaps.s; src_hap < newhaps.e; src_hap++) {
                     if (src_hap->t1 > to - tofs)
                         src_hap->t1 = to - tofs;
                     src_hap->t0 = (src_hap->t0 + tofs) / speed_scale;
                     src_hap->t1 = (src_hap->t1 + tofs) / speed_scale;
-                    if (src_hap->t0 > b || src_hap->t1 < a ||
-                        src_hap->t0 >= src_hap->t1) { // filter out haps that are outside the query range
+                    if (src_hap->t0 > when || src_hap->t1 < when ||
+                        src_hap->t0 > src_hap->t1) { // filter out haps that are outside the query range
                         src_hap->valid_params = 0;
                     }
                 }
@@ -826,15 +789,15 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         if (n->num_children < 2)
             break;
         hap_span_t left_haps =
-            _make_haps(dst, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
+            _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, P_A, a, b);
+            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, P_A, when);
             if (n->num_children > 2)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, P_D, a, b);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, P_D, when);
             if (n->num_children > 3)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, P_S, a, b);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, P_S, when);
             if (n->num_children > 4)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, P_R, a, b);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, P_R, when);
         }
         break;
     }
@@ -848,54 +811,50 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         hap_span_t tmp2 = {tmp_mem + 2 * tmp_size, tmp_mem + 3 * tmp_size};
         hap_span_t tmp3 = {tmp_mem + 3 * tmp_size, tmp_mem + 4 * tmp_size};
         hap_span_t left_haps =
-            _make_haps(tmp0, tmp_size, viz_time, n->first_child, a, b, hash2_pcg(hapid, n->first_child), merge_repeated_leaves);
+            _make_haps(tmp0, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
         hap_span_t setsteps_haps =
-            _make_haps(tmp1, tmp_size, viz_time, n->first_child + 1, a, b, hash2_pcg(hapid, n->first_child + 1), true);
+            _make_haps(tmp1, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
         hap_span_t numsteps_haps =
-            _make_haps(tmp2, tmp_size, viz_time, n->first_child + 2, a, b, hash2_pcg(hapid, n->first_child + 2), true);
+            _make_haps(tmp2, tmp_size, viz_time, n->first_child + 2, when, hash2_pcg(hapid, n->first_child + 2));
         hap_span_t rot_haps = {};
         if (n->num_children > 3)
-            rot_haps = _make_haps(tmp3, tmp_size, viz_time, n->first_child + 3, a, b, hash2_pcg(hapid, n->first_child + 3), true);
+            rot_haps = _make_haps(tmp3, tmp_size, viz_time, n->first_child + 3, when, hash2_pcg(hapid, n->first_child + 3));
         if (rot_haps.empty())
             rot_haps = {};
         for (hap_t *numsteps_hap = numsteps_haps.s; numsteps_hap < numsteps_haps.e; numsteps_hap++) {
             int numsteps = (int)numsteps_hap->get_param(P_NUMBER, 0.f);
             if (numsteps < 1)
                 continue;
-            hap_time child_a = a * numsteps;
-            hap_time child_b = b * numsteps;
-            for (int i = floor(child_a); i < child_b; i++) {
-                hap_time t0 = i / (float)numsteps;
-                hap_time t1 = (i + 1) / (float)numsteps;
-                if (t0 >= b || t1 <= a)
+            hap_time child_when = when * numsteps;
+            int i = floor(child_when);
+            hap_time t0 = i / (float)numsteps;
+            hap_time t1 = (i + 1) / (float)numsteps;
+            for (hap_t *setsteps_hap = setsteps_haps.s; setsteps_hap < setsteps_haps.e; setsteps_hap++) {
+                if (setsteps_hap->t0 > t0 || setsteps_hap->t1 <= t0)
                     continue;
-                for (hap_t *setsteps_hap = setsteps_haps.s; setsteps_hap < setsteps_haps.e; setsteps_hap++) {
-                    if (setsteps_hap->t0 > t0 || setsteps_hap->t1 <= t0)
-                        continue;
-                    int set_steps = (int)setsteps_hap->get_param(P_NUMBER, 0.f);
-                    if (set_steps < 1)
-                        continue;
-                    for (hap_t *rot_hap = rot_haps.s; rot_hap < rot_haps.e || rot_haps.empty(); rot_hap++) {
-                        int rot = rot_hap ? (int)rot_hap->get_param(P_NUMBER, 0.f) : 0;
-                        if (euclid_rhythm(i, set_steps, numsteps, rot)) {
-                            for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-                                if (dst.s >= dst.e)
-                                    break;
-                                if (left_hap->t0 > t0 || left_hap->t1 <= t0)
-                                    continue;
-                                *dst.s = *left_hap;
-                                dst.s->t0 = t0;
-                                dst.s->t1 = t1;
-                                dst.s->hapid = hash2_pcg(hapid, left_hap->hapid);
-                                dst.s++;
-                            } // left haps
-                        }
-                        if (!rot_hap)
-                            break;
-                    } // rot haps
-                } // setsteps haps
-            } // looping over subdivisions
-        } // numsteps haps
+                int set_steps = (int)setsteps_hap->get_param(P_NUMBER, 0.f);
+                if (set_steps < 1)
+                    continue;
+                for (hap_t *rot_hap = rot_haps.s; rot_hap < rot_haps.e || rot_haps.empty(); rot_hap++) {
+                    int rot = rot_hap ? (int)rot_hap->get_param(P_NUMBER, 0.f) : 0;
+                    if (euclid_rhythm(i, set_steps, numsteps, rot)) {
+                        for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
+                            if (dst.s >= dst.e)
+                                break;
+                            if (left_hap->t0 > t0 || left_hap->t1 <= t0)
+                                continue;
+                            *dst.s = *left_hap;
+                            dst.s->t0 = t0;
+                            dst.s->t1 = t1;
+                            dst.s->hapid = hash2_pcg(hapid, left_hap->hapid);
+                            dst.s++;
+                        } // left haps
+                    }
+                    if (!rot_hap)
+                        break;
+                } // rot haps
+            } // setsteps haps
+        } // looping over subdivisions
     } // euclid
     break;
 

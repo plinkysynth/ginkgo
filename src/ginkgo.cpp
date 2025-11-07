@@ -795,7 +795,7 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
     if (tabs[0].fname == NULL)
         tabs[0].fname = stbstring_from_span("livesrc/blank.glsl", NULL, 0);
     if (tabs[1].fname == NULL)
-        tabs[1].fname = stbstring_from_span("livesrc/audio.cpp", NULL, 0);
+        tabs[1].fname = stbstring_from_span("livesrc/blank.cpp", NULL, 0);
     if (cur_tab < 0 || cur_tab >= 2)
         cur_tab = 0;
     curE = &tabs[cur_tab];

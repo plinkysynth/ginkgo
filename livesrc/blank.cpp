@@ -12,22 +12,17 @@
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-STATE_VERSION(1,  
+struct song : public song_base_t {
 	synth_t synth;
-    delay_t delay;
-    reverb_t reverb;
-)
-
-stereo do_sample(stereo inp) {
-    stereo x = synth(&G->synth, "/pattern", 1.f) * 5.;
-    //x += G->delay.run(x, st(1.5,1.), 0.75, 1.2) * 0.25;
-  	//x+=G->reverb.run(x*0.04f + G->preview * 0.1f);
-    // final vu meter for fun
-    envfollow(x.l);
-    envfollow(x.r);
-    return x;
-}
-
-
-
-
+  delay_t delay;
+  reverb_t reverb;
+  stereo do_sample(stereo inp) {
+      stereo x = synth("/pattern", 1.f) * 5.;
+      x += delay(x, st(1.5,1.), 0.75, 1.2) * 0.25;
+      //x+=reverb(x*0.04f + preview * 0.1f);
+      // final vu meter for fun
+      envfollow(x.l);
+      envfollow(x.r);
+      return x;
+  }
+};

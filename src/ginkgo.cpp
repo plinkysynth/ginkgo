@@ -2,8 +2,11 @@
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
 #define MINIAUDIO_IMPLEMENTATION
+#define GLFW_EXPOSE_NATIVE_COCOA
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+#include <OpenGL/gl3.h> // core profile headers
 #include <stdio.h>
-#include <stdatomic.h>
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -20,8 +23,6 @@
 #include "3rdparty/pffft.h"
 #include "ansicols.h"
 #include "ginkgo.h"
-#include <GLFW/glfw3.h>
-#include <OpenGL/gl3.h> // core profile headers
 #include "audio_host.h"
 #include "midi_mac.h"
 #include "sampler.h"
@@ -33,9 +34,54 @@
 #include "json.h"
 #include "logo.h"
 #include "crash.h"
+#include "mac_touch_input.h"
 
 #define RESW 1920
 #define RESH 1080
+
+static double click_mx, click_my, click_time;
+static int click_count;
+// multitouch dragging:
+static int prev_num_finger_dragging = 0;
+static float prev_drag_cx=0.f, prev_drag_cy=0.f, prev_drag_dist=0.f;
+static int num_finger_dragging = 0;
+static float drag_cx=0.f, drag_cy=0.f, drag_dist=0.f;
+
+static inline bool is_two_finger_dragging(void) {
+    return num_finger_dragging==2 && prev_num_finger_dragging == 2;
+}
+
+void update_multitouch_dragging(void) {
+    prev_num_finger_dragging = num_finger_dragging;
+    prev_drag_cx = drag_cx;
+    prev_drag_cy = drag_cy;
+    prev_drag_dist = drag_dist;
+    RawTouch touches[16];
+    int num_touches = mac_touch_get(touches, 16, fbw, fbh);
+    drag_cx = 0.f;
+    drag_cy = 0.f;
+    num_finger_dragging = 0;
+    for (int i = 0; i < num_touches; i++) {
+        //printf("%d %f %f :\n", touches[i].id, touches[i].x, touches[i].y);
+        num_finger_dragging++;
+        drag_cx += touches[i].x;
+        drag_cy += touches[i].y;
+    
+    }
+    if (num_finger_dragging) drag_cx/=num_finger_dragging, drag_cy/=num_finger_dragging;
+    //printf("dragging: %d\n", num_finger_dragging);
+    if (num_finger_dragging>1) {
+        float xx=0.f,yy=0.f;
+        for (int i = 0; i < num_touches; i++) {
+            xx += square(touches[i].x-drag_cx);
+            yy += square(touches[i].y-drag_cy);
+            
+        }
+        xx/=num_finger_dragging;
+        yy/=num_finger_dragging;
+        drag_dist=sqrtf(square(xx)+square(yy));
+    }
+}
 
 // Named constants for magic numbers
 #define BLOOM_FADE_FACTOR (1.f / 16.f)
@@ -88,6 +134,12 @@ static void uniform1ui(GLuint shader, const char *uniform_name, uint32_t value) 
     if (loc == -1)
         return;
     glUniform1ui(loc, value);
+}
+static void uniform1fv(GLuint shader, const char *uniform_name, int count, const float *value) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform1fv(loc, count, value);
 }
 static void uniform2i(GLuint shader, const char *uniform_name, int value1, int value2) {
     int loc = glGetUniformLocation(shader, uniform_name);
@@ -273,6 +325,7 @@ uniform uint iFrame;
 uniform float iTime; 
 uniform float t; // bpm synced time
 uvec4 seed; 
+uniform float cc[8];
 uniform sampler2D uFP; 
 uniform ivec2 uScreenPx;
 uniform sampler2D uFont; 
@@ -286,8 +339,6 @@ uniform ivec2 uFontPx;
 uniform int status_bar_size;
 uniform sampler2D uBloom;
 uniform vec2 uARadjust;
-
-
 uniform sampler2D uSky;
 uniform samplerBuffer uSpheres;
 uniform mat4 c_cam2world;
@@ -307,7 +358,11 @@ uvec4 pcg4d() {
     seed += v;
     return v;
 }
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
 float square(float x) { return x * x; }
+float lengthsq(vec2 v) { return dot(v, v); }
+float lengthsq(vec3 v) { return dot(v, v); }
+float lengthsq(vec4 v) { return dot(v, v); }
 vec2 wave_read(float x, int y_base) {
     int ix = int(x);
     vec2 s0 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);
@@ -318,7 +373,6 @@ vec2 wave_read(float x, int y_base) {
 //vec2 scope(float x) { return (wave_read(x, 256 - 4) - 128.f) * (1.f/128.f); }
 float fft(float x) { return (wave_read(x, 256 - 12).x) * (1.f/256.f); }
 
-float saturate(float x) { return clamp(x, 0.0, 1.0); }
 vec4 rnd4() { return vec4(pcg4d()) * (1.f / 4294967296.f); }
 vec2 rnd_disc_cauchy(vec2 z) {
     vec2 h = z * vec2(6.28318530718, 3.1 / 2.);
@@ -408,9 +462,6 @@ vec4 get_text_pixel(vec2 fpixel, ivec2 ufontpx, float grey, float contrast, floa
     if (bg.x <= 1.f/15.f && bg.y <= 1.f/15.f && bg.z <= 1.f/15.f) {
         bg.w = bg.x * 4.f;
         bg.xyz = vec3(0.f);
-        // if (grey > 0.5) {
-        //     fg.xyz = vec3(1.) - fg.xyz;
-        // }    
     }
     if (ascii != 0) {
         bg.w=max(grey, bg.w);
@@ -435,16 +486,16 @@ const char *kFS_bloom = SHADER(
     uniform float fade;
     void main() {
         
-        vec4 c0 = texture(uFP, v_uv + vec2(-duv.x, -duv.y));
-        c0     += texture(uFP, v_uv + vec2(     0, -duv.y)) * 2.;
-        c0     += texture(uFP, v_uv + vec2( duv.x, -duv.y));
-        c0     += texture(uFP, v_uv + vec2(-duv.x,      0)) * 2.;
-        c0     += texture(uFP, v_uv + vec2(     0,      0)) * 4.;
-        c0     += texture(uFP, v_uv + vec2( duv.x,      0)) * 2.;
-        c0     += texture(uFP, v_uv + vec2(-duv.x,  duv.y));
-        c0     += texture(uFP, v_uv + vec2(     0,  duv.y)) * 2.;
-        c0     += texture(uFP, v_uv + vec2( duv.x,  duv.y));
-        o_color = c0 * fade;
+        vec3 c0 = texture(uFP, v_uv + vec2(-duv.x, -duv.y)).xyz;
+        c0     += texture(uFP, v_uv + vec2(     0, -duv.y)).xyz * 2.;
+        c0     += texture(uFP, v_uv + vec2( duv.x, -duv.y)).xyz;
+        c0     += texture(uFP, v_uv + vec2(-duv.x,      0)).xyz * 2.;
+        c0     += texture(uFP, v_uv + vec2(     0,      0)).xyz * 4.;
+        c0     += texture(uFP, v_uv + vec2( duv.x,      0)).xyz * 2.;
+        c0     += texture(uFP, v_uv + vec2(-duv.x,  duv.y)).xyz;
+        c0     += texture(uFP, v_uv + vec2(     0,  duv.y)).xyz * 2.;
+        c0     += texture(uFP, v_uv + vec2( duv.x,  duv.y)).xyz;        
+        o_color = vec4(c0 * fade, 16.f * fade);
     }
 ); 
 
@@ -556,8 +607,7 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
         rendercol += bloomcol * 0.3;
         rendercol = max(vec3(0.), rendercol);
-        float grey = dot(rendercol, vec3(0.2126 * 1., 0.7152 * 1., 0.0722 * 1.));
-
+        
         vec2 pix = v_uv * vec2(uScreenPx.x, 2048.f);
         float fftx = uScreenPx.x - pix.x;
         if (pix.x < 64.f || fftx<128.f) {
@@ -595,12 +645,10 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
                 uvec4 xyscope = texelFetch(uText, ivec2(idx & 511, (256-20) + (idx >> 9)), 0);
                 beamcol = vec3(float(xyscope.x + xyscope.y * 256u) * vec3(0.00004,0.00008,0.00006));
             }
-            // if (grey > 0.5) {
-            //     beamcol = -beamcol * 2.;
-            // }
             rendercol += max(vec3(0.),beamcol);
         }
-        rendercol.rgb = sqrt(aces(rendercol.rgb)) * fade_render;
+        rendercol.rgb = clamp(sqrt(aces(rendercol.rgb)) * fade_render, 0.f, 1.f);
+        float grey = dot(rendercol, vec3(0.2126 * 0.5, 0.7152 * 0.5, 0.0722 * 0.5));
 
         vec2 fpixel = vec2(v_uv.x * uScreenPx.x, (1.0 - v_uv.y) * uScreenPx.y);
         // status line doesnt scroll
@@ -646,9 +694,25 @@ static float fov = 0.4f;
 static float focal_distance = 5.f;
 static float aperture = 0.01f;
 
+GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0, secmon_pass = 0;
+GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0, fs_secmon = 0;
+GLuint pbos[3];
+int pbo_index = 0;
+GLuint texFont = 0, texText = 0;
+
 void set_tab(EditorState *newE) {
     ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
     curE = newE;
+}
+
+void update_pattern_uniforms(pattern_t *patterns) {
+    for (int i = 0; i < stbds_shlen(patterns); i++) {
+        pattern_t *p = &patterns[i];
+        p->uniform_idx = -1;
+        if (user_pass && p->key && p->key[0] == '/') {
+            p->uniform_idx = glGetUniformLocation(user_pass, p->key+1);
+        }
+    }
 }
 
 void parse_named_patterns_in_source(void) {
@@ -661,6 +725,7 @@ void parse_named_patterns_in_source(void) {
         init_remapping(E);
         parse_named_patterns_in_source(E->str, E->str + stbds_arrlen(E->str));
     }
+    update_pattern_uniforms(new_pattern_map_during_parse);
     // TODO - let the old pattern table leak because concurrency etc
     G->patterns_map = new_pattern_map_during_parse;
     new_pattern_map_during_parse = NULL;
@@ -803,11 +868,6 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
     ui_alpha = ui_alpha_target;
 }
 
-GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0, secmon_pass = 0;
-GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0, fs_secmon = 0;
-GLuint pbos[3];
-int pbo_index = 0;
-GLuint texFont = 0, texText = 0;
 
 void parse_error_log(EditorState *E);
 
@@ -854,6 +914,7 @@ GLuint try_to_compile_shader(EditorState *E) {
     if (new_user_pass) {
         glDeleteProgram(user_pass);
         user_pass = new_user_pass;
+        update_pattern_uniforms(G->patterns_map);
     }
     if (!user_pass)
         die("Failed to compile shader");
@@ -1093,8 +1154,7 @@ static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     curE->need_scroll_update = true;
 }
 
-static double click_mx, click_my, click_time;
-static int click_count;
+
 
 void draw_umap(EditorState *E, uint32_t *ptr) {
     int tmw = fbw / E->font_width;
@@ -1157,6 +1217,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     }
     //float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
     
+    /*
     if (G->mscrolly!=0.f) {
         float mx_e = (G->mx - E->centerx) / E->zoom;
         float my_e = (G->my - E->centery) / E->zoom;
@@ -1166,6 +1227,23 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         E->centery = G->my - my_e * E->zoom;
         G->mscrolly = 0.f;
     }
+    */  
+    if (is_two_finger_dragging()) {
+        float dx = drag_cx - prev_drag_cx;
+        float dy = drag_cy - prev_drag_cy;
+        float velocity_sq = (dx*dx + dy*dy);
+        E->centerx += drag_cx - prev_drag_cx;
+        E->centery += drag_cy - prev_drag_cy;
+        float mx_e = (G->mx - E->centerx) / E->zoom;
+        float my_e = (G->my - E->centery) / E->zoom;
+        float zoom_amount = expf(velocity_sq * -0.1f); // if we are moving the center of mass of fingers, supress zoom.
+        E->zoom *= powf(drag_dist / prev_drag_dist, zoom_amount);
+        E->zoom = clamp(E->zoom, 0.01f, 100.f);
+        E->centerx = G->mx - mx_e * E->zoom;
+        E->centery = G->my - my_e * E->zoom;
+    }
+
+        
     int n = stbds_shlen(E->embeddings);
     int closest_idx = 0;
     float closest_x = G->mx;
@@ -1210,10 +1288,10 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     }
     if (E->drag_type != 0 && G->mb == 1) {
         if (E->drag_type == 3) {
-            E->centerx += G->mx - click_mx;
-            E->centery += G->my - click_my;
-            click_mx = G->mx;
-            click_my = G->my;
+            // E->centerx += G->mx - click_mx;
+            // E->centery += G->my - click_my;
+            // click_mx = G->mx;
+            // click_my = G->my;
         } else {
             if (E->drag_type == 1) {
                 fromt += (G->mx - click_mx) / (fbw-96.f);
@@ -1360,9 +1438,9 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         E->centery = fbh / 2.f - (maxy + miny) / 2.f * E->zoom;
     }
     E->zoom = clamp(E->zoom, 0.01f, 100.f);
-    E->zoom_sm += (E->zoom - E->zoom_sm) * 0.1f;
-    E->centerx_sm += (E->centerx - E->centerx_sm) * 0.1f;
-    E->centery_sm += (E->centery - E->centery_sm) * 0.1f;
+    E->zoom_sm += (E->zoom - E->zoom_sm) * 0.2f;
+    E->centerx_sm += (E->centerx - E->centerx_sm) * 0.2f;
+    E->centery_sm += (E->centery - E->centery_sm) * 0.2f;
 }
 
 static void mouse_button_callback(GLFWwindow *win, int button, int action, int mods) {
@@ -1970,7 +2048,7 @@ int main(int argc, char **argv) {
     printf(COLOR_RED "Address sanitizer enabled\n" COLOR_RESET);
 #endif
     void install_crash_handler(void);
-    install_crash_handler();
+    //install_crash_handler();
     if (!glfwInit())
         die("glfwInit failed");
     int count = 0;
@@ -1999,6 +2077,11 @@ int main(int argc, char **argv) {
     // return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);
+
+#ifdef __APPLE__
+    void *nswin = glfwGetCocoaWindow(win);
+    mac_touch_init(nswin);
+#endif
 
     size_t n = strlen(kFS_user_prefix) + strlen(kFS_ui_suffix) + 1;
     char *fs_ui_str = (char *)malloc(n);
@@ -2038,7 +2121,7 @@ int main(int argc, char **argv) {
     check_gl("alloc text tex");
     glBindTexture(GL_TEXTURE_2D, 0);
 
-#define NUM_BLOOM_MIPS 4
+#define NUM_BLOOM_MIPS 8
 #define NUM_FPRTS 3
     GLuint texFPRT[NUM_FPRTS + NUM_BLOOM_MIPS];
     GLuint fbo[NUM_FPRTS + NUM_BLOOM_MIPS];
@@ -2084,6 +2167,7 @@ int main(int argc, char **argv) {
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
         glfwGetFramebufferSize(win, &fbw, &fbh);
+        update_multitouch_dragging();
 
         double iTime = glfwGetTime() - start_time;
         double frame_time = max(1./240., iTime - prev_frame_time);
@@ -2150,6 +2234,20 @@ int main(int argc, char **argv) {
             glClear(GL_COLOR_BUFFER_BIT);
         } else {
             glUseProgram(user_pass);
+            for (int i = 0; i < stbds_shlen(G->patterns_map); i++) {
+                pattern_t *p = &G->patterns_map[i];
+                if (p->uniform_idx != -1) {
+                    hap_t dst[8];
+                    hap_span_t hs = p->make_haps({dst, dst + 8}, 8, iTime, G->t);
+                    float value = -1e10f;
+                    for (hap_t *h = hs.s; h < hs.e; h++) {
+                        if (h->has_param(P_NUMBER)) value=max(value, h->get_param(P_NUMBER, 0.f));
+                    }
+                    uniform1f(user_pass, p->key+1, value);
+                }
+            }
+            float ccs[8] = {cc(0), cc(1), cc(2), cc(3), cc(4), cc(5), cc(6), cc(7)};
+            uniform1fv(user_pass, "cc", 8, ccs);
             uniform2i(user_pass, "uScreenPx", RESW, RESH);
             uniform1f(user_pass, "iTime", (float)iTime);
             uniform1f(user_pass, "t", (float)G->t);
@@ -2212,7 +2310,8 @@ int main(int argc, char **argv) {
         uniform1f(ui_pass, "ui_alpha", ui_alpha);
         // if there's a second monitor, we can afford to fade the render a bit more
         // to make the code more readable.
-        float fade_render = lerp(1.f, winFS ? 0.5f : 0.8f, ui_alpha);
+        // the first tab (shader) is faded less.
+        float fade_render = lerp(1.f, winFS ? 0.5f : (curE == &tabs[0] ? 1.f : 0.8f), ui_alpha);
         uniform1f(ui_pass, "fade_render", fade_render);
 
         float f_cursor_x = (curE->cursor_x - curE->intscroll_x) * curE->font_width;

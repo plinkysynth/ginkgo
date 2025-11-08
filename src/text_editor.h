@@ -431,6 +431,7 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
         return ;
     }
     if (E->editor_type == 2) {
+        /////////////////////////// SAMPLE PICKER DRAGGING
         if (is_drag == 0) {
             if (my > fbh-256.f && E->cursor_y > 0) {
                 float mid = (G->preview_fromt + G->preview_tot) * 0.5f;

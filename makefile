@@ -8,9 +8,9 @@ LIB_NAME := ginkgo_lib.a                         # static lib on macOS
 LIB_SRC  := src/ginkgo_lib.cpp src/miniparse.cpp src/utils.cpp
 APP_SRC  := src/ginkgo.cpp src/sampler.cpp src/http_fetch.cpp
 
-APP_OBJ := $(patsubst src/%.cpp,build/%.o,$(APP_SRC))
+APP_OBJ := $(patsubst src/%.cpp,build/%.o,$(APP_SRC)) build/mac_touch_input.o
 LIB_OBJ := $(patsubst src/%.cpp,build/%.o,$(LIB_SRC))
-DEP     := $(APP_OBJ:.o=.d) $(LIB_OBJ:.o=.d)
+DEP     := $(APP_OBJ:.o=.d) $(LIB_OBJ:.o=.d) build/mac_touch_input.d
 
 ginkgo: $(APP_OBJ) build/$(LIB_NAME)
 	$(CXX) -o $@ $(APP_OBJ) build/$(LIB_NAME) $(LDFLAGS)
@@ -20,6 +20,9 @@ build/$(LIB_NAME): $(LIB_OBJ) | build
 
 build/%.o: src/%.cpp | build
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+build/mac_touch_input.o: src/mac_touch_input.mm | build
+	clang++ -ObjC++ -MMD -MP -g -c src/mac_touch_input.mm -o build/mac_touch_input.o
 
 build:
 	mkdir -p $@

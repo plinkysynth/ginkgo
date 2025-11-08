@@ -13,13 +13,14 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct song : public song_base_t {
-	synth_t synth;
+  synth_t synth;
   delay_t delay;
   reverb_t reverb;
   stereo do_sample(stereo inp) {
-      stereo x = synth("/pattern", 1.f) * 5.;
-      x += delay(x, st(1.5,1.), 0.75, 1.2) * 0.25;
+      stereo x = synth("/pattern", 1.f);
+      //x += delay(x, st(1.5,1.), 0.75, 1.2) * 0.25;
       //x+=reverb(x*0.04f + preview * 0.1f);
+      x+=inp*10.;
       // final vu meter for fun
       envfollow(x.l);
       envfollow(x.r);

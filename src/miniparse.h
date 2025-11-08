@@ -66,6 +66,7 @@ typedef struct token_info_t {
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
     float *curvedata; // stb_ds
+    int uniform_idx;
 
     // bfs 
     token_info_t *bfs_start_end; // source code ranges

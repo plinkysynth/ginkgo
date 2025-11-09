@@ -10,11 +10,6 @@
 #include "miniparse.h"
 #include "multiband.h"
 
-song_base_t dummy_state;
-song_base_t *G = &dummy_state;
-
-void init_basic_state(void) { G->bpm = 120.f; }
-
 #define RVMASK 65535
 
 static float k_reverb_fade = 240 / 256.f;                // 240 originally
@@ -436,20 +431,31 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             v->vibphase = frac(v->vibphase + vibfreq * vibfreq * 3000.f * G->dt);
 
             double dphase = exp2((note - C3) / 12.f); // midi2dphase(note);
-            float sustain = square(h->get_param(P_S, 1.f));
-            float attack = env_k(h->get_param(P_A, 0.f));
-            float decay = env_k(h->get_param(P_D, 0.f));
-            float release = env_k(h->get_param(P_R, 0.f));
+            float sustain = square(h->get_param(P_SUS, 1.f));
+            float attack = env_k(h->get_param(P_ATT, 0.f));
+            float decay = env_k(h->get_param(P_DEC, 0.f));
+            float release = env_k(h->get_param(P_REL, 0.f));
+
+            float sustain2 = square(h->get_param(P_SUS2, 1.f));
+            float attack2 = env_k(h->get_param(P_ATT2, 0.f));
+            float decay2 = env_k(h->get_param(P_DEC2, 0.f));
+            float release2 = env_k(h->get_param(P_REL2, 0.f));
+
             float gate = h->get_param(P_GATE, 0.75f);
             float gain = h->get_param(P_GAIN, 0.75f);
             float loops = h->get_param(P_LOOPS, 0.f);
             float loope = h->get_param(P_LOOPE, 0.f);
             float panpos = h->get_param(P_PAN, 0.5f);
+            float cutoff = h->get_param(P_CUTOFF, 24000.f);
+            float resonance = h->get_param(P_RESONANCE, 0.f);
+            float dist = h->get_param(P_DIST, 0.f);
+            float fold_amount = h->get_param(P_FOLD, 0.f);
+            float env2vcf = h->get_param(P_ENV2VCF, 1.f);
+            float env2dist = h->get_param(P_ENV2DIST, 0.f);
+            float env2fold = h->get_param(P_ENV2FOLD, 0.f);
 
             float fromt = h->get_param(P_FROM, 0.f);
             float tot = h->get_param(P_TO, 1.f);
-            // float cutoff = h->get_param(P_CUTOFF);
-            // float resonance = h->get_param(P_RESONANCE);
             gain = gain * gain; // gain curve
 
             float duty = number * 0.125f + 0.0625f;
@@ -461,7 +467,12 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             for (int smpl = first_smpl; smpl < 96; smpl++, t += G->dt) {
                 ////////////// VOICE SAMPLE
                 bool keydown = G->playing && t < h->t1 + G->dt*0.5f;
-                float env = v->adsr(keydown, attack, decay, sustain, release, is_retrig);
+                float env1 = v->adsr1(keydown ? gate : 0.f, attack, decay, sustain, release, is_retrig);
+                float env2 = v->adsr2(keydown ? gate : 0.f, attack2, decay2, sustain2, release2, is_retrig);
+                float cutoff_actual = cutoff * (min(1.f, 1.f-env2vcf) + env2*env2vcf);
+                float fold_actual = fold_amount * (min(1.f, 1.f-env2fold) + env2*env2fold);
+                float dist_actual = dist * (min(1.f, 1.f-env2dist) + env2*env2dist);
+
                 if (is_retrig) {
                     v->phase = 0.f; /*printf("retrig %s\n", w->key);*/
                 }
@@ -483,13 +494,26 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                     }
                     au = mono2st(s);
                 }
+                if (fold_actual > 0.f) {
+                    float foldgain = fold_actual * fold_actual * 100.f + 1.f;
+                    float invfoldgain = 1.f / (fold_actual * 10.f + 1.f);
+                    au.l = fold(au.l*foldgain) * invfoldgain;
+                    au.r = fold(au.r*foldgain) * invfoldgain;
+                }
+                if (dist_actual > 0.f) {
+                    float mix = saturate(dist_actual*10.f);
+                    float distgain = dist_actual * dist_actual * 100.f + 1.f;
+                    au.l = lerp(au.l, sclip(au.l * distgain) / distgain, mix);
+                    au.r = lerp(au.r, sclip(au.r * distgain) / distgain, mix);
+                }
+                au = v->filter.lpf(au, cutoff_actual, saturate(1.f - resonance));
                 au = pan(au, panpos * 2.f - 1.f);
-                au *= env * gain * level; // / (v->dphase * 1000.f);
+                au *= env1 * gain * level; // / (v->dphase * 1000.f);
                 audio[smpl] += au;
                 is_retrig = false;
                 ////////////////// VOICE SAMPLE END
                 // voice_state_buffers[i] = t_state_buffer;
-                if (!keydown && (env < 0.01f || at_end)) {
+                if (!keydown && (env1 < 0.01f || at_end)) {
                     printf("voice %d released - from %f to %f\n", i, from, to);
                     h->valid_params = 0;
                     h->t0 = -1e10; // mark it as 'old'.

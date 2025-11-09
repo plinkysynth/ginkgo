@@ -71,7 +71,7 @@ void test_svf_gain(void) {
     float glpf = svf_g(flpf);
     float Rlpf = 1.f/QBUTTER;
     float gmid = svf_g(fmid);
-    float Rmid = svf_R(qmid);
+    float Rmid = 1.f/(qmid);
 
     float prevy=0.f;
     float prevx=0.f;

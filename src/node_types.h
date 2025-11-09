@@ -54,7 +54,6 @@ NODE(N_POLY)
 // op_type, srcname, numparams, num_optional_params
 OP(N_OP_TIMES, "*", 1, 0)
 OP(N_OP_DIVIDE, "/", 1, 0)
-OP(N_OP_IDX, ":", 1, 0)
 OP(N_OP_DEGRADE, "?", 0, 1)
 OP(N_OP_REPLICATE, "!", 1, 0)
 OP(N_OP_ELONGATE, "@", 1, 0)
@@ -73,27 +72,14 @@ OP(N_OP_RANGE, "range", 2, 0)
 OP(N_OP_RANGE2, "range2", 2, 0)
 OP(N_OP_FIT, "fit", 0, 0)
 OP(N_OP_FITN, "fitn", 1, 0)
-//OP(N_OP_PLY, "ply", 1, 0)
-
 //OP(N_OP_STRUCT, "struct", 3, 1)
 //OP(N_OP_PLY, "ply", 1, 0)
-OP(N_OP_NOTE, "note", 1, 0)
-OP(N_OP_S, "s", 1, 0)
-OP(N_OP_GATE, "^", 1, 0)
-OP(N_OP_ATTACK, "att", 1, 0)
-OP(N_OP_DECAY, "dec", 1, 0)
-OP(N_OP_SUSTAIN, "sus", 1, 0)
-OP(N_OP_RELEASE, "rel", 1, 0)
+
+#define X(x, str, ...) OP(N_##x, str, 1, 0)
+#include "params.h"
+
 OP(N_OP_ADSR, "adsr", 4, 0)
-OP(N_OP_GAIN, "gain", 1, 0)
-OP(N_OP_PAN, "pan", 1, 0)
-OP(N_OP_LOOPS, "loops", 1, 0)
-OP(N_OP_LOOPE, "loope", 1, 0)
-OP(N_OP_FROM, "from", 1, 0)
-OP(N_OP_TO, "to", 1, 0)
-OP(N_OP_CUTOFF, "cut", 1, 0)
-OP(N_OP_RESONANCE, "res", 1, 0)
-OP(N_OP_VIB, "vib", 1, 0)
-OP(N_OP_VIB_FREQ, "vibf", 1, 0)
+OP(N_OP_ADSR2, "adsr2", 4, 0)
+
 #undef OP
 #undef NODE

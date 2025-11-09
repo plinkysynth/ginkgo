@@ -51,10 +51,10 @@ static inline uint32_t hash2_pcg(uint32_t a, uint32_t b) {
 // ^ looks high, so we go 64. @ looks full, and # is hard to type on UK keyboards, but both are also 64
 // = looks middle-y so we make that 32.
 // thus you can interpolate key values with _ = ^
-const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
+static const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
 
 //clang-format off
-const uint8_t atob_tab[256] =
+static const uint8_t atob_tab[256] =
     {
         [' '] = 0,  ['_'] = 0,  ['.'] = 0,  ['='] = 32, ['A'] = 0,  1,          2,          3,          4,          5,  6,
         7,          8,          9,          10,         11,         12,         13,         14,         15,         16, 17,
@@ -797,7 +797,7 @@ void test_minipat(void) {
     // const char *s = "c < > d"; // test empty group
     //const char *s = "c gain <sin * 0.8>"; // test grid
     //const char *s = "[a b c] * [2 1]"; // test rest in second half
-    const char *s = "bd"; // simplest ever!
+    const char *s = "bd env2vcf 1"; // simplest ever!
     //const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";
@@ -812,7 +812,7 @@ void test_minipat(void) {
         printf(COLOR_BRIGHT_RED "error: %s\n" COLOR_RESET, pm.errmsg);
     printf("parsed %d nodes\n", (int)stbds_arrlen(pm.nodes));
     pretty_print_nodes(s, s + pm.n, &p);
-    for (hap_time t = 0.; t<2.; t+= 1./32.) {
+    for (hap_time t = 0.; t<1.; t+= 1./32.) {
         hap_t dst[64];
         hap_span_t haps = p.make_haps({dst, dst + 64}, 64, -1.f, t);
         pretty_print_haps(haps, t, t+1./32.);

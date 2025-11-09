@@ -23,6 +23,7 @@
 #include "3rdparty/pffft.h"
 #include "ansicols.h"
 #include "ginkgo.h"
+#include "utils.h"
 #include "audio_host.h"
 #include "midi_mac.h"
 #include "sampler.h"
@@ -38,6 +39,11 @@
 
 #define RESW 1920
 #define RESH 1080
+
+static song_base_t dummy_state;
+song_base_t *G = &dummy_state;
+
+
 
 static double click_mx, click_my, click_time;
 static int click_count;
@@ -85,7 +91,7 @@ void update_multitouch_dragging(void) {
 
 // Named constants for magic numbers
 #define BLOOM_FADE_FACTOR (1.f / 16.f)
-#define BLOOM_SPIKEYNESS 0.5f
+#define BLOOM_SPIKEYNESS 0.3f
 #define BLOOM_KERNEL_SIZE_DOWNSAMPLE 1.5f
 #define BLOOM_KERNEL_SIZE_UPSAMPLE 3.f
 #define CURSOR_SMOOTH_FACTOR 0.2f
@@ -112,7 +118,7 @@ typedef struct line_t {
     float width;
 } line_t;
 
-#define MAX_LINES (1 << 15)
+#define MAX_LINES (1 << 20)
 uint32_t line_count = 0;
 line_t lines[MAX_LINES];
 
@@ -303,7 +309,6 @@ const char *kFS_fat = SHADER(
     in vec4 v_col;
     in vec2 v_width_len;
     void main() {
-        o_color = v_col;
         vec2 uv = v_uv;
         if (uv.y>0.) uv.y = max(0., uv.y - v_width_len.y);
         float sdf = v_width_len.x-length(uv);
@@ -624,8 +629,8 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
                 pix.x = fftx;
                 nextx = pix.y * 1.003;
             }
-            vec2 prevy = wave_read(pix.y, base_y) * ampscale;
-            vec2 nexty = wave_read(nextx, base_y) * ampscale;
+            vec2 prevy = wave_read(pix.y*0.5f-48.f, base_y) * ampscale;
+            vec2 nexty = wave_read(nextx*0.5f-48.f, base_y) * ampscale;
             vec2 miny = min(prevy, nexty);
             vec2 maxy = max(prevy, nexty);
             vec2 beam = smoothstep(maxy + 1.f, miny - 0.5f, pix.xx);
@@ -1549,10 +1554,18 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
         }
         E->scroll_target_x = clamp(E->scroll_target_x, 0.f, float((E->max_width - tmw + 4) * E->font_width));
         E->scroll_target_y = clamp(E->scroll_target_y, 0.f, float((E->num_lines - tmh + 4) * E->font_height));
-        uint32_t scope_start = (scope_pos>>8);
+        uint32_t slow_scope_start = (scope_pos>>8);
+        uint32_t scope_start = scope_pos;
         uint32_t *scope_dst = ptr + (TMH - 4) * TMW;
-        for (int i = 0; i < TMW*4-128; ++i) {
-            stereo sc = slow_scope[(scope_start- i/2) & SCOPE_MASK];
+        for (int i = 0; i < TMW*2; ++i) {
+            stereo sc = slow_scope[(slow_scope_start- i) & SCOPE_MASK];
+            uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * (32767.f) + 32768.f);
+            uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * (32767.f) + 32768.f);
+            scope_dst[i] = (l16 >> 8) | (r16 & 0xff00);
+        }
+        scope_dst = ptr + (TMH - 2) * TMW;
+        for (int i = 0; i < TMW*2; ++i) {
+            stereo sc = scope[(scope_start- i) & SCOPE_MASK];
             uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * (32767.f) + 32768.f);
             uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * (32767.f) + 32768.f);
             scope_dst[i+128] = (l16 >> 8) | (r16 & 0xff00);
@@ -2370,17 +2383,16 @@ int main(int argc, char **argv) {
         // fat line draw
         if (line_count > 0) {
             // line_t lines[1] = {{300.f,100.f,G->mx,G->my,0xffff00ff,54.f}};
-            GLsizeiptr bytes = (GLsizeiptr)((line_count <= MAX_LINES ? line_count : MAX_LINES) * sizeof(line_t));
-
+            GLsizeiptr bytes = (GLsizeiptr)(line_count  * sizeof(line_t));
             glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-            glBlendFunc(GL_DST_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             glBlendEquation(GL_FUNC_ADD);
             glBindVertexArray(fatvao[iFrame % 2]);
             glBindBuffer(GL_ARRAY_BUFFER, fatvbo[iFrame % 2]);
+            glFinish(); // this seems to clean up some intermittent glitching to do with the fat line buffer. weird? shouldnt be needed.
             glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
             glUseProgram(fat_prog);
-            uniform2f(fat_prog, "fScreenPx", fbw, fbh);
+            uniform2f(fat_prog, "fScreenPx", (float)fbw, (float)fbh);
             glDrawArraysInstanced(GL_TRIANGLES, 0, 6, line_count);
             glBindVertexArray(0);
             glBindBuffer(GL_ARRAY_BUFFER, 0);

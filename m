@@ -1,2 +1,2 @@
 #!/bin/sh
-clear && make -j
+clear && make release -j

@@ -203,7 +203,7 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
 
 int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,
                              filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when, int num_rhs) {
-    hap_time structure_t0 = structure_hap->t0;
+    hap_time structure_t0 = when; //structure_hap->t0;
     // structure_t0 = (t0+t1)*0.5;
     hap_t tmp_mem[tmp_size * num_rhs];
     int new_hap_id = hash2_pcg(structure_hap->hapid, value_node_idx + (int)(structure_t0 /* * 1000.f */));
@@ -497,7 +497,6 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 speed_scale = num;
                 break;
             case N_OP_ELONGATE:
-            case N_OP_REPLICATE:
             case N_OP_DIVIDE:
                 speed_scale = num ? 1. / num : 0.;
                 break;
@@ -518,7 +517,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         _make_haps(dst, tmp_size, viz_time, n->first_child + childidx, when, hash2_pcg(hapid, i));
         break;
     }
-    case N_OP_IDX: { // take structure from the left; value(s) from the right. copy as needed
+
+    // special case for N_P_NUMBER
+    n_p_number:
+    //case N_P_NUMBER: 
+    { // take structure from the left; value(s) from the right. copy as needed
         if (n->num_children < 2)
             break;
         // the : operator is quite flexible for applying scales to notes or numbers.
@@ -631,55 +634,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_SUB:
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, add_value_func, 1);
         break;
-    case N_OP_VIB:
-        param = P_VIB;
-        goto assign_value;
-    case N_OP_VIB_FREQ:
-        param = P_VIB_FREQ;
-        goto assign_value;
-    case N_OP_LOOPS:
-        param = P_LOOPS;
-        goto assign_value;
-    case N_OP_LOOPE:
-        param = P_LOOPE;
-        goto assign_value;
-    case N_OP_FROM:
-        param = P_FROM;
-        goto assign_value;
-    case N_OP_TO:
-        param = P_TO;
-        goto assign_value;
-    case N_OP_CUTOFF:
-        param = P_CUTOFF;
-        goto assign_value;
-    case N_OP_GAIN:
-        param = P_GAIN;
-        goto assign_value;
-    case N_OP_NOTE:
-        param = P_NOTE;
-        goto assign_value;
-    case N_OP_S:
-        param = P_SOUND;
-        goto assign_value;
-    case N_OP_GATE:
-        param = P_GATE;
-        goto assign_value;
-    case N_OP_ATTACK:
-        param = P_A;
-        goto assign_value;
-    case N_OP_DECAY:
-        param = P_D;
-        goto assign_value;
-    case N_OP_SUSTAIN:
-        param = P_S;
-        goto assign_value;
-    case N_OP_RELEASE:
-        param = P_R;
-        goto assign_value;
-    case N_OP_PAN:
-        param = P_PAN;
-        goto assign_value;
+    #define X(x, str, ...) case N_##x: param = x; goto assign_value;
+    #include "params.h"
     assign_value:
+        if (param == P_NUMBER)
+            goto n_p_number;
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_value_func, param);
         break;
     case N_OP_FITN:
@@ -785,19 +744,22 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
-    case N_OP_ADSR: {
+    case N_OP_ADSR: 
+    case N_OP_ADSR2:
+    {
         if (n->num_children < 2)
             break;
         hap_span_t left_haps =
             _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
+            bool is_adsr2 = n->type == N_OP_ADSR2;
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, P_A, when);
+            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, is_adsr2 ? P_ATT2 : P_ATT, when);
             if (n->num_children > 2)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, P_D, when);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, is_adsr2 ? P_DEC2 : P_DEC, when);
             if (n->num_children > 3)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, P_S, when);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, is_adsr2 ? P_SUS2 : P_SUS, when);
             if (n->num_children > 4)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, P_R, when);
+                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, is_adsr2 ? P_REL2 : P_REL, when);
         }
         break;
     }

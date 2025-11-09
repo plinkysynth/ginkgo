@@ -128,6 +128,3 @@ pattern_t *get_pattern(const char *path);
 
 void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to);
 
-// base64 with # being 64 :) so we can do full range 0-64
-extern const char btoa_tab[65];
-extern const uint8_t atob_tab[256];

@@ -1,5 +1,6 @@
 #include "wavfile.h"
 #include <sys/time.h>
+#include <stdatomic.h>
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // hot reload and scope
 
@@ -11,7 +12,8 @@ stereo slow_scope[SCOPE_SIZE];
 stereo probe_scope[SCOPE_SIZE];
 float probe_db_smooth[FFT_SIZE/2];
 float main_db_smooth[FFT_SIZE/2];
-        
+
+    
 int xyscope[128][128];
 uint32_t scope_pos = 0;
 
@@ -28,10 +30,6 @@ static FILE *wav_recording = NULL;
 static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) {
     stereo *o = (stereo *)out;
     const stereo *i = (const stereo *)in;
-    dsp_fn_t dsp = atomic_load_explicit(&g_dsp_req, memory_order_acquire);
-    if (!dsp)
-        return;
-    dsp_fn_t old_dsp = atomic_load_explicit(&g_dsp_used, memory_order_acquire);
     stereo audio[OVERSAMPLE*frames*2]; // *2 because of probe (4 channels iow)
     static stereo prev_input;
     static_assert(OVERSAMPLE == 2 || OVERSAMPLE == 1, "OVERSAMPLE must be 2 or 1");
@@ -49,6 +47,8 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
     }
     // this causes the dll's copy of G to be copied to the main program's copy of G.
     uint64_t t0 = nsec_now();
+    dsp_fn_t dsp = atomic_load_explicit(&g_dsp_req, memory_order_acquire);
+    dsp_fn_t old_dsp = atomic_load_explicit(&g_dsp_used, memory_order_acquire);
 
     if (dsp)
         G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp);
@@ -181,6 +181,16 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     int64_t t1 = get_time_us();
     if (rc!=0)
         return false;
+    // this block unloads the old dll after forcing a null dsp pointer. causes a long click
+    // but stops asan from crashing
+    #if USING_ASAN
+    atomic_store_explicit(&g_dsp_req, 0, memory_order_release);
+    while (atomic_load_explicit(&g_dsp_used, memory_order_acquire) != 0) {
+        usleep(1000);
+    }
+    dlclose(g_handle);
+    g_handle = NULL;
+    #endif
     snprintf(cmd, sizeof(cmd), "build/dsp.%d.so", version);
     void *h = dlopen(cmd, RTLD_NOW | RTLD_LOCAL);
     if (!h) {
@@ -196,7 +206,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     //////////////////////////////////
     // SUCCESS!
     atomic_store_explicit(&g_dsp_req, f, memory_order_release);
-    while (g_handle != 0 && atomic_load_explicit(&g_dsp_used, memory_order_acquire) != f) {
+    while (atomic_load_explicit(&g_dsp_used, memory_order_acquire) != f) {
         usleep(1000);
     }
     if (g_handle)

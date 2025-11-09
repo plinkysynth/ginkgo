@@ -9,6 +9,9 @@ enum {
         N_LAST
     };
     
+static const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
+
+
 void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width);
 
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
@@ -1032,7 +1035,6 @@ void set_status_bar(uint32_t color, const char *msg, ...) {
     status_bar_time = glfwGetTime();
 }
 
-//float *closest_slider[16] = {}; // 16 closest sliders to the cursor, for midi cc
 
 void parse_error_log(EditorState *E) {
     hmfree(E->error_msgs);
@@ -1410,29 +1412,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     bool wasinclude = false;
     int se = get_select_start(E);
     int ee = get_select_end(E);
-    //float *sliders[TMH] = {};
-    //int sliderindices[TMH];
-    //float *new_closest_slider[16] = {};
-    /*
-    for (int slideridx = 0; slideridx < 16; ++slideridx) {
-        for (int i = 0; i < G->sliders_hwm[slideridx]; i += 2) {
-            float *value_line = G->sliders[slideridx].data + i;
-            float value = value_line[0];
-            int line = (int)value_line[1] - 1;
-            int dist_to_old =
-                new_closest_slider[slideridx] == NULL ? 1000000 : abs((int)new_closest_slider[slideridx][1] - E->cursor_y);
-            int dist_to_new = abs(line - E->cursor_y);
-            if (dist_to_old > dist_to_new) {
-                new_closest_slider[slideridx] = value_line;
-            }
-            line -= E->intscroll;
-            if (line >= 0 && line < TMH) {
-                sliderindices[line] = slideridx;
-                sliders[line] = value_line;
-            }
-        }
-    }*/
-    //memcpy(closest_slider, new_closest_slider, sizeof(closest_slider));
+    
     int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
     E->max_width = 0;
@@ -1727,32 +1707,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
         col = C_KW;                                                                                                                \
         break;
 #include "tokens.h"
-/*
-                        CASE8("S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7") : CASE2("S8", "S9") : {
-                            int slideridx = (t.str[i + 1] - '0');
-                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll_y)
-                                slideridx = 16;
-                            col = slidercols[slideridx];
-                            break;
-                        }
-                        CASE6("S10", "S11", "S12", "S13", "S14", "S15") : {
-                            int slideridx = ((t.str[i + 2] - '0') + 10);
-                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll_y)
-                                slideridx = 16;
-                            col = slidercols[slideridx];
-                            break;
-                        }
-                        CASE6("SA", "SB", "SC", "SD", "SE", "SF") : {
-                            int slideridx = (t.str[i + 1] - 'A' + 10);
-                            if (closest_slider[slideridx] == NULL || closest_slider[slideridx][1] != t.y + E->intscroll_y)
-                                slideridx = 16;
-                            col = slidercols[slideridx];
-                            break;
-                        }
-                    case HASH("S_"):
-                        col = C_SLIDER;
-                        break;
-                        */
                     case HASH("include"):
                         wasinclude = true;
                         col = C_PREPROC;
@@ -1870,8 +1824,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
                 // add any vu meters
-                for (int i =0; i< G->env_followers_hwm; i++) {
-                    env_follower_t *ef = &G->env_followers[i];
+                int n = G->env_followers_idx[1];
+                if (n>64) n=64;
+                for (int i =0; i< n; i++) {
+                    env_follower_t *ef = &G->env_followers[1][i];
                     if (ef->line-1 == ysc) {
                         float leftx = t.x+1.f;
                         float lvlx = saturate(1.f+lin2db(ef->y)/48.f) * 16.f + leftx;
@@ -1923,20 +1879,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
 
-                /*
-                if (t.y >= 0 && t.y < TMH && sliders[t.y]) {
-                    int slider_idx = sliderindices[t.y];
-                    float value = *sliders[t.y];
-                    int x1 = max(0, tmw - 16);
-                    int x2 = tmw;
-                    uint32_t col = slidercols[slider_idx];
-                    if (closest_slider[slider_idx] == NULL || closest_slider[slider_idx][1] != t.y + E->intscroll)
-                        col = C_SLIDER;
-                    for (int x = x1; x < x2; x++) {
-                        int ch = horizontal_tick((int)(value * 127.f) - (x - x1) * 8 - 2);
-                        t.ptr[t.y * TMW + x] = col | ch;
-                    }
-                }*/
                 t.x = left;
                 ++t.y;
                 // decide on the *next* lines bg color

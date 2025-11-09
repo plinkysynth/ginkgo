@@ -38,8 +38,8 @@ extern "C" {
 #define QBUTTER 0.70710678118654752440f
 #define QBUTTER_24A 0.541196f
 #define QBUTTER_24B 1.306563f
-#define SVF_24_R_MUL1 (1.f / (QBUTTER_24A))
-#define SVF_24_R_MUL2 (1.f / (QBUTTER_24B))
+#define SVF_24_R_MUL1 ((QBUTTER_24A) / QBUTTER)
+#define SVF_24_R_MUL2 ((QBUTTER_24B) / QBUTTER)
 // size of virtual textmode screen:
 #define TMW 512
 #define TMH 256
@@ -203,9 +203,8 @@ typedef struct song_base_t {
     stereo preview; // the preview audio. will be mixed at the end, so the shader code can modify it as it wishes.
     int64_t t_q32; // the current musical time! as a 32.32 fixed point number
     uint8_t midi_cc[128];
-    env_follower_t env_followers[64];
-    int env_followers_idx;
-    int env_followers_hwm;
+    env_follower_t env_followers[2][64];
+    int env_followers_idx[2];
     //uint32_t midi_cc_gen[128];
     int cursor_x, cursor_y;
     float mx, my;
@@ -230,8 +229,9 @@ typedef struct song_base_t {
     
 } song_base_t;
 
-
 extern song_base_t *G;
+static inline void init_basic_state(void) { G->bpm = 120.f; }
+
 
 #define cc(x) (G->midi_cc[16+((x)&7)]/127.f)
 
@@ -279,6 +279,12 @@ static inline float lin2db(float x) { return 8.6858896381f * logf(max(1e-20f, x)
 static inline float db2lin(float x) { return expf(x / 8.6858896381f); }
 static inline float squared2db(float x) { return 4.342944819f * logf(max(1e-20f, x)); }
 static inline float db2squared(float x) { return expf(x / 4.342944819f); }
+
+static inline float fold(float x) { // folds x when it goes beyond +-1
+    float t = x + 1.0f;                    // shift so the "cell" is [0,2] around 0
+    t -= 4.0f * floorf(t * 0.25f);         // t in [0,4)
+    return 1.0f - fabsf(t - 2.0f);         // triangle in [-1,1]
+}
 
 // TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.
 // but this is simple so we'll go with simple.
@@ -404,67 +410,56 @@ static inline float svf_g(float fc) { // fc is like a dphase, ie P_C4 etc consta
 
 // static inline float svf_g(float fc) { return fc/SAMPLE_RATE; }
 
-static inline float svf_R(float q) { return 1.f / q; }
 
 typedef struct filter_t {
     float state[4];
-    inline float lpf(float x, float fc, float q= QBUTTER) {
-        return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).lp;
+    inline float lpf(float x, float fc, float r= 1.f/QBUTTER) {
+        return svf_process_2pole(state, x, svf_g(fc), r).lp;
     }
-    inline stereo lpf(stereo x, float fc, float q= QBUTTER) {
-        float g= svf_g(fc), r=svf_R(q);
+    inline stereo lpf(stereo x, float fc, float r= 1.f/QBUTTER) {
+        float g= svf_g(fc);
         float yl = svf_process_2pole(state, x.l, g, r).lp;
         float yr = svf_process_2pole(state+2, x.r, g, r).lp;
         return st(yl,yr);
     }
-    inline float lpf4(float x, float fc, float q= QBUTTER) {
-        float g= svf_g(fc), r=svf_R(q);
+    inline float lpf4(float x, float fc, float r= 1.f/QBUTTER) {
+        float g= svf_g(fc);
         x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).lp;
         return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).lp;
     }
-    inline float hpf(float x, float fc, float q= QBUTTER) {
-        return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).hp;
+    inline float hpf(float x, float fc, float r= 1.f/QBUTTER) {
+        return svf_process_2pole(state, x, svf_g(fc), r).hp;
     }
-    inline stereo hpf(stereo x, float fc, float q= QBUTTER) {
-        float g= svf_g(fc), r=svf_R(q);
+    inline stereo hpf(stereo x, float fc, float r= 1.f/QBUTTER) {
+        float g= svf_g(fc);
         float yl = svf_process_2pole(state, x.l, g, r).hp;
         float yr = svf_process_2pole(state+2, x.r, g, r).hp;
         return st(yl,yr);
     }
-    inline float hpf4(float x, float fc, float q= QBUTTER) {
-        float g= svf_g(fc), r=svf_R(q);
+    inline float hpf4(float x, float fc, float r= 1.f/QBUTTER) {
+        float g= svf_g(fc);
         x = svf_process_2pole(state, x, g, r * SVF_24_R_MUL1).hp;
         return svf_process_2pole(state + 2, x, g, r * SVF_24_R_MUL2).hp;
     }
-    inline float bpf(float x, float fc, float q= QBUTTER) {
-        return svf_process_2pole(state, x, svf_g(fc), svf_R(q)).bp;
+    inline float bpf(float x, float fc, float r= 1.f/QBUTTER) {
+        return svf_process_2pole(state, x, svf_g(fc), r).bp;
     }
-    inline stereo bpf(stereo x, float fc, float q= QBUTTER) {
-        float g= svf_g(fc), r=svf_R(q);
+    inline stereo bpf(stereo x, float fc, float r= 1.f/QBUTTER) {
+        float g= svf_g(fc);
         float yl = svf_process_2pole(state, x.l, g, r).bp;
         float yr = svf_process_2pole(state+2, x.r, g, r).bp;
         return st(yl,yr);
     }
-    inline float peakf(float x, float gain, float fc, float q) {
-        float R = svf_R(q);
-        svf_output_t o = svf_process_2pole(state, x, svf_g(fc), R);
-        return x + (gain - 1.f) * o.bp * R;
+    inline float peakf(float x, float gain, float fc, float r = 1.f/QBUTTER) {
+        svf_output_t o = svf_process_2pole(state, x, svf_g(fc), r);
+        return x + (gain - 1.f) * o.bp * r;
     }    
-    inline stereo peakf(stereo x, float gain, float fc, float q) {
-        float R = svf_R(q), g= svf_g(fc);
-        svf_output_t o_l = svf_process_2pole(state, x.l, g, R);
-        svf_output_t o_r = svf_process_2pole(state+2, x.r, g, R);
-        stereo rv;
-        rv.l = x.l + (gain - 1.f) * o_l.bp * R;
-        rv.r = x.r + (gain - 1.f) * o_r.bp * R;
-        return rv;
-    }
-    inline float notchf(float x, float fc, float q) {
-        svf_output_t o = svf_process_2pole(state, x, svf_g(fc), svf_R(q));
+    inline float notchf(float x, float fc, float r = 1.f/QBUTTER) {
+        svf_output_t o = svf_process_2pole(state, x, svf_g(fc), r);
         return o.lp + o.hp;
     }
-    inline stereo notchf(stereo x, float fc, float q) {
-        float g= svf_g(fc), r=svf_R(q);
+    inline stereo notchf(stereo x, float fc, float r = 1.f/QBUTTER) {
+        float g= svf_g(fc);
         svf_output_t o_l = svf_process_2pole(state, x.l, g, r);
         svf_output_t o_r = svf_process_2pole(state+2, x.r, g, r);
         stereo rv;
@@ -701,18 +696,18 @@ static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=
 #define vu(x, ...) (add_vu(__LINE__, x, ##__VA_ARGS__))
 
 static inline void add_vu(int line, float x, float thresh) {
-    int idx = G->env_followers_idx++;
+    int idx = G->env_followers_idx[0]++;
     if (idx >= 64) return ;
-    env_follower_t *ef = &G->env_followers[idx];
+    env_follower_t *ef = &G->env_followers[0][idx];
     ef->y = x;
     ef->line = line;
     ef->thresh = thresh;
 }
 
 static inline float update_envfollow(int line, float x, float thresh = 0.25f, float decay=0.2f, float attack = 0.f) {
-    int idx = G->env_followers_idx++;
+    int idx = G->env_followers_idx[0]++;
     if (idx >= 64) return x;
-    env_follower_t *ef = &G->env_followers[idx];
+    env_follower_t *ef = &G->env_followers[0][idx];
     ef->line = line;
     ef->thresh = thresh;
     x = ef->lp += (x-ef->lp)*0.01f;
@@ -727,15 +722,15 @@ static inline float update_envfollow(int line, stereo x, float thresh = 0.25f, f
 
 typedef struct adsr_t {
     float state[1];
-    inline float operator()(bool note_down, float a_k, float d_k, float s, float r_k, bool retrig=false) {
+    inline float operator()(float gate, float a_k, float d_k, float s, float r_k, bool retrig=false) {
         if (retrig) *state = fabsf(*state);
-        if (note_down) {
+        if (gate > 0.f) {
             if (state[0] >= 0.f) {
-                state[0] += (1.05f - state[0]) * a_k; // attack (state is positive)
-                if (state[0] > 1.f) { state[0] = -1.f; return 1.f; } // go into decay...
+                state[0] += (gate*1.05f - state[0]) * a_k; // attack (state is positive)
+                if (state[0] > gate) { state[0] = -gate; return gate; } // go into decay...
                 return state[0];
             } else {
-                state[0] += (-s - state[0]) * d_k; // decay (state is negative)
+                state[0] += (-(s*gate) - state[0]) * d_k; // decay (state is negative)
                 return -state[0];
             }
         } else {
@@ -782,10 +777,19 @@ static inline float rompler(const char *fname) {
 	return wave->frames[smpl*wave->channels];    
 }
 
+static inline float swing(double t, float swing_point = 0.66) { // swing point of 0.5 is even ie no-op
+    t*=4.;
+    double qn = floor(t);
+    double phase = t-qn;
+    if (phase<swing_point) phase/=(swing_point*2.); else phase=(phase-swing_point)/((1.-swing_point)*2.)+0.5;
+    return (qn+phase)*0.25;
+}
+
 stereo prepare_preview(void);
 
 #ifdef LIVECODE
 struct song;
+song_base_t *G = NULL;
 stereo do_sample(stereo inp);
 void init_state(void);
 __attribute__((weak)) void init_state(void) {}
@@ -797,9 +801,10 @@ __attribute__((visibility("default"))) void *dsp(song_base_t *_G, stereo *audio,
     int dt_q32 = G->playing ? G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)) : 0; // on the order of 22000
     G->dt = dt_q32 *(1./4294967296.);
     for (int i = 0; i < frames; i++) {
-        G->env_followers_idx = 0;
+        G->env_followers_idx[0] = 0;
         probe = {};
         G->t=G->t_q32*(1./4294967296.);
+        //G->t=swing(G->t);
         prepare_preview();
         audio[i] = do_sample(audio[i]);
         audio[i] += G->preview;
@@ -808,7 +813,10 @@ __attribute__((visibility("default"))) void *dsp(song_base_t *_G, stereo *audio,
         G->t_q32 += dt_q32;
         G->reloaded = 0;
     }
-    G->env_followers_hwm = G->env_followers_idx;
+    int n = G->env_followers_idx[0];
+    if (n>64) n=64;
+    memcpy(G->env_followers[1], G->env_followers[0], sizeof(G->env_followers[0][0]) * n);
+    G->env_followers_idx[1] = n;
     return G;
 }
 
@@ -837,7 +845,9 @@ typedef struct hap_t {
 
 typedef struct voice_state_t {
     hap_t h;
-    adsr_t adsr;
+    adsr_t adsr1;
+    adsr_t adsr2;
+    filter_t filter;
     double phase;
     float vibphase;
     bool retrig;

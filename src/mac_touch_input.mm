@@ -21,13 +21,15 @@ static int g_next_id = 1;
     return self;
 }
 
-- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)acceptsFirstResponder {
+    return YES;
+}
 
 - (void)handleTouchesEvent:(NSEvent *)event {
-    if (!g_touches) g_touches = [[NSMutableDictionary alloc] init];
+    if (!g_touches)
+        g_touches = [[NSMutableDictionary alloc] init];
 
-    NSSet<NSTouch *> *touches =
-        [event touchesMatchingPhase:NSTouchPhaseAny inView:self];
+    NSSet<NSTouch *> *touches = [event touchesMatchingPhase:NSTouchPhaseAny inView:self];
 
     for (NSTouch *t in touches) {
         id key = t.identity ?: t;
@@ -52,22 +54,33 @@ static int g_next_id = 1;
         g_touches[key] = [NSValue valueWithBytes:&rt objCType:@encode(RawTouch)];
     }
 
-    if (g_touches.count == 0) g_next_id = 1;
+    if (g_touches.count == 0)
+        g_next_id = 1;
 }
 
-- (void)touchesBeganWithEvent:(NSEvent *)event     { [self handleTouchesEvent:event]; }
-- (void)touchesMovedWithEvent:(NSEvent *)event     { [self handleTouchesEvent:event]; }
-- (void)touchesEndedWithEvent:(NSEvent *)event     { [self handleTouchesEvent:event]; }
-- (void)touchesCancelledWithEvent:(NSEvent *)event { [self handleTouchesEvent:event]; }
+- (void)touchesBeganWithEvent:(NSEvent *)event {
+    [self handleTouchesEvent:event];
+}
+- (void)touchesMovedWithEvent:(NSEvent *)event {
+    [self handleTouchesEvent:event];
+}
+- (void)touchesEndedWithEvent:(NSEvent *)event {
+    [self handleTouchesEvent:event];
+}
+- (void)touchesCancelledWithEvent:(NSEvent *)event {
+    [self handleTouchesEvent:event];
+}
 
 @end
 
 void mac_touch_init(void *cocoa_window) {
     NSWindow *win = (__bridge NSWindow *)cocoa_window;
-    if (!win) return;
+    if (!win)
+        return;
 
     NSView *content = win.contentView;
-    if (!content) return;
+    if (!content)
+        return;
 
     TouchView *tv = [[TouchView alloc] initWithFrame:content.bounds];
     tv.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -77,11 +90,13 @@ void mac_touch_init(void *cocoa_window) {
 }
 
 int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh) {
-    if (!out || max_count <= 0 || !g_touches) return 0;
+    if (!out || max_count <= 0 || !g_touches)
+        return 0;
 
     int i = 0;
     for (NSValue *val in g_touches.objectEnumerator) {
-        if (i >= max_count) break;
+        if (i >= max_count)
+            break;
         RawTouch rt;
         [val getValue:&rt];
         rt.x *= fbw;

@@ -22,9 +22,9 @@ struct song : public song_base_t {
   delay_t delay;
   reverb_t reverb;
   stereo do_sample(stereo inp) {
-      stereo x = s1("/pattern", 0.2f);
+      stereo x = s1("/pattern", 0.25f);
       x += delay(x, st(0.75,0.75), 0.9, 2.);
-      x+=reverb(x*0.4f + preview * 0.1f);
+      x+=reverb(x*0.2f + preview * 0.1f);
       x+=s2("/zpattern", 1.);
       //x+=inp*10.;
       // final vu meter for fun

@@ -1,2 +1,2 @@
 #!/bin/sh
-clear && make release -j
+clear && make debug -j

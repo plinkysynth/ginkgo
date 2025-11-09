@@ -619,17 +619,18 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
             bool is_fft = false;
             float ampscale = 0.25f;
             int base_y = 256 - 4;
+            float curx = pix.y;
             float nextx = pix.y + 1.;
             if (fftx < 128.f) {
                 ampscale = 0.5f;
                 is_fft = true;
                 float dither = fract(pix.x*23.5325f) / 2048.f;
-                pix.y = (96.f / 48000.f * 4096.f) * pow(500.f, v_uv.y + dither); // 24hz to nyquist
+                curx = (96.f / 48000.f * 4096.f) * pow(500.f, v_uv.y + dither); // 24hz to nyquist
                 base_y = 256 - 12;
                 pix.x = fftx;
-                nextx = pix.y * 1.003;
+                nextx = curx * 1.003;
             }
-            vec2 prevy = wave_read(pix.y*0.5f-48.f, base_y) * ampscale;
+            vec2 prevy = wave_read(curx*0.5f-48.f, base_y) * ampscale;
             vec2 nexty = wave_read(nextx*0.5f-48.f, base_y) * ampscale;
             vec2 miny = min(prevy, nexty);
             vec2 maxy = max(prevy, nexty);
@@ -651,7 +652,21 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
                 beamcol = vec3(float(xyscope.x + xyscope.y * 256u) * vec3(0.00004,0.00008,0.00006));
             }
             rendercol += max(vec3(0.),beamcol);
-        }
+        } 
+        if (gl_FragCoord.x >= 64. && gl_FragCoord.y < 64.) {
+            const float yscale = 64. / 256.f;
+            float x = gl_FragCoord.x * 0.5f;
+            vec2 nextw = wave_read(x+0.5f, 256-2) * yscale;
+            vec2 prevw = wave_read(x, 256-2) * yscale;
+            vec2 minw = min(nextw,prevw);
+            vec2 maxw = max(nextw,prevw);
+            vec2 midw = maxw+minw;
+            vec2 widw = maxw-minw;
+            vec2 beam = smoothstep(widw+2., widw+1., abs(midw-vec2(pix.y))) * 4.;
+            vec3 beamcol = vec3(0.2, 0.07, 0.02) * beam.x + vec3(0.02, 0.07, 0.2) * beam.y;
+            rendercol += max(vec3(0.),beamcol);
+        }    
+        
         rendercol.rgb = clamp(sqrt(aces(rendercol.rgb)) * fade_render, 0.f, 1.f);
         float grey = dot(rendercol, vec3(0.2126 * 0.5, 0.7152 * 0.5, 0.0722 * 0.5));
 
@@ -1555,7 +1570,6 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
         E->scroll_target_x = clamp(E->scroll_target_x, 0.f, float((E->max_width - tmw + 4) * E->font_width));
         E->scroll_target_y = clamp(E->scroll_target_y, 0.f, float((E->num_lines - tmh + 4) * E->font_height));
         uint32_t slow_scope_start = (scope_pos>>8);
-        uint32_t scope_start = scope_pos;
         uint32_t *scope_dst = ptr + (TMH - 4) * TMW;
         for (int i = 0; i < TMW*2; ++i) {
             stereo sc = slow_scope[(slow_scope_start- i) & SCOPE_MASK];
@@ -1564,11 +1578,24 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             scope_dst[i] = (l16 >> 8) | (r16 & 0xff00);
         }
         scope_dst = ptr + (TMH - 2) * TMW;
+        uint32_t scope_start = scope_pos - TMW*8;
+        float biggest=0.f;
+        int biggest_offset=0;
+        for (int offset = 0; offset < TMW*4-1; offset+=2) {
+            float py = scope[(scope_start+offset) & SCOPE_MASK].l;
+            float ny = scope[(scope_start+offset+1) & SCOPE_MASK].l;
+            float dy = ny - py;
+            if (ny>0. && py<0. && dy>biggest) {
+                biggest = dy;
+                biggest_offset = offset;
+            }
+        }
+        scope_start += biggest_offset;
         for (int i = 0; i < TMW*2; ++i) {
-            stereo sc = scope[(scope_start- i) & SCOPE_MASK];
+            stereo sc = scope[(scope_start+i*2) & SCOPE_MASK];
             uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * (32767.f) + 32768.f);
             uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * (32767.f) + 32768.f);
-            scope_dst[i+128] = (l16 >> 8) | (r16 & 0xff00);
+            scope_dst[i] = (l16 >> 8) | (r16 & 0xff00);
         }
         scope_dst = ptr + (TMH - 20) * TMW;
         for (int y = 0; y < 64; ++y) {

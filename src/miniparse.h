@@ -95,6 +95,11 @@ typedef struct pattern_t { // a parsed version of a min notation string
     }
 } pattern_t;
 
+typedef struct error_msg_t {
+    int key;           // a line number
+    const char *value; // a line of text (terminated by \n)
+} error_msg_t;
+
 
 typedef struct pattern_maker_t {
     Node *nodes; // stb_ds
@@ -105,6 +110,7 @@ typedef struct pattern_maker_t {
     int32_t i;   // current position in string during parsing.
     int linecount; // counts \n
     int err;     // 0 ok, else position of first error
+    int errline;
     const char *errmsg;
     pattern_t make_pattern(const char *key=NULL, int index_to_add_to_start_end=0);
     void unalloc() {
@@ -118,7 +124,7 @@ const char *print_midinote(int note);
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
 pattern_t parse_pattern(pattern_maker_t *pm, int index_to_add_to_start_end);
 void fill_curve_data_from_string(float *data, const char *s, int n); // responsible for the interpolation of lines
-void parse_named_patterns_in_source(const char *s, const char *e);
+error_msg_t * parse_named_patterns_in_source(const char *s, const char *e, error_msg_t *error_msgs);
 
 const char *skip_path(const char *s, const char *e);
 const char *find_end_of_pattern(const char *s, const char *e);

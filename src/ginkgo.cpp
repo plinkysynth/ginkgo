@@ -741,9 +741,11 @@ void parse_named_patterns_in_source(void) {
     // merge all patterns across the first 2 tabs....
     for (int tabi = 0; tabi < 2; ++tabi) {
         EditorState *E = &tabs[tabi];
+        stbds_hmfree(E->error_msgs);
+        E->error_msgs = NULL;
         const char *s = E->str, *real_e = E->str + stbds_arrlen(E->str);
         init_remapping(E);
-        parse_named_patterns_in_source(E->str, E->str + stbds_arrlen(E->str));
+        E->error_msgs = parse_named_patterns_in_source(E->str, E->str + stbds_arrlen(E->str), E->error_msgs);
     }
     update_pattern_uniforms(new_pattern_map_during_parse);
     // TODO - let the old pattern table leak because concurrency etc
@@ -2114,7 +2116,7 @@ int main(int argc, char **argv) {
 
     void test_minipat(void);
     test_minipat();
-    // return 0;
+    //return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);
 

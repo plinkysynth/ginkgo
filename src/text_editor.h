@@ -20,10 +20,6 @@ const char *spanstr(const char *s, const char *e, const char *substr);
 
 int fbw, fbh; // current framebuffer size in pixels
 
-typedef struct error_msg_t {
-    int key;           // a line number
-    const char *value; // a line of text (terminated by \n)
-} error_msg_t;
 
 typedef struct edit_op_t {
     int remove_start;

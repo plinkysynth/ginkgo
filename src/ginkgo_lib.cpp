@@ -496,15 +496,15 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 }
                 if (fold_actual > 0.f) {
                     float foldgain = fold_actual * fold_actual * 100.f + 1.f;
-                    float invfoldgain = 1.f / (fold_actual * 10.f + 1.f);
-                    au.l = fold(au.l*foldgain) * invfoldgain;
-                    au.r = fold(au.r*foldgain) * invfoldgain;
+                    //float invfoldgain = 1.f / (fold_actual * 10.f + 1.f);
+                    au.l = fold(au.l*foldgain);// * invfoldgain;
+                    au.r = fold(au.r*foldgain);// * invfoldgain;
                 }
                 if (dist_actual > 0.f) {
                     float mix = saturate(dist_actual*10.f);
-                    float distgain = dist_actual * dist_actual * 100.f + 1.f;
-                    au.l = lerp(au.l, sclip(au.l * distgain) / distgain, mix);
-                    au.r = lerp(au.r, sclip(au.r * distgain) / distgain, mix);
+                    float distgain = exp(saturate(dist_actual)*16.f);
+                    au.l = lerp(au.l, sclip(au.l * distgain), mix);
+                    au.r = lerp(au.r, sclip(au.r * distgain), mix);
                 }
                 au = v->filter.lpf(au, cutoff_actual, saturate(1.f - resonance));
                 au = pan(au, panpos * 2.f - 1.f);

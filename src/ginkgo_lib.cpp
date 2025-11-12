@@ -345,7 +345,7 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
     return cache;
 }
 
-stereo voice_state_t::synth_sample(hap_t *h, bool keydown, double dphase, float env1, float env2, float fold_actual,
+stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual,
                                    float dist_actual, float cutoff_actual, wave_t *w) {
     stereo au;
     bool at_end = false;
@@ -437,6 +437,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                     voices[i].h.t1 = h->t1;
                     voices[i].in_use = EInUse::ALLOCATED;
                     voices[i].vibphase = rnd01();
+                    voices[i].tremphase = 0.f;
                 }
             }
             assert(i < max_voices);
@@ -473,11 +474,27 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             float number = h->get_param(P_NUMBER, 0.f);
             wave_t *w = get_wave(get_sound_by_index(sound), number, &note);
             float vib = h->get_param(P_VIB, 0.f);
-            float vibfreq = h->get_param(P_VIB_FREQ, 0.5f);
-            note += sino(v->vibphase) * vib * vib;
-            v->vibphase = frac(v->vibphase + vibfreq * vibfreq * 3000.f * G->dt);
+            float vibfreq = h->get_param(P_VIB_FREQ, 1.5f);
+            note += sino(v->vibphase) * vib;
+            v->vibphase = frac(v->vibphase + vibfreq * 96.f * 8.f * G->dt);
+            float trem = h->get_param(P_TREM, 0.f) * 0.5f;
+            float tremfreq = h->get_param(P_TREM_FREQ, 1.5f);
+            float oldtrem = square(1.f-trem-trem*cosf(v->tremphase * TAU));
+            v->tremphase = frac(v->tremphase + tremfreq * 96.f * 8.f * G->dt);
+            float newtrem = square(1.f-trem-trem*cosf(v->tremphase * TAU));
+
 
             double dphase = exp2((note - C3) / 12.f); // midi2dphase(note);
+            float key_track_gain = exp2((note - C3) / -36.f); // gentle falloff of high notes
+
+            level *= key_track_gain;
+
+            float newlevel = level * newtrem;
+            level = level * oldtrem;
+            float dlevel = (newlevel-level)/96.f;
+
+
+
             float sustain = square(h->get_param(P_SUS, 1.f));
             float attack_k = env_k(h->get_param(P_ATT, 0.f));
             float decay_k = env_k(h->get_param(P_DEC, 0.3f));
@@ -487,7 +504,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 release_k = env_k(release);
             } else {
                 // no release specified...
-                if (w->num_frames > 0 && h->get_param(P_LOOPS, 0.f) >= h->get_param(P_LOOPE, 0.f)) {
+                if (w && w->num_frames > 0 && h->get_param(P_LOOPS, 0.f) >= h->get_param(P_LOOPE, 0.f)) {
                     release_k = 0.f; // it's a one shot sample so let it play out. nb this is now a _k value, not a time.
                 } else {
                     release_k = 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.
@@ -505,10 +522,12 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             float env2vcf = h->get_param(P_ENV2VCF, 1.f);
             float env2dist = h->get_param(P_ENV2DIST, 0.f);
             float env2fold = h->get_param(P_ENV2FOLD, 0.f);
+            float k_glide = env_k(0.5f * h->get_param(P_GLIDE, 0.f));
             hap_time t = from + first_smpl * G->dt;
             if (!G->playing) {
                 v->h.hapid = 0;
             }
+            if (v->phase <=0.) v->phase=dphase;
             for (int smpl = first_smpl; smpl < 96; smpl++, t += G->dt) {
                 ////////////// VOICE SAMPLE
                 bool keydown = G->playing && t < h->t1 + G->dt * 0.5f;
@@ -518,7 +537,10 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 float cutoff_actual = max(20.f, cutoff * (min(1.f, 1.f - env2vcf) + env2 * env2vcf));
                 float fold_actual = fold_amount * (min(1.f, 1.f - env2fold) + env2 * env2fold);
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
-                audio[smpl] += v->synth_sample(h, keydown, dphase, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * level;
+                v->dphase += (dphase - v->dphase) * k_glide;
+                v->dphase = dphase;
+                audio[smpl] += v->synth_sample(h, keydown, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * level;
+                level += dlevel;
                 if (v->in_use != EInUse::IN_USE) {
                     printf("voice %d released - from %f to %f\n", i, from, to);
                     h->t0 = -1e10; // mark it as 'old'.

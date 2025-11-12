@@ -191,7 +191,10 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
     int start = p->i;
     int first_child = -1;
     int prev_sibling = -1;
+    int prev_i = -1;
     while (1) {
+        if (p->i == prev_i) break; // belt and braces to prevent infinite loops
+        prev_i = p->i; 
         skipws(p);
         char c = peek(p);
         if (c <= 0 || c == close)

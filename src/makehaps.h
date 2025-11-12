@@ -426,6 +426,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         int idx0 = clamp((int)bfs_min_max_value[nodeidx].mn, 0, ncurve);
         int idx1 = clamp((int)bfs_min_max_value[nodeidx].mx, 0, ncurve);
         int nidx = idx1-idx0;
+        bfs_start_end[nodeidx].local_time_of_eval = frac(when);
         if (nidx>0) {
             float t = frac(when) * nidx;
             int it = (int)floorf(t);
@@ -437,7 +438,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
     case N_LEAF: {
         float f = floor(when);
-        appended = _append_leaf_hap(dst, nodeidx, f, f+1.f, hash2_pcg(hapid, (int)f));
+        appended = _append_leaf_hap(dst, nodeidx, f, f+1.f, hash2_pcg(hapid, (int)when));
         break;
     }
     case N_POLY:

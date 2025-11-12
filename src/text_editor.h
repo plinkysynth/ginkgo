@@ -5,12 +5,11 @@
 #include <ctype.h>
 
 enum {
-    #include "node_types.h"
-        N_LAST
-    };
-    
-static const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
+#include "node_types.h"
+    N_LAST
+};
 
+static const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
 
 void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width);
 
@@ -19,7 +18,6 @@ const char *print_midinote(int note);
 const char *spanstr(const char *s, const char *e, const char *substr);
 
 int fbw, fbh; // current framebuffer size in pixels
-
 
 typedef struct edit_op_t {
     int remove_start;
@@ -217,9 +215,10 @@ int looks_like_slider_comment(const char *str, int n, int idx,
     out->value_start_idx = i;
     out->cc = -1;
     // ok it has to be followed either by a number or the exact string cc(i) for some integer i
-    if (i+5 < n && str[i] == 'c' && str[i+1] == 'c' && str[i+2] == '(' && str[i+3] >= '0' && str[i+3] <= '7' && str[i+4] == ')') {
-        out->value_end_idx = i+5;
-        out->cc = str[i+3] - '0';
+    if (i + 5 < n && str[i] == 'c' && str[i + 1] == 'c' && str[i + 2] == '(' && str[i + 3] >= '0' && str[i + 3] <= '7' &&
+        str[i + 4] == ')') {
+        out->value_end_idx = i + 5;
+        out->cc = str[i + 3] - '0';
         out->curval = cc(out->cc);
         return 1;
     }
@@ -398,8 +397,8 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
         return;
     }
     postpone_autocomplete_show(E);
-    double mx=x; // unscrolled copies
-    double my=y;
+    double mx = x; // unscrolled copies
+    double my = y;
     x += E->scroll_x;
     y += E->scroll_y;
     int tmw = (fbw - 64.f) / E->font_width;
@@ -417,31 +416,32 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
     }
     float cc_bar_x = fbw - E->font_width * 16.f;
     float cc_bar_height = E->font_height;
-    if (is_drag == 0 && mx >= cc_bar_x-240.f && my >= fbh-cc_bar_height) {
-        E->drag_type = 100 + clamp(int((mx-cc_bar_x+240.f)/30.f), 0, 7); // cc!
+    if (is_drag == 0 && mx >= cc_bar_x - 240.f && my >= fbh - cc_bar_height) {
+        E->drag_type = 100 + clamp(int((mx - cc_bar_x + 240.f) / 30.f), 0, 7); // cc!
     }
     if (E->drag_type >= 100 && E->drag_type < 108) {
-        if (is_drag <0)     
+        if (is_drag < 0)
             E->drag_type = 0;
         else {
             int cc = E->drag_type - 100;
-            G->midi_cc[cc+0x10] = clamp(int((fbh-my) * 128.f / cc_bar_height), 0, 127);
+            G->midi_cc[cc + 0x10] = clamp(int((fbh - my) * 128.f / cc_bar_height), 0, 127);
         }
-        return ;
+        return;
     }
     if (E->editor_type == 2) {
         /////////////////////////// SAMPLE PICKER DRAGGING
         if (is_drag == 0) {
-            if (my > fbh-256.f && E->cursor_y > 0) {
+            if (my > fbh - 256.f && E->cursor_y > 0) {
                 float mid = (G->preview_fromt + G->preview_tot) * 0.5f;
-                mid = 48.f + mid * (fbw-96.f);
-                float left = 48.f + G->preview_fromt * (fbw-96.f);
-                float right = 48.f + G->preview_tot * (fbw-96.f);
+                mid = 48.f + mid * (fbw - 96.f);
+                float left = 48.f + G->preview_fromt * (fbw - 96.f);
+                float right = 48.f + G->preview_tot * (fbw - 96.f);
                 if (mx < left + 8.f) {
                     E->drag_type = 1;
                 } else if (mx > right - 8.f) {
                     E->drag_type = 2;
-                } else E->drag_type = 4;
+                } else
+                    E->drag_type = 4;
             } else {
                 E->drag_type = 3;
             }
@@ -496,7 +496,7 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
                 // printf("slider value: %f\n", v);
                 if (v != slider_spec.curval) {
                     if (slider_spec.cc >= 0) {
-                        G->midi_cc[16+slider_spec.cc] = clamp(int(v * 127.f), 0, 127);
+                        G->midi_cc[16 + slider_spec.cc] = clamp(int(v * 127.f), 0, 127);
                     } else {
                         char buf[32];
                         int numdecimals = clamp(3.f - log10f(slider_spec.maxval - slider_spec.minval), 0.f, 5.f);
@@ -511,7 +511,7 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
                         // TODO : undo merging. for now, just poke the text in directly.
                         stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
                         stbds_arrdeln(E->new_idx_to_old_idx, slider_spec.value_start_idx,
-                                    slider_spec.value_end_idx - slider_spec.value_start_idx);
+                                      slider_spec.value_end_idx - slider_spec.value_start_idx);
                         stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
                         memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
                         stbds_arrinsn(E->new_idx_to_old_idx, slider_spec.value_start_idx, strlen(buf));
@@ -582,8 +582,8 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     if (key == GLFW_KEY_ESCAPE && mods == 0) {
         if (E->editor_type == 2) {
             int n = find_end_of_line(E, 0);
-            if (stbds_arrlen(E->str)==n)
-                n=0;
+            if (stbds_arrlen(E->str) == n)
+                n = 0;
             stbds_arrsetlen(E->str, n);
             E->cursor_idx = E->select_idx = n;
         } else if (E->find_mode) {
@@ -1010,7 +1010,6 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 #define C_CHART_HILITE 0x4643b500u
 #define C_NOTE 0x0000f400u
 
-
 #define C_SLIDER 0x11148f00u
 
 uint32_t invert_color(uint32_t col) { // swap fg and bg
@@ -1030,7 +1029,6 @@ void set_status_bar(uint32_t color, const char *msg, ...) {
     status_bar_color = color;
     status_bar_time = glfwGetTime();
 }
-
 
 void parse_error_log(EditorState *E) {
     hmfree(E->error_msgs);
@@ -1408,7 +1406,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     bool wasinclude = false;
     int se = get_select_start(E);
     int ee = get_select_end(E);
-    
+
     int tmw = (fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
     E->max_width = 0;
@@ -1427,6 +1425,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     uint32_t empty_bgcol = 0x11100000u;
     pattern_t *cur_pattern = NULL;
     hilite_region_t *hilites = NULL;
+    int cursor_in_curve_hilite_idx = -1;
     // hap_t viz_hap_mem[128];
     // hap_span_t viz_haps = {};
     int current_hilite_region = 0;
@@ -1514,14 +1513,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     col = C_SLIDER;
                     if (slider_spec.cc >= 0) {
                         const static uint32_t slider_cols[] = {
-                          0x111e4300u,
-                          0x111e4300u,
-                          0x111e7400u,
-                          0x111e7400u,
-                          0x111fc300u,
-                          0x111fc300u,
-                          0x111ffe00u,
-                          0x111ffe00u,
+                            0x111e4300u, 0x111e4300u, 0x111e7400u, 0x111e7400u, 0x111fc300u, 0x111fc300u, 0x111ffe00u, 0x111ffe00u,
                         };
                         col = slider_cols[slider_spec.cc & 7];
                     }
@@ -1544,7 +1536,20 @@ int code_color(EditorState *E, uint32_t *ptr) {
                             if (time_since_trigger >= 0.f && time_since_trigger <= 1.f) {
                                 int type = cur_pattern->bfs_nodes[ni].type;
                                 int hcol = C_HILITE_LEAF; //  type==N_CALL ? C_HILITE_CALL : ((col<<3)&0xfff00000u);
-                                hilite_region_t h = {se->start, se->end, hcol, (int)((1.f - time_since_trigger) * 256)};
+                                int sels = se->start;
+                                int sele = se->end;
+                                if (type == N_CURVE) {
+                                    float t = cur_pattern->bfs_start_end[ni].local_time_of_eval;
+                                    if (t >= 0.f && t < 1.f) {
+                                        sels += (sele - sels - 2) * t + 1; // +1 to skip quotes
+                                        if (E->cursor_idx >= se->start && E->cursor_idx < se->end) {
+                                            cursor_in_curve_hilite_idx = sels;
+                                        }
+                                        sele = sels + 1;
+                                        time_since_trigger = 0.f;
+                                    }
+                                }
+                                hilite_region_t h = {sels, sele, hcol, (int)((1.f - time_since_trigger) * 256)};
                                 stbds_arrpush(hilites, h);
                             }
                         }
@@ -1760,7 +1765,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             }
             uint32_t ccol = col;
             if (curve_data) {
-                ccol = C_CHART;
+                ccol = C_CHART & 0xfff00u;
                 if (i > starti && i < j - 1) {
                     ch = vertical_bar((int)(curve_data[i - starti - 1] * 16.f + 0.5f));
                 }
@@ -1796,12 +1801,12 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
             }
-            if (t.x>=0 && t.x < TMW && t.y >= 0 && t.y < TMH)
+            if (t.x >= 0 && t.x < TMW && t.y >= 0 && t.y < TMH)
                 t.ptr[t.y * TMW + t.x] = (ccol) | (unsigned char)(ch);
             if (ch == '\t') {
                 int nextx = next_tab(t.x - left) + left;
                 while (t.x < nextx) {
-                    if (t.x>=0 && t.x < TMW && t.y >= 0 && t.y < TMH)
+                    if (t.x >= 0 && t.x < TMW && t.y >= 0 && t.y < TMH)
                         t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                     t.x++;
                 }
@@ -1814,22 +1819,23 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     if (strncasecmp(errline, "warning:", 8) == 0)
                         errcol = C_WARNING;
                     for (; *errline && *errline != '\n'; errline++) {
-                        if (t.x >=0 && t.x < TMW && t.y >= 0 && t.y < TMH)
+                        if (t.x >= 0 && t.x < TMW && t.y >= 0 && t.y < TMH)
                             t.ptr[t.y * TMW + t.x] = errcol | (unsigned char)(*errline);
                         t.x++;
                     }
                 }
                 // add any vu meters
                 int n = G->env_followers_idx[1];
-                if (n>64) n=64;
-                for (int i =0; i< n; i++) {
+                if (n > 64)
+                    n = 64;
+                for (int i = 0; i < n; i++) {
                     env_follower_t *ef = &G->env_followers[1][i];
-                    if (ef->line-1 == ysc) {
-                        float leftx = t.x+1.f;
-                        float lvlx = saturate(1.f+lin2db(ef->y)/48.f) * 16.f + leftx;
-                        float threshx = saturate(1.f+lin2db(ef->thresh)/48.f) * 16.f + leftx;
+                    if (ef->line - 1 == ysc) {
+                        float leftx = t.x + 1.f;
+                        float lvlx = saturate(1.f + lin2db(ef->y) / 48.f) * 16.f + leftx;
+                        float threshx = saturate(1.f + lin2db(ef->thresh) / 48.f) * 16.f + leftx;
                         float maxx = leftx + 16.f;
-                        if (lvlx<threshx) {
+                        if (lvlx < threshx) {
                             add_line(E, leftx, t.y + 0.5f, lvlx, t.y + 0.5f, 0xff108010, -E->font_height);
                             add_line(E, lvlx, t.y + 0.5f, threshx, t.y + 0.5f, 0x40404040, -E->font_height);
                             add_line(E, threshx, t.y + 0.5f, maxx, t.y + 0.5f, 0x40101040, -E->font_height);
@@ -1861,7 +1867,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 if (pattern_mode) {
                     if (t.y >= 0 && t.y < TMH) {
                         for (; t.x < tmw; t.x++) {
-                            if (t.x>=0) t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
+                            if (t.x >= 0)
+                                t.ptr[t.y * TMW + t.x] = ccol | (unsigned char)(' ');
                         }
                     }
                     if (grid_line_start != INVALID_LINE && grid_line_start < t.y) {
@@ -1905,111 +1912,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
     E->num_lines = t.y + 1 + E->intscroll_y;
     E->mouse_hovering_chart = false;
 
-    /*
-    if (E->cursor_in_pattern_area) {
-        // draw a popup below the cursor
-        int basex = left;
-        int chartx = basex + 13;
-        const char *pat_start = find_start_of_pattern(t.str, t.str + E->cursor_idx);
-        pat_start = skip_path(pat_start, t.str + t.n);
-        const char *pat_end = find_end_of_pattern(pat_start, t.str + t.n);
-        int code_start_idx = pat_start - t.str;
-        int code_end_idx = pat_end - t.str;
-        static uint32_t cached_compiled_string_hash = 0;
-        static pattern_maker_t cached_parser = {};
-        static hap_t cached_hap_mem[1024];
-        static hap_span_t cached_haps = {};
-        const char *codes = t.str + code_start_idx;
-        const char *codee = t.str + code_end_idx;
-        uint32_t hash = fnv1_hash(codes, codee);
-        if (hash != cached_compiled_string_hash) {
-            cached_compiled_string_hash = hash;
-            cached_parser.unalloc();
-            cached_parser = {.s = codes, .n = (int)(codee - codes)};
-            pattern_t pat = parse_pattern(&cached_parser, 0);
-            if (cached_parser.err <= 0) {
-                cached_haps = pat.make_haps({cached_hap_mem, cached_hap_mem + 256}, 256, 0.f, 4.f);
-            }
-        }
-        if (!cached_haps.empty()) {
-            struct row_key {
-                int sound_idx;
-                int variant;
-                int midinote;
-            };
-            struct {
-                row_key key;
-                int value;
-            } *rows = NULL;
-            int numrows = 0;
-            const Node *nodes = cached_parser.nodes;
-            int ss = get_select_start(E);
-            int se = get_select_end(E);
-            for (hap_t *h = cached_haps.s; h < cached_haps.e; h++) {
-                if (h->valid_params == 0)
-                    continue;
-                row_key key = {(h->valid_params & (1 << P_SOUND)) ? (int)h->params[P_SOUND] : -1,
-                               (h->valid_params & (1 << P_NUMBER)) ? (int)h->params[P_NUMBER] : -1,
-                               (h->valid_params & (1 << P_NOTE)) ? (int)h->params[P_NOTE] : -1};
-                int row_plus_one = stbds_hmget(rows, key);
-                if (!row_plus_one) {
-                    row_plus_one = ++numrows;
-                    if (numrows > 16)
-                        break;
-                    stbds_hmput(rows, key, row_plus_one);
-                    int y = E->cursor_y - E->intscroll + row_plus_one;
-                    if (y >= 0 && y < TMH) {
-                        Sound *sound = h->valid_params & (1 << P_SOUND) ? get_sound_by_index(key.sound_idx) : NULL;
-                        const char *sound_name = sound ? sound->name : "";
-                        char hapstr[64];
-                        char *s = hapstr;
-                        char *e = s + sizeof(hapstr) - 1;
-                        s += snprintf(s, e - s, "%s", sound_name);
-                        if (h->valid_params & (1 << P_NUMBER)) {
-                            s += snprintf(s, e - s, ":%d", key.variant);
-                        }
-                        if (h->valid_params & (1 << P_NOTE)) {
-                            if (s != hapstr && s != e)
-                                *s++ = ' ';
-                            s += snprintf(s, e - s, "%s", print_midinote(key.midinote));
-                        }
-                        if (s != e)
-                            *s++ = ' ';
-                        print_to_screen(t.ptr, chartx - (s - hapstr), y, 0x11188800, false, "%s", hapstr);
-                        print_to_screen(t.ptr, chartx + 128, y, 0x11188800, false, " %s", hapstr);
-                        for (int x = 0; x < 128; ++x) {
-                            uint32_t col = ((x & 31) == 0) ? C_CHART_HILITE : (x & 8) ? C_CHART : C_CHART_HOVER;
-                            t.ptr[y * TMW + x + chartx] = col | (unsigned char)(' ');
-                        }
-                    }
-                }
-                // draw the hap h
-                int y = E->cursor_y - E->intscroll + row_plus_one;
-                int hapstart_idx = nodes[h->node].start + code_start_idx;
-                int hapend_idx = nodes[h->node].end + code_start_idx;
-                uint32_t hapcol = 0; // 0 = leave attribute as is.
-                if (ss <= hapstart_idx && se >= hapend_idx)
-                    hapcol = C_SELECTION;
-                else if (hapstart_idx <= E->cursor_idx && hapend_idx >= E->cursor_idx)
-                    hapcol = C_CHART_HILITE;
-                int hapx1 = (int)((h->t0 * 32.f));
-                int hapx2 = (int)((h->t1 * 32.f));
-                for (int x = hapx1; x < hapx2; ++x) {
-                    if (x >= 0 && x < 128) {
-                        uint32_t charcol = hapcol ? hapcol : t.ptr[y * TMW + x + chartx] & 0xffffff00u;
-                        t.ptr[y * TMW + x + chartx] = charcol | (unsigned char)((x == hapx1)       ? 128 + 16 + 2
-                                                                                : (x == hapx2 - 1) ? '>'
-                                                                                                   : 128 + 16 + 15);
-                    }
-                }
-            }
-            stbds_hmfree(rows);
-        }
-        if (cached_parser.err) {
-            print_to_screen(t.ptr, basex + cached_parser.err, E->cursor_y + 1 - E->intscroll, C_ERR, false, cached_parser.errmsg);
-        }
-    }
-    */
     E->autocomplete_index = 0;
     stbds_hmfree(E->autocomplete_options);
     if (cursor_in_type == 'i' && E->find_mode == 0 && G->iTime > E->autocomplete_show_after &&
@@ -2130,8 +2032,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
         int cursor_in_curve_end_idx = cursor_token_end_idx - 1;
         int x, y;
         idx_to_xy(E, cursor_in_curve_start_idx, &x, &y);
-        x-=E->intscroll_x;
-        //x += left;
+        x -= E->intscroll_x;
+        // x += left;
         int datalen = max(0, cursor_in_curve_end_idx - cursor_in_curve_start_idx);
         // work out bounding box also
         float x1 = x * E->font_width;
@@ -2180,6 +2082,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
             if (xx == E->cursor_x - E->intscroll_x)
                 ccol = C_CHART_HILITE;
             if (idx >= ss && idx < se)
+                ccol = C_SELECTION;
+            if (idx == cursor_in_curve_hilite_idx)
                 ccol = C_SELECTION;
             if (xx >= 0 && xx < TMW)
                 for (int j = 0; j < 4; ++j) {

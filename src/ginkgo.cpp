@@ -614,7 +614,7 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
         rendercol += bloomcol * 0.3;
         rendercol = max(vec3(0.), rendercol);
         
-        vec2 pix = v_uv * vec2(uScreenPx.x, 2048.f);
+        vec2 pix = (v_uv) * vec2(uScreenPx.x, 2048.f);
         float fftx = uScreenPx.x - pix.x;
         if (pix.x < 64.f || fftx<128.f) {
             bool is_fft = false;
@@ -626,13 +626,18 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
                 ampscale = 0.5f;
                 is_fft = true;
                 float dither = fract(pix.x*23.5325f) / 2048.f;
-                curx = (96.f / 48000.f * 4096.f) * pow(500.f, v_uv.y + dither); // 24hz to nyquist
+                curx = (48.f / 48000.f * 4096.f) * pow(1000.f, v_uv.y + dither); // 24hz to nyquist
+                curx*=2.f;
+
                 base_y = 256 - 12;
                 pix.x = fftx;
                 nextx = curx * 1.003;
+            } else {
+                curx -= 96.f;
+                nextx -= 96.f;
             }
-            vec2 prevy = wave_read(curx*0.5f-48.f, base_y) * ampscale;
-            vec2 nexty = wave_read(nextx*0.5f-48.f, base_y) * ampscale;
+            vec2 prevy = wave_read(curx*0.5f, base_y) * ampscale;
+            vec2 nexty = wave_read(nextx*0.5f, base_y) * ampscale;
             vec2 miny = min(prevy, nexty);
             vec2 maxy = max(prevy, nexty);
             vec2 beam = smoothstep(maxy + 1.f, miny - 0.5f, pix.xx);

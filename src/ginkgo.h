@@ -532,8 +532,9 @@ typedef struct voice_state_t {
     double phase;
     double dphase;
     float vibphase;
+    float tremphase;
     EInUse in_use;
-    stereo synth_sample(hap_t *h, bool keydown, double dphase, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w);
+    stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w);
 } voice_state_t;
 
 
@@ -555,6 +556,7 @@ static inline stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at
         loops *= nsamps;
         loope *= nsamps;
         pos = fmodf(pos - loops, loope - loops) + loops;
+        v->phase = pos;
     } else if (pos >= nsamps) {
         if (at_end) *at_end = true;
         return {0.f, 0.f};
@@ -782,9 +784,9 @@ static inline float shapeo(double phase, double dphase, float wavetable_number) 
 }
 
 
-static inline float env_k(float x) {
+static inline float env_k(float x, float epsilon = 0.00025f) {
     // 0.00001 (e^-11) is a few seconds; 0.5 is fast.
-    return 1.f - exp(-0.00001f / (x*x+0.00025f));
+    return 1.f - exp(-0.00001f / (x*x + epsilon));
 }
 
 static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=right

@@ -546,6 +546,8 @@ static int parse_expr_inner(pattern_maker_t *p) {
         skiptoendoftoken(p);
         uint32_t name_hash = literal_hash_span(p->s + start_i, p->s + p->i);
         switch (name_hash) {
+        case HASH("lambda"):
+            return make_node(p, N_LAMBDA, -1, -1, start_i, p->i);
         case HASH("cc0"):
             return make_node(p, N_CC0, -1, -1, start_i, p->i);
         case HASH("cc1"):
@@ -574,10 +576,6 @@ static int parse_expr_inner(pattern_maker_t *p) {
         case HASH("cos2"):
         case HASH("cosine2"):
             return make_node(p, N_COS2, -1, -1, start_i, p->i);
-        case HASH("saw"):
-            return make_node(p, N_SAW, -1, -1, start_i, p->i);
-        case HASH("saw2"):
-            return make_node(p, N_SAW2, -1, -1, start_i, p->i);
         case HASH("rand"):
         case HASH("random"):
         case HASH("rnd"):
@@ -794,7 +792,8 @@ void test_minipat(void) {
     // const char *s = "c gain <sin * 0.8>"; // test grid
     // const char *s = "[a b c] * [2 1]"; // test rest in second half
     //const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
-    const char *s = "bd,bd,\n";
+    //const char *s = "bd,bd,\n";
+    const char *s = "[a b c d] : -1 : saw";
     // const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";

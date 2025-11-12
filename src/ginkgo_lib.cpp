@@ -26,7 +26,7 @@ static inline float LINEARINTERPRV(const float *buf, int basei, float wobpos) { 
     return ((a0 * (1.f - wobpos) + a1 * wobpos));
 }
 
-stereo limiter(float state[2] , stereo inp) {
+stereo limiter(float state[2], stereo inp) {
     const static float k_attack_ms = 0.5f;
     const static float k_decay_ms = 60.f;
     const static float k_attack = 1.f - expf(-1.f / (SAMPLE_RATE * k_attack_ms * 0.001f));
@@ -44,11 +44,9 @@ stereo limiter(float state[2] , stereo inp) {
             env_follow += (peak - env_follow) * k_decay;
     }
     float gain = 0.9f / (max(env_follow, 0.9f));
-    //printf("gain: %f\n", lin2db(gain));
+    // printf("gain: %f\n", lin2db(gain));
     return sclip(inp * gain);
 }
-
-
 
 stereo reverb_t::_run_internal(stereo input) {
     int i = reverb_pos;
@@ -154,7 +152,7 @@ stereo reverb_t::_run_internal(stereo input) {
         acc += shimo;
         outl = shimo;
         outr = shimo;
-        
+
         shimmerpos1--;
         shimmerpos2--;
     }
@@ -219,8 +217,10 @@ void *dsp_preamble(song_base_t *_G, stereo *audio, int reloaded, size_t state_si
         // printf("CLEARING STATE\n");
         song_base_t *oldg = _G;
         _G = (song_base_t *)calloc(1, state_size);
-        if (oldg)
-            memcpy(_G, oldg, sizeof(song_base_t)); // preserve the basic state...
+        if (oldg) {
+            size_t sz = sizeof(song_base_t); // min(sizeof(song_base_t), min(state_size, oldg->_size));
+            memcpy(_G, oldg, sz); // preserve the basic state...
+        }
         // ...but update the size.
         _G->_size = state_size;
     }
@@ -345,8 +345,46 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
     return cache;
 }
 
-stereo monosynth_t::operator()(const char *pattern_name, float glide) {
-    return {}; // TODO - pull out the innards of synth, and make it work for a mono synth with glide.
+stereo voice_state_t::synth_sample(hap_t *h, bool keydown, double dphase, float env1, float env2, float fold_actual,
+                                   float dist_actual, float cutoff_actual, wave_t *w) {
+    stereo au;
+    bool at_end = false;
+    if (w && w->sample_func) {
+        au = (w->sample_func)(this, h, w, &at_end);
+        phase += dphase * (double(w->sample_rate) / SAMPLE_RATE);
+    } else {
+        au = {};
+    }
+    in_use = EInUse::IN_USE;
+    au *= env1;
+    if (fold_actual > 0.f) {
+        float foldgain = fold_actual * fold_actual * 100.f + 1.f;
+        // float invfoldgain = 1.f / (fold_actual * 10.f + 1.f);
+        au.l = fold(au.l * foldgain); // * invfoldgain;
+        au.r = fold(au.r * foldgain); // * invfoldgain;
+    }
+    if (dist_actual > 0.f) {
+        float mix = saturate(dist_actual * 10.f);
+        float distgain = exp(saturate(dist_actual) * 16.f);
+        au.l = lerp(au.l, sclip(au.l * distgain), mix);
+        au.r = lerp(au.r, sclip(au.r * distgain), mix);
+    }
+    float resonance = h->get_param(P_RESONANCE, 0.f);
+    au = filter.lpf(au, cutoff_actual, saturate(1.f - resonance));
+    if (!isfinite(au.l) || !isfinite(au.r)) {
+        au = {};
+        filter = {};
+    }
+    float gain = h->get_param(P_GAIN, 0.75f);
+    gain = gain * gain; // gain curve
+    float panpos = h->get_param(P_PAN, 0.5f);
+    au = pan(au, panpos * 2.f - 1.f);
+    au *= gain;
+    if (!keydown && (env1 < 0.01f || at_end)) {
+        h->valid_params = 0;
+        in_use = EInUse::UNUSED;
+    }
+    return au;
 }
 
 stereo synth_t::operator()(const char *pattern_name, float level, int max_voices) {
@@ -368,8 +406,10 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             hs = p->make_haps({haps, haps + 8}, 8, (level > 0.f) ? G->iTime : -1.f, to);
         pretty_print_haps(hs, from, to);
         for (hap_t *h = hs.s; h < hs.e; h++) {
-            if (h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from) {
-                int i = 0;
+            if (!(h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from))
+                continue;
+            int i = (int)h->get_param(P_STRING, -1);
+            if (i<0 || i>=max_voices) {
                 for (; i < max_voices; ++i) {
                     hap_t *existing_hap = &voices[i].h;
                     if (existing_hap->hapid == h->hapid && existing_hap->t0 == h->t0 && existing_hap->valid_params)
@@ -382,49 +422,56 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                     // find oldest one to steal
                     i = 0;
                     double oldest_t = voices[0].h.t0;
-                    for (int j = 1; j < max_voices; ++j)
-                        if (voices[j].h.t0 < oldest_t || voices[j].h.valid_params == 0) {
+                    for (int j = 1; j < max_voices; ++j) {
+                        if (voices[j].in_use == EInUse::UNUSED) {
+                            i = j;
+                            break;
+                        }
+                        if (voices[j].h.t0 < oldest_t) {
                             oldest_t = voices[j].h.t0;
                             i = j;
                         }
-                    // i=0; // MONOPHONIC DEBUG
-                    hap_t *dst = &voices[i].h;
-                    dst->hapid = h->hapid;
-                    dst->node = h->node;
-                    dst->valid_params = 0;
-                    dst->scale_bits = 0;
-                    dst->t0 = h->t0;
-                    dst->t1 = h->t1;
-                    voices[i].vibphase = rnd01();
-                    voices[i].retrig = true;
-                    printf("alloc voice %d - new = %d - len %f oldest %f - from %f to %f\n", i, (int)h->get_param(P_NOTE, C3), h->t1 - h->t0,
-                           oldest_t, from, to);
-                        merge_hap(dst, h);
-                } else {
-                    hap_t *existing_hap = &voices[i].h;
-                    if (existing_hap->get_param(P_FROM, 0.) != h->get_param(P_FROM,0.)) {
-                        printf("FROM CHANGED\n");
                     }
-                    merge_hap(existing_hap, h);
+                    voices[i].h.hapid = 0;
+                    voices[i].h.t0 = h->t0;
+                    voices[i].h.t1 = h->t1;
+                    voices[i].in_use = EInUse::ALLOCATED;
+                    voices[i].vibphase = rnd01();
                 }
             }
+            assert(i < max_voices);
+            hap_t *dst = &voices[i].h;
+            if (dst->hapid != h->hapid) {
+                // hapid has changed. often that's when the voice allocation code above ran,
+                // but for a monophonic voice where 'string' was specified, it may just be the note changing.
+                dst->hapid = h->hapid;
+                dst->node = h->node;
+                dst->valid_params = 0;
+                dst->scale_bits = 0;
+                dst->t1 = h->t1; // we ONLY update t1, not t0; that way a sustained monosynth note doesnt get a 'hole' in it
+                // due to first_smpl below.
+                // however we do set inuse to allocated, to force an envelope retrig.
+                voices[i].in_use = EInUse::ALLOCATED;
+            }
+            merge_hap(dst, h);
         }
         for (int i = 0; i < max_voices; ++i) {
             voice_state_t *v = &voices[i];
             hap_t *h = &v->h;
             if (!h->valid_params)
                 continue;
-            int sound = h->get_param(P_SOUND, 0);
+            static int sawidx = get_sound_index("saw");
+            int sound = h->get_param(P_SOUND, sawidx);
             int first_smpl = (h->t0 - from) / G->dt;
             if (first_smpl >= 96) {
-                //printf("FIRST SAMPLE OUT OF BOUNDS. SKIPPING %d\n", i);
+                // printf("FIRST SAMPLE OUT OF BOUNDS. SKIPPING %d\n", i);
                 continue;
             }
             if (first_smpl < 0)
                 first_smpl = 0;
             float note = h->get_param(P_NOTE, C3);
             float number = h->get_param(P_NUMBER, 0.f);
-            wave_t *w = sound ? get_wave(get_sound_by_index(sound), number, &note) : NULL;
+            wave_t *w = get_wave(get_sound_by_index(sound), number, &note);
             float vib = h->get_param(P_VIB, 0.f);
             float vibfreq = h->get_param(P_VIB_FREQ, 0.5f);
             note += sino(v->vibphase) * vib * vib;
@@ -432,95 +479,52 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
 
             double dphase = exp2((note - C3) / 12.f); // midi2dphase(note);
             float sustain = square(h->get_param(P_SUS, 1.f));
-            float attack = env_k(h->get_param(P_ATT, 0.f));
-            float decay = env_k(h->get_param(P_DEC, 0.f));
-            float release = env_k(h->get_param(P_REL, 0.f));
-
+            float attack_k = env_k(h->get_param(P_ATT, 0.f));
+            float decay_k = env_k(h->get_param(P_DEC, 0.3f));
+            float release = (h->get_param(P_REL, -1.f));
+            float release_k;
+            if (release >= 0.f) {
+                release_k = env_k(release);
+            } else {
+                // no release specified...
+                if (w->num_frames > 0 && h->get_param(P_LOOPS, 0.f) >= h->get_param(P_LOOPE, 0.f)) {
+                    release_k = 0.f; // it's a one shot sample so let it play out. nb this is now a _k value, not a time.
+                } else {
+                    release_k = 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.
+                }
+            }
             float sustain2 = square(h->get_param(P_SUS2, 1.f));
-            float attack2 = env_k(h->get_param(P_ATT2, 0.f));
-            float decay2 = env_k(h->get_param(P_DEC2, 0.f));
-            float release2 = env_k(h->get_param(P_REL2, 0.f));
+            float attack2_k = env_k(h->get_param(P_ATT2, 0.f));
+            float decay2_k = env_k(h->get_param(P_DEC2, 0.3f));
+            float release2_k = env_k(h->get_param(P_REL2, 1000.f));
 
             float gate = h->get_param(P_GATE, 0.75f);
-            float gain = h->get_param(P_GAIN, 0.75f);
-            float loops = h->get_param(P_LOOPS, 0.f);
-            float loope = h->get_param(P_LOOPE, 0.f);
-            float panpos = h->get_param(P_PAN, 0.5f);
             float cutoff = h->get_param(P_CUTOFF, 24000.f);
-            float resonance = h->get_param(P_RESONANCE, 0.f);
             float dist = h->get_param(P_DIST, 0.f);
             float fold_amount = h->get_param(P_FOLD, 0.f);
             float env2vcf = h->get_param(P_ENV2VCF, 1.f);
             float env2dist = h->get_param(P_ENV2DIST, 0.f);
             float env2fold = h->get_param(P_ENV2FOLD, 0.f);
-
-            float fromt = h->get_param(P_FROM, 0.f);
-            float tot = h->get_param(P_TO, 1.f);
-            gain = gain * gain; // gain curve
-
-            float duty = number * 0.125f + 0.0625f;
             hap_time t = from + first_smpl * G->dt;
-            bool is_retrig = v->retrig;
             if (!G->playing) {
                 v->h.hapid = 0;
             }
             for (int smpl = first_smpl; smpl < 96; smpl++, t += G->dt) {
                 ////////////// VOICE SAMPLE
-                bool keydown = G->playing && t < h->t1 + G->dt*0.5f;
-                float env1 = v->adsr1(keydown ? gate : 0.f, attack, decay, sustain, release, is_retrig);
-                float env2 = v->adsr2(keydown ? gate : 0.f, attack2, decay2, sustain2, release2, is_retrig);
-                float cutoff_actual = cutoff * (min(1.f, 1.f-env2vcf) + env2*env2vcf);
-                float fold_actual = fold_amount * (min(1.f, 1.f-env2fold) + env2*env2fold);
-                float dist_actual = dist * (min(1.f, 1.f-env2dist) + env2*env2dist);
-
-                if (is_retrig) {
-                    v->phase = 0.f; /*printf("retrig %s\n", w->key);*/
-                }
-                bool at_end = false;
-                stereo au;
-                if (w) {
-                    au = sample_wave(w, v->phase, loops, loope, fromt, tot, &at_end);
-                    v->phase += dphase * (double(w->sample_rate) / SAMPLE_RATE);
-                } else {
-                    float osc_dphase = dphase * P_C3;
-                    float phase = v->phase = frac(v->phase + osc_dphase);
-                    float s;
-                    if (number <= 0.f) {
-                        s = sawo(phase, osc_dphase);
-                        s = lerp(s, sino(phase + 0.25f), min(1.f, -number));
-                    } else {
-                        float duty = min(1.5f - number, 0.5f);
-                        s = pwmo(phase, osc_dphase, duty, min(1.f, number));
-                    }
-                    au = mono2st(s);
-                }
-                if (fold_actual > 0.f) {
-                    float foldgain = fold_actual * fold_actual * 100.f + 1.f;
-                    //float invfoldgain = 1.f / (fold_actual * 10.f + 1.f);
-                    au.l = fold(au.l*foldgain);// * invfoldgain;
-                    au.r = fold(au.r*foldgain);// * invfoldgain;
-                }
-                if (dist_actual > 0.f) {
-                    float mix = saturate(dist_actual*10.f);
-                    float distgain = exp(saturate(dist_actual)*16.f);
-                    au.l = lerp(au.l, sclip(au.l * distgain), mix);
-                    au.r = lerp(au.r, sclip(au.r * distgain), mix);
-                }
-                au = v->filter.lpf(au, cutoff_actual, saturate(1.f - resonance));
-                au = pan(au, panpos * 2.f - 1.f);
-                au *= env1 * gain * level; // / (v->dphase * 1000.f);
-                audio[smpl] += au;
-                is_retrig = false;
-                ////////////////// VOICE SAMPLE END
-                // voice_state_buffers[i] = t_state_buffer;
-                if (!keydown && (env1 < 0.01f || at_end)) {
+                bool keydown = G->playing && t < h->t1 + G->dt * 0.5f;
+                bool retrig = v->in_use < EInUse::IN_USE;
+                float env1 = v->adsr1(keydown ? gate : 0.f, attack_k, decay_k, sustain, release_k, retrig);
+                float env2 = v->adsr2(keydown ? gate : 0.f, attack2_k, decay2_k, sustain2, release2_k, retrig);
+                float cutoff_actual = max(20.f, cutoff * (min(1.f, 1.f - env2vcf) + env2 * env2vcf));
+                float fold_actual = fold_amount * (min(1.f, 1.f - env2fold) + env2 * env2fold);
+                float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
+                audio[smpl] += v->synth_sample(h, keydown, dphase, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * level;
+                if (v->in_use != EInUse::IN_USE) {
                     printf("voice %d released - from %f to %f\n", i, from, to);
-                    h->valid_params = 0;
                     h->t0 = -1e10; // mark it as 'old'.
                     break;
                 }
             } // voice sample loop
-            v->retrig = false;
         } // voice loop
     } // 96 sample block loop
     return audio[G->sampleidx % 96];
@@ -533,7 +537,14 @@ stereo prepare_preview(void) {
         if (w) {
             float pos = w->sample_rate * G->preview_wave_t;
             G->preview_wave_t += 1.f / SAMPLE_RATE;
-            preview = sample_wave(w, pos, 0.f, 0.f, G->preview_fromt, G->preview_tot) * (G->preview_wave_fade * 0.33f);
+            bool at_end = false;
+            voice_state_t v = {.dphase = 1.f/SAMPLE_RATE, .phase = pos};
+            hap_t h = { .valid_params = (1 << P_FROM) | (1 << P_TO), 
+                .params[P_FROM] = G->preview_fromt,
+                .params[P_TO] = G->preview_tot,
+            };
+            preview =
+                sample_wave(&v, &h, w, &at_end) * (G->preview_wave_fade * 0.33f);
             if (pos >= w->num_frames) {
                 G->preview_wave_fade = 0.f;
             }
@@ -547,4 +558,15 @@ stereo prepare_preview(void) {
     }
     G->preview = preview;
     return preview;
+}
+
+static float _silence[16] = {};
+
+void register_osc(const char *name, sample_func_t *func) {
+    wave_t w = {.key = name, .sample_func = func, .sample_rate = SAMPLE_RATE, .frames = _silence, .num_frames = 0};
+    stbds_shputs(G->waves, w);
+    int idx = stbds_shgeti(G->waves, w.key);
+    Sound *osc = get_sound_init_only(name);
+    stbds_arrsetlen(osc->wave_indices, 0);
+    stbds_arrpush(osc->wave_indices, idx);
 }

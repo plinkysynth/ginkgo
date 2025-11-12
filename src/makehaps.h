@@ -388,12 +388,6 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_COS2:
         appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * M_PI * 2));
         break;
-    case N_SAW:
-        appended = _append_number_hap(dst, nodeidx, hapid, frac(when));
-        break;
-    case N_SAW2:
-        appended = _append_number_hap(dst, nodeidx, hapid, frac(when) * 2.f - 1.f);
-        break;
     case N_RAND:
         appended =
             _append_number_hap(dst, nodeidx, hapid, (pcg_mix(hash2_pcg(hapid, (int)floor(when) )) & 0xffff) / 65536.f);
@@ -427,6 +421,20 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     }
 
+    case N_CURVE: {
+        int ncurve = stbds_arrlen(curvedata);
+        int idx0 = clamp((int)bfs_min_max_value[nodeidx].mn, 0, ncurve);
+        int idx1 = clamp((int)bfs_min_max_value[nodeidx].mx, 0, ncurve);
+        int nidx = idx1-idx0;
+        if (nidx>0) {
+            float t = frac(when) * nidx;
+            int it = (int)floorf(t);
+            int it2 = (it+1) % nidx;
+            float v = lerp(curvedata[it + idx0], curvedata[it2 + idx0], t - it);
+            appended = _append_number_hap(dst, nodeidx, hapid, v);
+        }
+        break;
+    }
     case N_LEAF: {
         float f = floor(when);
         appended = _append_leaf_hap(dst, nodeidx, f, f+1.f, hash2_pcg(hapid, (int)f));
@@ -634,6 +642,15 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_SUB:
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, add_value_func, 1);
         break;
+    case N_LAMBDA:
+    break;
+    case N_OP_NEVER:
+        break;
+    case N_OP_SOMETIMES:
+    case N_OP_RARELY:
+    case N_OP_OFTEN:
+    case N_OP_ALWAYS:
+    break;
     #define X(x, str, ...) case N_##x: param = x; goto assign_value;
     #include "params.h"
     assign_value:

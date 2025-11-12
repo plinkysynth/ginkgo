@@ -8,6 +8,7 @@
 #include <OpenGL/gl3.h> // core profile headers
 #include <stdio.h>
 #include <dlfcn.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <stdlib.h>
@@ -2201,6 +2202,8 @@ int main(int argc, char **argv) {
     glfwSetScrollCallback(win, scroll_callback);
     glfwSetMouseButtonCallback(win, mouse_button_callback);
 
+    pump_wave_load_requests_main_thread();
+    usleep(1000);
     ma_device dev;
     init_audio_midi(&dev);
 

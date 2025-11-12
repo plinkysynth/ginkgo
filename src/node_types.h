@@ -15,8 +15,6 @@ NODE(N_SIN)
 NODE(N_COS)
 NODE(N_SIN2)
 NODE(N_COS2)
-NODE(N_SAW)
-NODE(N_SAW2)
 NODE(N_RAND)
 NODE(N_RAND2)
 NODE(N_RANDI) // takes a max value
@@ -28,6 +26,7 @@ NODE(N_CC4)
 NODE(N_CC5)
 NODE(N_CC6)
 NODE(N_CC7)
+NODE(N_LAMBDA)
 NODE(N_CAT)
 NODE(N_FASTCAT)
 NODE(N_GRID)
@@ -50,6 +49,12 @@ OP(N_OP_RANGE2, "range2", 2, 0, 100)
 #define X(x, str, ...) OP(N_##x, str, 1, 0, 50)
 #include "params.h"
 
+OP(N_OP_NEVER, "never", 1, 0, 75)
+OP(N_OP_RARELY, "rarely", 1, 0, 75)
+OP(N_OP_SOMETIMES, "sometimes", 1, 0, 75)
+OP(N_OP_OFTEN, "often", 1, 0, 75)
+OP(N_OP_ALWAYS, "always", 1, 0, 75)
+
 OP(N_OP_ADSR, "adsr", 4, 0, 50)
 OP(N_OP_ADSR2, "adsr2", 4, 0, 50)
 
@@ -62,6 +67,7 @@ OP(N_OP_MUL, "mul", 1, 0, 10)
 OP(N_OP_DIV, "div", 1, 0, 10)
 OP(N_OP_FIT, "fit", 0, 0, 10)
 OP(N_OP_FITN, "fitn", 1, 0, 10)
+
 
 #undef OP
 #undef NODE

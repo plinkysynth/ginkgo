@@ -34,6 +34,7 @@ bool decode_file_to_f32(const char *path, wave_t *out) {
         free(pcm);
         return false;
     }
+    out->sample_func = sample_wave;
     out->num_frames = num_frames;
     out->sample_rate = cfg.sampleRate;
     out->channels = cfg.channels;
@@ -57,6 +58,7 @@ void load_wave_now(wave_t *wave) {
     }
     if (!wave->frames) {
         fprintf(stderr, "warning: wave %s failed to load. replacing with silence\n", wave->key);
+        wave->sample_func = sample_wave;
         wave->num_frames = 1;
         wave->sample_rate = 48000;
         wave->channels = 1;
@@ -226,11 +228,42 @@ void dump_all_sounds(const char *fname) {
     fclose(f);
 }
 
+
+
+static inline stereo sample_saw(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
+    // nb we DONT retrig the phase, and let the oscillator freerun to prevent clicks.
+    float wavetable_number = h->get_param(P_NUMBER, 0.f);
+    return mono2st(shapeo(v->phase * P_C3, v->dphase * P_C3, wavetable_number));
+}
+
+static inline stereo sample_supersaw(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
+    // nb we DONT retrig the phase, and let the oscillator freerun to prevent clicks.
+    float wavetable_number = h->get_param(P_NUMBER, 0.f);
+    const static float _F0 = P_C3;
+    const static float delta = 1.00174f;
+    const static float _F1 = _F0 * 1.00175f;
+    const static float _F2 = _F0 / 1.00137f;
+    const static float _F3 = _F1 * 1.00159f;
+    const static float _F4 = _F2 / 1.00143f;
+    float s0 = shapeo(v->phase * _F0, v->dphase * _F0, wavetable_number);
+    float s1 = shapeo(v->phase * _F1, v->dphase * _F1, wavetable_number);
+    float s2 = shapeo(v->phase * _F2, v->dphase * _F2, wavetable_number);
+    float s3 = shapeo(v->phase * _F3, v->dphase * _F3, wavetable_number);
+    float s4 = shapeo(v->phase * _F4, v->dphase * _F4, wavetable_number);
+    float l = s0 * 0.5 + s1 * 0.4 + s2 * 0.6 + s3 * 0.7 + s4 * 0.3;
+    float r = s0 * 0.5 + s1 * 0.6 + s2 * 0.4 + s3 * 0.3 + s4 * 0.7;
+    return stereo{l, r};
+}
+
+
+
 int init_sampler(void) {
     // add sounds for 'rest'.
     if (stbds_hmlen(G->sounds) == 0) {
         get_sound_init_only("~");
         get_sound_init_only("1");
+        register_osc("saw", sample_saw);
+        register_osc("supersaw", sample_supersaw);
     }
 
     bool eager = false;

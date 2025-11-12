@@ -2130,7 +2130,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
         int cursor_in_curve_end_idx = cursor_token_end_idx - 1;
         int x, y;
         idx_to_xy(E, cursor_in_curve_start_idx, &x, &y);
-        x += left;
+        x-=E->intscroll_x;
+        //x += left;
         int datalen = max(0, cursor_in_curve_end_idx - cursor_in_curve_start_idx);
         // work out bounding box also
         float x1 = x * E->font_width;
@@ -2176,7 +2177,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             int idx = cursor_in_curve_start_idx + i;
             int datay = (int)(data[i] * 64.f + 0.5f);
             uint32_t ccol = col;
-            if (xx == E->cursor_x)
+            if (xx == E->cursor_x - E->intscroll_x)
                 ccol = C_CHART_HILITE;
             if (idx >= ss && idx < se)
                 ccol = C_SELECTION;

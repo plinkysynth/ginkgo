@@ -60,10 +60,10 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         G->cpu_usage_smooth = cpu_usage;
     else
         G->cpu_usage_smooth = G->cpu_usage_smooth * 0.999f + cpu_usage * 0.001f;
-    // if (!wav_recording) {
-    //     wav_recording = fopen("recording.wav", "wb");
-    //     write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
-    // }
+    if (!wav_recording) {
+        wav_recording = fopen("recording.wav", "wb");
+        write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
+    }
     if (wav_recording) {
         fwrite(audio, sizeof(stereo), frames * OVERSAMPLE, wav_recording);
         int pos = ftell(wav_recording);
@@ -197,6 +197,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
         fprintf(stderr, "dlopen %s failed: %s\n", cmd, dlerror());
         return false;
     }
+    
     dsp_fn_t f = (dsp_fn_t)dlsym(h, "dsp");
     if (!f) {
         fprintf(stderr, "dlsym failed: %s\n", dlerror());

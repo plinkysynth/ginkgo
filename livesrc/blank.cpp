@@ -61,3 +61,7 @@ struct song : public song_base_t {
   }
 };
 
+
+void update_frame(void) { 
+  set_camera(float4{0.f,0.f,-8.f,1.f}, float4{0.f,0.f,0.f,1.f}); 
+}

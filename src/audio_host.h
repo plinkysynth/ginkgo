@@ -22,6 +22,7 @@ static inline uint64_t nsec_now(void) {
     // return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW); // includes sleep
   }
 
+static frame_update_func_t g_frame_update_func = NULL;
 static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
 static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
 static void *g_handle = NULL;
@@ -197,7 +198,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
         fprintf(stderr, "dlopen %s failed: %s\n", cmd, dlerror());
         return false;
     }
-    
+    g_frame_update_func = (frame_update_func_t)dlsym(h, "frame_update_func");
     dsp_fn_t f = (dsp_fn_t)dlsym(h, "dsp");
     if (!f) {
         fprintf(stderr, "dlsym failed: %s\n", dlerror());

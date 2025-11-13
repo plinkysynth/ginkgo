@@ -3,15 +3,15 @@
 #include <arm_neon.h>
 typedef float float2 __attribute__((ext_vector_type(2)));
 typedef int int2 __attribute__((ext_vector_type(2)));
-typedef uint uint2 __attribute__((ext_vector_type(2)));
+typedef unsigned int uint2 __attribute__((ext_vector_type(2)));
 
 typedef float float3 __attribute__((ext_vector_type(3)));
 typedef int int3 __attribute__((ext_vector_type(3)));
-typedef uint uint3 __attribute__((ext_vector_type(3)));
+typedef unsigned int uint3 __attribute__((ext_vector_type(3)));
 
 typedef float float4 __attribute__((ext_vector_type(4)));
 typedef int int4 __attribute__((ext_vector_type(4)));
-typedef uint uint4 __attribute__((ext_vector_type(4)));
+typedef unsigned int uint4 __attribute__((ext_vector_type(4)));
 
 
 // TODO: x64 version of the following functions.

@@ -10,6 +10,59 @@
 #include "miniparse.h"
 #include "multiband.h"
 
+bool get_key(int key) { return G && G->get_key_func && G->get_key_func(key); }
+
+void update_camera_matrix(camera_state_t *cam) {
+    float4 c_up = {0.f, 1.f, 0.f, 0.f}; // up
+    cam->c_fwd = normalize(cam->c_lookat - cam->c_pos);
+    cam->c_right = normalize(cross(c_up, cam->c_fwd));
+    cam->c_up = normalize(cross(cam->c_fwd, cam->c_right));
+}
+
+void fps_camera(void) {
+    camera_state_t *cam = &G->camera;
+    if (G->ui_alpha_target < 0.5) {
+        float cam_mx = 0.5f - G->mx / G->fbw - 0.25f;
+        float cam_my = 0.5f - G->my / G->fbh;
+        float theta = cam_mx * TAU;
+        float phi = cam_my * PI;
+        float rc = cam->focal_distance * cosf(phi);
+        cam->c_lookat = cam->c_pos + float4{cosf(theta) * rc, sinf(phi) * cam->focal_distance, sinf(theta) * rc, 0.f}; // pos
+        const float speed = 0.1f;
+        if (get_key('W')) {
+            cam->c_pos += cam->c_fwd * speed;
+        }
+        if (get_key('S')) {
+            cam->c_pos -= cam->c_fwd * speed;
+        }
+        if (get_key('A')) {
+            cam->c_pos -= cam->c_right * speed;
+        }
+        if (get_key('D')) {
+            cam->c_pos += cam->c_right * speed;
+        }
+        if (get_key('Q')) {
+            cam->c_pos += cam->c_up * speed;
+        }
+        if (get_key('E')) {
+            cam->c_pos -= cam->c_up * speed;
+        }
+    }
+}
+
+__attribute__((weak)) void update_frame(void) { 
+    fps_camera();
+}
+
+extern "C" {
+    __attribute__((visibility("default"))) void frame_update_func(get_key_func_t _get_key_func, song_base_t *_G) {
+        G->get_key_func = _get_key_func;
+        if (G) {
+            update_frame();
+        }
+    }
+}
+
 #define RVMASK 65535
 
 static float k_reverb_fade = 240 / 256.f;                // 240 originally

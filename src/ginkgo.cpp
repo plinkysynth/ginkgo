@@ -64,7 +64,7 @@ void update_multitouch_dragging(void) {
     prev_drag_cy = drag_cy;
     prev_drag_dist = drag_dist;
     RawTouch touches[16];
-    int num_touches = mac_touch_get(touches, 16, fbw, fbh);
+    int num_touches = mac_touch_get(touches, 16, G->fbw, G->fbh);
     drag_cx = 0.f;
     drag_cy = 0.f;
     num_finger_dragging = 0;
@@ -729,18 +729,8 @@ extern EditorState tabs[3];
 EditorState tabs[3] = {
     {.fname = NULL, .editor_type = 0}, {.fname = NULL, .editor_type=1}, {.editor_type=2}};
 EditorState *curE = tabs;
-float ui_alpha = 0.f;
-float ui_alpha_target = 0.f;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 static float retina = 1.0f;
-
-static float4 c_cam2world_old[4];
-static float4 c_cam2world[4];
-static float4 c_pos = {0.f, 2.f, 10.f, 1.f}; // pos;
-static float4 c_lookat;
-static float fov = 0.4f;
-static float focal_distance = 5.f;
-static float aperture = 0.01f;
 
 GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0, secmon_pass = 0;
 GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0, fs_secmon = 0;
@@ -749,7 +739,7 @@ int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
 
 void set_tab(EditorState *newE) {
-    ui_alpha_target = (ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
+    G->ui_alpha_target = (G->ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
     curE = newE;
 }
 
@@ -792,13 +782,14 @@ static void dump_settings(void) {
     json_printer_t jp = {f};
     json_start_object(&jp, NULL);
     json_start_object(&jp, "camera");
-    json_print(&jp, "c_pos", c_pos);
-    json_print(&jp, "c_lookat", c_lookat);
-    json_print(&jp, "fov", fov);
-    json_print(&jp, "focal_distance", focal_distance);
+    json_print(&jp, "c_pos", G->camera.c_pos);
+    json_print(&jp, "c_lookat", G->camera.c_lookat);
+    json_print(&jp, "fov", G->camera.fov);
+    json_print(&jp, "focal_distance", G->camera.focal_distance);
+    json_print(&jp, "aperture", G->camera.aperture);
     json_end_object(&jp);
     json_start_object(&jp, "editor");
-    json_print(&jp, "ui_alpha_target", ui_alpha_target);
+    json_print(&jp, "ui_alpha_target", G->ui_alpha_target);
     json_print(&jp, "cur_tab", (int)(curE - tabs));
     json_start_array(&jp, "tabs");
     for (int tab = 0; tab < 2; tab++) {
@@ -860,19 +851,21 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
         if (iter_key_is(&outer, "camera")) {
             for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
                 if (iter_key_is(&inner, "c_pos")) {
-                    c_pos = iter_val_as_float4(&inner, c_pos);
+                    G->camera.c_cam2world[3] = iter_val_as_float4(&inner, G->camera.c_cam2world[3]);
                 } else if (iter_key_is(&inner, "c_lookat")) {
-                    c_lookat = iter_val_as_float4(&inner, c_lookat);
+                    G->camera.c_lookat = iter_val_as_float4(&inner, G->camera.c_lookat);
                 } else if (iter_key_is(&inner, "fov")) {
-                    fov = iter_val_as_float(&inner, fov);
+                    G->camera.fov = iter_val_as_float(&inner, G->camera.fov);
                 } else if (iter_key_is(&inner, "focal_distance")) {
-                    focal_distance = iter_val_as_float(&inner, focal_distance);
+                    G->camera.focal_distance = iter_val_as_float(&inner, G->camera.focal_distance);
+                } else if (iter_key_is(&inner, "aperture")) {
+                    G->camera.aperture = iter_val_as_float(&inner, G->camera.aperture);
                 }
             }
         } else if (iter_key_is(&outer, "editor")) {
             for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
                 if (iter_key_is(&inner, "ui_alpha_target")) {
-                    ui_alpha_target = iter_val_as_float(&inner, ui_alpha_target);
+                    G->ui_alpha_target = iter_val_as_float(&inner, G->ui_alpha_target);
                 } else if (iter_key_is(&inner, "cur_tab")) {
                     cur_tab = iter_val_as_int(&inner, cur_tab);
                 } else if (iter_key_is(&inner, "tabs")) {
@@ -915,7 +908,7 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
         cur_tab = 0;
     curE = &tabs[cur_tab];
     free_json(&r);
-    ui_alpha = ui_alpha_target;
+    G->ui_alpha = G->ui_alpha_target;
 }
 
 
@@ -1198,7 +1191,7 @@ static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
 
 static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     // printf("char: %d\n", codepoint);
-    if (ui_alpha_target < 0.5)
+    if (G->ui_alpha_target < 0.5)
         return;
     editor_key(win, curE, codepoint);
     curE->need_scroll_update = true;
@@ -1207,8 +1200,8 @@ static void char_callback(GLFWwindow *win, unsigned int codepoint) {
 
 
 void draw_umap(EditorState *E, uint32_t *ptr) {
-    int tmw = fbw / E->font_width;
-    int tmh = fbh / E->font_height;
+    int tmw = G->fbw / E->font_width;
+    int tmh = G->fbh / E->font_height;
     if (tmw > 512)
         tmw = 512;
     if (tmh > 256 - 8)
@@ -1261,8 +1254,8 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             }
         }
         E->zoom = 0.f;
-        E->centerx = fbw / 2.f;
-        E->centery = fbh / 2.f;
+        E->centerx = G->fbw / 2.f;
+        E->centery = G->fbh / 2.f;
         free_json(&r);
     }
     //float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
@@ -1344,12 +1337,12 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             // click_my = G->my;
         } else {
             if (E->drag_type == 1) {
-                fromt += (G->mx - click_mx) / (fbw-96.f);
+                fromt += (G->mx - click_mx) / (G->fbw-96.f);
             } else if (E->drag_type == 2) {
-                tot += (G->mx - click_mx) / (fbw-96.f);
+                tot += (G->mx - click_mx) / (G->fbw-96.f);
             } else if (E->drag_type == 4) {
-                fromt += (G->mx - click_mx) / (fbw-96.f);
-                tot += (G->mx - click_mx) / (fbw-96.f);
+                fromt += (G->mx - click_mx) / (G->fbw-96.f);
+                tot += (G->mx - click_mx) / (G->fbw-96.f);
             }
             click_mx = G->mx;
             fromt = saturate(fromt);
@@ -1450,19 +1443,19 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             sample_embedding_t *e = &E->embeddings[closest_idx];
             wave_t *w = &G->waves[e->wave_idx];
             int smp0 = 0;
-            float startx = 48.f + fromt * (fbw-96.f);
-            float endx = 48.f + tot * (fbw-96.f);
+            float startx = 48.f + fromt * (G->fbw-96.f);
+            float endx = 48.f + tot * (G->fbw-96.f);
             if (w->num_frames) {
                 float playpos_frac = fromt + (G->preview_wave_t * w->sample_rate / w->num_frames);
                 if (playpos_frac >= fromt && playpos_frac < tot) {
-                    float playx = 48.f + playpos_frac * (fbw-96.f);
-                    add_line(playx, fbh-256.f, playx, fbh, 0xffffffff, 4.f);
+                    float playx = 48.f + playpos_frac * (G->fbw-96.f);
+                    add_line(playx, G->fbh-256.f, playx, G->fbh, 0xffffffff, 4.f);
                 }
             }
-            add_line(startx, fbh-256.f, startx, fbh, 0xffeeeeee, 3.f);
-            add_line(endx, fbh-256.f, endx, fbh, 0xffeeeeee, 3.f);
-            for (int x=48;x<fbw-48.f;++x) {
-                float f = (x - 48.f) / (fbw-96.f);
+            add_line(startx, G->fbh-256.f, startx, G->fbh, 0xffeeeeee, 3.f);
+            add_line(endx, G->fbh-256.f, endx, G->fbh, 0xffeeeeee, 3.f);
+            for (int x=48;x<G->fbw-48.f;++x) {
+                float f = (x - 48.f) / (G->fbw-96.f);
                 int smp1 = ((int)(f * w->num_frames)) * w->channels;
                 float mn=1e10, mx=-1e10;
                 for (int s=smp0;s<smp1;++s) {
@@ -1470,22 +1463,22 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                     mn = min(mn, v);
                     mx = max(mx, v);
                 }
-                float ymid = fbh-128.f;
+                float ymid = G->fbh-128.f;
                 add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, (f>=fromt && f<tot) ? e->col : 0x40404040, 2.f);
                 smp0 = smp1;
             }
         }
     }
-    if (num_after_filtering==1 && (matched_p.x < 32.f || matched_p.x > fbw-32.f || matched_p.y < 32.f || matched_p.y > fbh-32.f)) {
+    if (num_after_filtering==1 && (matched_p.x < 32.f || matched_p.x > G->fbw-32.f || matched_p.y < 32.f || matched_p.y > G->fbh-32.f)) {
         autozoom = true;
     }
     if (autozoom) {
         if (num_after_filtering>1) {
-            E->zoom = min(fbw*0.75f / (maxx - minx + 10.f), fbh*0.9f / (maxy - miny + 10.f));
+            E->zoom = min(G->fbw*0.75f / (maxx - minx + 10.f), G->fbh*0.9f / (maxy - miny + 10.f));
         }
         E->zoom = clamp(E->zoom, 0.01f, 100.f);
-        E->centerx = fbw / 2.f - (maxx + minx) / 2.f * E->zoom;
-        E->centery = fbh / 2.f - (maxy + miny) / 2.f * E->zoom;
+        E->centerx = G->fbw / 2.f - (maxx + minx) / 2.f * E->zoom;
+        E->centery = G->fbh / 2.f - (maxy + miny) / 2.f * E->zoom;
     }
     E->zoom = clamp(E->zoom, 0.01f, 100.f);
     E->zoom_sm += (E->zoom - E->zoom_sm) * 0.2f;
@@ -1543,8 +1536,8 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
         editor_click(win, E, G, mx, my, 1, 0);
     }
 
-    int tmw = fbw / E->font_width;
-    int tmh = fbh / E->font_height;
+    int tmw = G->fbw / E->font_width;
+    int tmh = G->fbh / E->font_height;
     if (tmw > 512)
         tmw = 512;
     if (tmh > 256 - 8)
@@ -1807,48 +1800,21 @@ static void unbind_textures_from_slots(int num_slots) {
     }
 }
 
-void update_camera(GLFWwindow *win) {
-    memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
-    if (ui_alpha_target < 0.5) {
-        float cam_mx = 0.5f - G->mx / fbw - 0.25f;
-        float cam_my = 0.5f - G->my / fbh;
-        float theta = cam_mx * TAU;
-        float phi = cam_my * PI;
-        float rc = focal_distance * cosf(phi);
-        c_lookat = c_pos + float4{cosf(theta) * rc, sinf(phi) * focal_distance, sinf(theta) * rc, 0.f}; // pos
-    }
+static GLFWwindow *_win;
 
-    float4 c_up = {0.f, 1.f, 0.f, 0.f}; // up
-    float4 c_fwd = normalize(c_lookat - c_pos);
-    float4 c_right = normalize(cross(c_up, c_fwd));
-    c_up = normalize(cross(c_fwd, c_right));
-    if (ui_alpha_target < 0.5) {
-        const float speed = 0.1f;
-        if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
-            c_pos += c_fwd * speed;
-        }
-        if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS) {
-            c_pos -= c_fwd * speed;
-        }
-        if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS) {
-            c_pos -= c_right * speed;
-        }
-        if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS) {
-            c_pos += c_right * speed;
-        }
-        if (glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS) {
-            c_pos += c_up * speed;
-        }
-        if (glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS) {
-            c_pos -= c_up * speed;
-        }
-    }
-    c_cam2world[0] = c_right;
-    c_cam2world[1] = c_up;
-    c_cam2world[2] = c_fwd;
-    c_cam2world[3] = c_pos;
-    if (!dot(c_cam2world_old[0], c_cam2world_old[0])) {
-        memcpy(c_cam2world_old, c_cam2world, sizeof(c_cam2world));
+bool glfw_get_key(int key) { return _win && glfwGetKey(_win, key) == GLFW_PRESS; }
+
+
+void update_camera(GLFWwindow *win) {
+    camera_state_t *cam = &G->camera;
+    memcpy(cam->c_cam2world_old, cam->c_cam2world, sizeof(cam->c_cam2world));
+    update_camera_matrix(cam);
+    _win = win;
+    if (g_frame_update_func)
+        g_frame_update_func(glfw_get_key, G);
+    _win = NULL;
+    if (!dot(cam->c_cam2world_old[0], cam->c_cam2world_old[0])) {
+        memcpy(cam->c_cam2world_old, cam->c_cam2world, sizeof(cam->c_cam2world));
     }
 }
 
@@ -1860,9 +1826,9 @@ static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int n
     bind_texture_to_slot(taa_pass, 1, "uFP_prev", texFPRT[(iFrame + 1) % 2], GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    uniformMatrix4fv(taa_pass, "c_cam2world", 1, GL_FALSE, (float *)c_cam2world);
-    uniformMatrix4fv(taa_pass, "c_cam2world_old", 1, GL_FALSE, (float *)c_cam2world_old);
-    uniform1f(taa_pass, "fov", fov);
+    uniformMatrix4fv(taa_pass, "c_cam2world", 1, GL_FALSE, (float *)G->camera.c_cam2world);
+    uniformMatrix4fv(taa_pass, "c_cam2world_old", 1, GL_FALSE, (float *)G->camera.c_cam2world_old);
+    uniform1f(taa_pass, "fov", G->camera.fov);
     draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
 }
 
@@ -2238,7 +2204,7 @@ int main(int argc, char **argv) {
     double prev_frame_time = 0.;
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
-        glfwGetFramebufferSize(win, &fbw, &fbh);
+        glfwGetFramebufferSize(win, &G->fbw, &G->fbh);
         update_multitouch_dragging();
 
         double iTime = glfwGetTime() - start_time;
@@ -2261,13 +2227,13 @@ int main(int argc, char **argv) {
         bool want_taa = want_taa_str != NULL;
         const char *aperture_str = strstr(s, "// aperture ");
         if (aperture_str)
-            aperture = atof_default(aperture_str + 11, aperture);
+            G->camera.aperture = atof_default(aperture_str + 11, G->camera.aperture);
         const char *focal_distance_str = strstr(s, "// focal_distance ");
         if (focal_distance_str)
-            focal_distance = atof_default(focal_distance_str + 17, focal_distance);
+            G->camera.focal_distance = atof_default(focal_distance_str + 17, G->camera.focal_distance);
         const char *fov_str = strstr(s, "// fov ");
         if (fov_str)
-            fov = atof_default(fov_str + 7, fov);
+            G->camera.fov = atof_default(fov_str + 7, G->camera.fov);
         stbds_arrpop(tabs[0].str);
         static uint32_t skytex = 0;
         if (sky_name) {
@@ -2324,12 +2290,12 @@ int main(int argc, char **argv) {
             uniform1f(user_pass, "iTime", (float)iTime);
             uniform1f(user_pass, "t", (float)G->t);
             uniform1ui(user_pass, "iFrame", iFrame);
-            uniform2i(user_pass, "uScreenPx", fbw, fbh);
+            uniform2i(user_pass, "uScreenPx", G->fbw, G->fbh);
             uniform2i(user_pass, "uFontPx", curE->font_width, curE->font_height);
             uniform1i(user_pass, "status_bar_size", status_bar_color ? 1 : 0);
             uniform2f(user_pass, "scroll", curE->scroll_x - curE->intscroll_x * curE->font_width,
                         curE->scroll_y - curE->intscroll_y * curE->font_height);
-            uniform1f(user_pass, "ui_alpha", ui_alpha);
+            uniform1f(user_pass, "ui_alpha", G->ui_alpha);
             uniform4f(user_pass, "levels", lvl_peaks.x, lvl_peaks.y, lvl_peaks.z, lvl_peaks.w);
             uniform4f(user_pass, "levels_smooth", lvl_smooth.x, lvl_smooth.y, lvl_smooth.z, lvl_smooth.w);
             bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
@@ -2343,12 +2309,12 @@ int main(int argc, char **argv) {
             glActiveTexture(GL_TEXTURE7);
             glBindTexture(GL_TEXTURE_BUFFER, spheretbotex);
 
-            uniformMatrix4fv(user_pass, "c_cam2world", 1, GL_FALSE, (float *)c_cam2world);
-            uniformMatrix4fv(user_pass, "c_cam2world_old", 1, GL_FALSE, (float *)c_cam2world_old);
-            uniform4f(user_pass, "c_lookat", c_lookat.x, c_lookat.y, c_lookat.z, focal_distance);
-            uniform1f(user_pass, "fov", fov);
-            uniform1f(user_pass, "focal_distance", focal_distance);
-            uniform1f(user_pass, "aperture", aperture);
+            uniformMatrix4fv(user_pass, "c_cam2world", 1, GL_FALSE, (float *)G->camera.c_cam2world);
+            uniformMatrix4fv(user_pass, "c_cam2world_old", 1, GL_FALSE, (float *)G->camera.c_cam2world_old);
+            uniform4f(user_pass, "c_lookat", G->camera.c_lookat.x, G->camera.c_lookat.y, G->camera.c_lookat.z, G->camera.focal_distance);
+            uniform1f(user_pass, "fov", G->camera.fov);
+            uniform1f(user_pass, "focal_distance", G->camera.focal_distance);
+            uniform1f(user_pass, "aperture", G->camera.aperture);
 
             draw_fullscreen_pass(fbo[want_taa ? 2 : iFrame % 2], RESW, RESH, vao);
             unbind_textures_from_slots(7);
@@ -2371,19 +2337,19 @@ int main(int argc, char **argv) {
         bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
         bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
         bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
-        set_aradjust(ui_pass, fbw, fbh);
+        set_aradjust(ui_pass, G->fbw, G->fbh);
 
-        uniform2i(ui_pass, "uScreenPx", fbw, fbh);
+        uniform2i(ui_pass, "uScreenPx", G->fbw, G->fbh);
         uniform2i(ui_pass, "uFontPx", curE->font_width, curE->font_height);
         uniform1i(ui_pass, "status_bar_size", status_bar_color ? 1 : 0);
         uniform1f(ui_pass, "iTime", (float)iTime);
         uniform2f(ui_pass, "scroll", curE->scroll_x - curE->intscroll_x * curE->font_width,
                     curE->scroll_y - curE->intscroll_y * curE->font_height);
-        uniform1f(ui_pass, "ui_alpha", ui_alpha);
+        uniform1f(ui_pass, "ui_alpha", G->ui_alpha);
         // if there's a second monitor, we can afford to fade the render a bit more
         // to make the code more readable.
         // the first tab (shader) is faded less.
-        float fade_render = lerp(1.f, winFS ? 0.5f : (curE == &tabs[0] ? 1.f : 0.8f), ui_alpha);
+        float fade_render = lerp(1.f, winFS ? 0.5f : (curE == &tabs[0] ? 1.f : 0.8f), G->ui_alpha);
         uniform1f(ui_pass, "fade_render", fade_render);
 
         float f_cursor_x = (curE->cursor_x - curE->intscroll_x) * curE->font_width;
@@ -2392,7 +2358,7 @@ int main(int argc, char **argv) {
         curE->prev_cursor_x += (f_cursor_x - curE->prev_cursor_x) * CURSOR_SMOOTH_FACTOR;
         curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
 
-        draw_fullscreen_pass(0, fbw, fbh, vao);
+        draw_fullscreen_pass(0, G->fbw, G->fbh, vao);
         unbind_textures_from_slots(4);
         //////////////////////////////
 #define MOUSE_LEN 8
@@ -2426,11 +2392,11 @@ int main(int argc, char **argv) {
             0xffffee,
             0xffffee,
         };
-        float cc_bar_x = fbw - curE->font_width * 16.f;
+        float cc_bar_x = G->fbw - curE->font_width * 16.f;
         float cc_bar_height = curE->font_height;
         for (int i =0; i < 8; ++i) {
             float x = cc_bar_x + (i-7.5f)*30.f;
-            float y = fbh;
+            float y = G->fbh;
             float y2 = y - G->midi_cc[i+0x10] * cc_bar_height / 128.f;
             add_line(x, y-cc_bar_height, x, y, 0x3f000000 | ((cc_cols[i]>>2)&0x3f3f3f), -20.f); // negative width is square cap
             add_line(x, y, x, y2, 0x3f000000 | (cc_cols[i]), -20.f);
@@ -2451,7 +2417,7 @@ int main(int argc, char **argv) {
             glFinish(); // this seems to clean up some intermittent glitching to do with the fat line buffer. weird? shouldnt be needed.
             glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
             glUseProgram(fat_prog);
-            uniform2f(fat_prog, "fScreenPx", (float)fbw, (float)fbh);
+            uniform2f(fat_prog, "fScreenPx", (float)G->fbw, (float)G->fbh);
             glDrawArraysInstanced(GL_TRIANGLES, 0, 6, line_count);
             glBindVertexArray(0);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -2459,7 +2425,7 @@ int main(int argc, char **argv) {
             line_count = 0;
         }
 
-        ui_alpha += (ui_alpha_target - ui_alpha) * 0.1;
+        G->ui_alpha += (G->ui_alpha_target - G->ui_alpha) * 0.1;
 
         glfwSwapBuffers(win);
         if (winFS) {

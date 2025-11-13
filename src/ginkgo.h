@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stdatomic.h>
 #include "3rdparty/stb_ds.h"
+#include "extvector.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -364,6 +366,26 @@ typedef struct env_follower_t {
     int line;
 } env_follower_t;
 
+typedef struct camera_state_t {
+    float4 c_cam2world_old[4];
+    union {
+        struct {
+            float4 c_right;
+            float4 c_up;
+            float4 c_fwd;
+            float4 c_pos;
+        };
+        float4 c_cam2world[4];
+    };
+    float4 c_lookat;
+    float fov;
+    float focal_distance;
+    float aperture;
+} camera_state_t;
+
+typedef bool (*get_key_func_t)(int key);
+
+
 typedef struct song_base_t {
     int _size;
     float bpm;
@@ -383,7 +405,12 @@ typedef struct song_base_t {
     float mscrollx, mscrolly;
     int mb;
     int old_mb;
+    int fbw, fbh; // current framebuffer size in pixels
+    float ui_alpha;
+    float ui_alpha_target;
     double iTime;
+    camera_state_t camera;
+    get_key_func_t get_key_func;
     uint32_t sampleidx;
     atomic_flag load_request_cs;
     sound_pair_t *sounds;
@@ -403,7 +430,16 @@ typedef struct song_base_t {
 } song_base_t;
 
 extern song_base_t *G;
-static inline void init_basic_state(void) { G->bpm = 120.f; }
+static inline void init_basic_state(void) { 
+    G->bpm = 120.f; 
+    G->camera = {
+        .c_cam2world[3] = {0.f, 2.f, 10.f, 1.f},
+        .c_lookat = {0.f, 0.f, 0.f, 1.f},
+        .fov = 0.4f,
+        .focal_distance = 5.f,
+        .aperture = 0.01f,
+    };
+}
 
 
 #define cc(x) (G->midi_cc[16+((x)&7)]/127.f)
@@ -841,6 +877,20 @@ static inline float note2freq(float midi) { return expf(midi*LN2_OVER_12 + LN440
 // #define FREQ2LPF(freq) 1.f - exp2f(-freq *(TAU / SAMPLE_RATE)) // more accurate for lpf with high cutoff
 
 typedef song_base_t *(*dsp_fn_t)(song_base_t *G, stereo *audio, int frames, int reloaded);
+typedef void (*frame_update_func_t)(get_key_func_t get_key_func, song_base_t *G);
+
+
+void update_camera_matrix(camera_state_t *cam);
+void fps_camera(void);
+
+static inline void set_camera(float4 pos, float4 lookat, float fov = 0.4f, float aperture = 0.01f) {
+    G->camera.c_pos = pos;
+    G->camera.c_lookat = lookat;
+    G->camera.fov = fov;
+    G->camera.focal_distance = length(lookat - pos);
+    G->camera.aperture = aperture;
+    update_camera_matrix(&G->camera);
+}
 
 #define LOG(...)                                                                                                                   \
     {                                                                                                                              \
@@ -864,6 +914,8 @@ static inline float swing(double t, float swing_point = 0.66) { // swing point o
 }
 
 stereo prepare_preview(void);
+bool get_key(int key);
+
 
 #ifdef LIVECODE
 struct song;

@@ -17,7 +17,6 @@ int parse_midinote(const char *s, const char *e, const char **end, int allow_p_p
 const char *print_midinote(int note);
 const char *spanstr(const char *s, const char *e, const char *substr);
 
-int fbw, fbh; // current framebuffer size in pixels
 
 typedef struct edit_op_t {
     int remove_start;
@@ -401,7 +400,7 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
     double my = y;
     x += E->scroll_x;
     y += E->scroll_y;
-    int tmw = (fbw - 64.f) / E->font_width;
+    int tmw = (G->fbw - 64.f) / E->font_width;
     float fx = (x / E->font_width + 0.5f);
     float fy = (y / E->font_height);
     int cx = (int)fx;
@@ -414,9 +413,9 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
     if (E->mouse_hovering_chart && is_drag < 0) {
         E->mouse_clicked_chart = click_count > 0;
     }
-    float cc_bar_x = fbw - E->font_width * 16.f;
+    float cc_bar_x = G->fbw - E->font_width * 16.f;
     float cc_bar_height = E->font_height;
-    if (is_drag == 0 && mx >= cc_bar_x - 240.f && my >= fbh - cc_bar_height) {
+    if (is_drag == 0 && mx >= cc_bar_x - 240.f && my >= G->fbh - cc_bar_height) {
         E->drag_type = 100 + clamp(int((mx - cc_bar_x + 240.f) / 30.f), 0, 7); // cc!
     }
     if (E->drag_type >= 100 && E->drag_type < 108) {
@@ -424,18 +423,18 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
             E->drag_type = 0;
         else {
             int cc = E->drag_type - 100;
-            G->midi_cc[cc + 0x10] = clamp(int((fbh - my) * 128.f / cc_bar_height), 0, 127);
+            G->midi_cc[cc + 0x10] = clamp(int((G->fbh - my) * 128.f / cc_bar_height), 0, 127);
         }
         return;
     }
     if (E->editor_type == 2) {
         /////////////////////////// SAMPLE PICKER DRAGGING
         if (is_drag == 0) {
-            if (my > fbh - 256.f && E->cursor_y > 0) {
+            if (my > G->fbh - 256.f && E->cursor_y > 0) {
                 float mid = (G->preview_fromt + G->preview_tot) * 0.5f;
-                mid = 48.f + mid * (fbw - 96.f);
-                float left = 48.f + G->preview_fromt * (fbw - 96.f);
-                float right = 48.f + G->preview_tot * (fbw - 96.f);
+                mid = 48.f + mid * (G->fbw - 96.f);
+                float left = 48.f + G->preview_fromt * (G->fbw - 96.f);
+                float right = 48.f + G->preview_tot * (G->fbw - 96.f);
                 if (mx < left + 8.f) {
                     E->drag_type = 1;
                 } else if (mx > right - 8.f) {
@@ -1413,7 +1412,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     int se = get_select_start(E);
     int ee = get_select_end(E);
 
-    int tmw = (fbw - 64.f) / E->font_width;
+    int tmw = (G->fbw - 64.f) / E->font_width;
     E->cursor_in_pattern_area = false;
     E->max_width = 0;
     int column_max_width = 0;

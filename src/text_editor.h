@@ -569,6 +569,15 @@ int jump_to_found_text(EditorState *E, int backwards, int extra_char) {
     return 0;
 }
 
+void cancel_autocomplete(EditorState *E, bool completely_ban) {
+    stbds_hmfree(E->autocomplete_options);
+    E->autocomplete_options = NULL;
+    E->autocomplete_index = 0;
+    E->autocomplete_scroll_y = 0;
+    if (completely_ban) 
+        E->autocomplete_show_after = G->iTime + 10000.f; // completely ban autocomplete if you press escape.
+}
+
 void editor_key(GLFWwindow *win, EditorState *E, int key) {
     int n = stbds_arrlen(E->str);
     int mods = key >> 16;
@@ -589,10 +598,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
         } else if (E->find_mode) {
             E->find_mode = false;
         } else if (E->autocomplete_options) {
-            E->autocomplete_options = NULL;
-            E->autocomplete_index = 0;
-            E->autocomplete_scroll_y = 0;
-            E->autocomplete_show_after = G->iTime + 10000.f; // completely ban autocomplete if you press escape.
+            cancel_autocomplete(E, true);
         } else {
             E->select_idx = E->cursor_idx;
         }
@@ -1982,44 +1988,41 @@ int code_color(EditorState *E, uint32_t *ptr) {
             }
             int numchoices = stbds_hmlen(E->autocomplete_options);
             if (numchoices == 0) {
-                stbds_hmfree(E->autocomplete_options);
-                E->autocomplete_options = NULL;
-                E->autocomplete_index = 0;
-                E->autocomplete_scroll_y = 0;
+                cancel_autocomplete(E, false);
             } else {
                 int avoid_y = y;
                 int unscrolled_besti = stbds_hmgeti(E->autocomplete_options, bestoption);
                 int besti = unscrolled_besti + E->autocomplete_scroll_y;
-                if (besti >= numchoices)
-                    besti = numchoices - 1;
-                if (besti < 0)
-                    besti = 0;
-                E->autocomplete_scroll_y = besti - unscrolled_besti;
-                E->autocomplete_index = besti;
-                y -= besti;
-                for (int i = 0; i < numchoices; ++i) {
-                    if (y == avoid_y)
-                        y++;
-                    if (y >= TMH)
-                        break;
-                    if (y >= 0) {
-                        autocomplete_option_t *o = &E->autocomplete_options[i];
-                        if (o->matchlen == strlen(o->key))
-                            continue;
-                        if (y == avoid_y + 1) {
-                            int xx = x + left - o->xoffset;
-                            int idx = 0;
-                            for (const char *c = o->key; *c; c++, ++idx) {
-                                bool match = idx >= o->xoffset && idx < o->xoffset + o->matchlen;
-                                if (xx >= 0 && xx < TMW && y >= 0 && y < TMH)
-                                    t.ptr[xx + y * TMW] = (match ? C_SELECTION : C_AUTOCOMPLETE) | (unsigned char)(*c);
-                                xx++;
+                if (besti >= numchoices || besti<0)
+                    cancel_autocomplete(E, true);
+                else {
+                    E->autocomplete_scroll_y = besti - unscrolled_besti;
+                    E->autocomplete_index = besti;
+                    y -= besti;
+                    for (int i = 0; i < numchoices; ++i) {
+                        if (y == avoid_y)
+                            y++;
+                        if (y >= TMH)
+                            break;
+                        if (y >= 0) {
+                            autocomplete_option_t *o = &E->autocomplete_options[i];
+                            if (o->matchlen == strlen(o->key))
+                                continue;
+                            if (y == avoid_y + 1) {
+                                int xx = x + left - o->xoffset;
+                                int idx = 0;
+                                for (const char *c = o->key; *c; c++, ++idx) {
+                                    bool match = idx >= o->xoffset && idx < o->xoffset + o->matchlen;
+                                    if (xx >= 0 && xx < TMW && y >= 0 && y < TMH)
+                                        t.ptr[xx + y * TMW] = (match ? C_SELECTION : C_AUTOCOMPLETE) | (unsigned char)(*c);
+                                    xx++;
+                                }
+                            } else {
+                                print_to_screen(t.ptr, x + left - o->xoffset, y, C_AUTOCOMPLETE_SECONDARY, false, o->key);
                             }
-                        } else {
-                            print_to_screen(t.ptr, x + left - o->xoffset, y, C_AUTOCOMPLETE_SECONDARY, false, o->key);
                         }
+                        y++;
                     }
-                    y++;
                 }
             }
         }

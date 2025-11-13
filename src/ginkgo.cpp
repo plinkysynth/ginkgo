@@ -369,6 +369,28 @@ float square(float x) { return x * x; }
 float lengthsq(vec2 v) { return dot(v, v); }
 float lengthsq(vec3 v) { return dot(v, v); }
 float lengthsq(vec4 v) { return dot(v, v); }
+#define dot2 lengthsq
+float ndot( in vec2 a, in vec2 b ) { return a.x*b.x - a.y*b.y; }
+// awesome sdf functions following the naming and code of https://iquilezles.org/articles/distfunctions/
+// thankyou inigo :)
+float sdSphere( vec3 p, float s ) { return length(p)-s; }
+float sdBox( vec3 p, vec3 b ) { vec3 q = abs(p) - b; return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0); }
+float sdRoundBox( vec3 p, vec3 b, float r ) { vec3 q = abs(p) - b + r; return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0) - r; }
+float sdTorus( vec3 p, vec2 t ) { vec2 q = vec2(length(p.xz)-t.x,p.y); return length(q)-t.y; }
+float sdCylinder( vec3 p, vec3 c ) { return length(p.xz-c.xy)-c.z; }
+float sdPlane( vec3 p, vec3 n_norm, float h ) { return dot(p,n_norm) + h; }
+float sdOctahedron( vec3 p, float s) { p = abs(p); return (p.x+p.y+p.z-s)*0.57735027; }
+float sdEllipsoid( vec3 p, vec3 r ) { float k0 = length(p/r); float k1 = length(p/(r*r)); return k0*(k0-1.0)/k1; }
+float sdCappedCylinder( vec3 p, float r, float h ) { vec2 d = abs(vec2(length(p.xz),p.y)) - vec2(r,h); return min(max(d.x,d.y),0.0) + length(max(d,0.0)); }
+float sdCapsule( vec3 p, vec3 a, vec3 b, float r ) { vec3 pa = p - a, ba = b - a; float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 ); return length( pa - ba*h ) - r; }
+float opUnion( float d1, float d2 ) { return min(d1,d2); }
+float opSubtraction( float d1, float d2 ) { return max(-d1,d2); }
+float opIntersection( float d1, float d2 ) { return max(d1,d2); }
+float opXor( float d1, float d2 ) { return max(min(d1,d2),-max(d1,d2)); }
+float opSmoothUnion( float d1, float d2, float k ) { k *= 4.0; float h = max(k-abs(d1-d2),0.0); return min(d1, d2) - h*h*0.25/k; }
+float opSmoothSubtraction( float d1, float d2, float k ) { return -opSmoothUnion(d1,-d2,k);}
+float opSmoothIntersection( float d1, float d2, float k ) { return -opSmoothUnion(-d1,-d2,k); }
+
 vec2 wave_read(float x, int y_base) {
     int ix = int(x);
     vec2 s0 = vec2(texelFetch(uText, ivec2(ix & 511, y_base + (ix >> 9)), 0).xy);

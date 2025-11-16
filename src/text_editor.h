@@ -414,9 +414,6 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
         int i = find_end_of_line(E, 0);
         push_edit_op(E, i, i, buf, 0);
         E->cursor_idx = E->select_idx = find_end_of_line(E, 0);
-
-        // glfwSetClipboardString(win, buf);
-        // set_tab(&tabs[1]);
         return;
     }
     postpone_autocomplete_show(E);

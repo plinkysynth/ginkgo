@@ -666,7 +666,6 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 float fold_actual = fold_amount * (min(1.f, 1.f - env2fold) + env2 * env2fold);
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
-                v->dphase = dphase;
                 audio[smpl] += v->synth_sample(h, keydown, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
                 curlevel += dlevel;
                 if (v->in_use != EInUse::IN_USE) {

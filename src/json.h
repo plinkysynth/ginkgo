@@ -111,7 +111,7 @@ static inline void json_print(json_printer_t *jp, const char *key, int val) {
 static inline void json_print(json_printer_t *jp, const char *key, const char *val, const char *e = 0) {
     json_print_trailing_comma_and_key(jp, key);
     fputc('"', jp->f);
-    if (!e) e = val + strlen(val);
+    if (!e && val) e = val + strlen(val);
     for (const char *c=val; c<e; c++) {
         char ch = *c;
         switch (ch) {

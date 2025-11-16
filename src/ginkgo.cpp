@@ -110,18 +110,19 @@ static void check_gl(const char *where) {
 typedef struct line_t {
     float p0x, p0y;
     float p1x, p1y;
+    float width, softness;
+    int character;
     uint32_t col;
-    float width;
 } line_t;
 
 #define MAX_LINES (1 << 20)
 uint32_t line_count = 0;
 line_t lines[MAX_LINES];
 
-void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width) {
+void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width, float softness, int character) {
     if (line_count >= MAX_LINES)
         return;
-    lines[line_count] = (line_t){p0x, p0y, p1x, p1y, col, width};
+    lines[line_count] = (line_t){p0x, p0y, p1x, p1y, width, softness, character, col};
     line_count++;
 }
 
@@ -265,32 +266,38 @@ static GLuint link_program(GLuint vs, GLuint fs) {
 const char *kVS_fat = SHADER(
     layout(location=0) in vec2 in_p1;
     layout(location=1) in vec2 in_p2;
-    layout(location=2) in float in_width;
-    layout(location=3) in vec4  in_col; // from normalized ubyte4
+    layout(location=2) in vec2 in_width_softness;
+    layout(location=3) in int in_character;
+    layout(location=4) in vec4  in_col; // from normalized ubyte4
+    uniform ivec2 uFontPx;
     out vec2 v_uv;
+    out vec2 v_txt;
     out vec4 v_col;
-    out vec2 v_width_len;
+    out vec4 v_width_len_softness_character;
     uniform vec2 fScreenPx;
     void main() {
         vec2 p1 = in_p1, p2 = in_p2;
-        float hw = abs(0.5 * in_width);
+        float hw = abs(0.5 * in_width_softness.x);
         vec2 dir = p2-p1;
         float len = length(dir);
-        vec2 t = (len<1e-6) ? vec2(hw, 0.0) : dir * -(hw/len);
+        vec2 t = (len<1e-6) ? vec2(0.0f, hw) : dir * -(hw/len);
         vec2 n = vec2(-t.y, t.x);
         // 0    1/5
         // 2/4    3
         int corner = gl_VertexID % 6;
         vec2 p = p1;
         float vhw = hw; 
-        if (in_width < 0.) { vhw = 0.; t=vec2(0.); } // square cap if in_width is negative
+        if (in_width_softness.x < 0.) { vhw = 0.; t=vec2(0.); } // square cap if in_width is negative
+        if (in_character != 0) { vhw *= 0.5f; t*=0.5f; } // half width for characters
         vec2 uv = vec2(-hw,-vhw);
-        if ((corner&1)==1) { t=-t; p = p2; uv.y = len+vhw;}
-        if (corner>=2 && corner<=4) { n=-n; uv.x=-uv.x;}
+        if ((corner&1)==1) { t=-t; p = p2; uv.y = len+vhw; v_txt.x = 0.85f/16.f; } else v_txt.x = 0.15f/16.f;
+        if (corner>=2 && corner<=4) { n=-n; uv.x=-uv.x; v_txt.y = 0.85f/6.f; } else v_txt.y = 0.15f/6.f;
+        int ch = in_character-32;
+        v_txt += vec2(1.f/16.f * (ch&15), 1.f/6.f * (ch/16));
         p=p+t+n;
         v_uv  = uv;
         v_col = in_col;
-        v_width_len = vec2(hw, len);
+        v_width_len_softness_character = vec4(hw, len, 1.f/(1.f+in_width_softness.y), in_character);
         p*=2.f/fScreenPx;
         p-=1.f;
         p.y=-p.y;
@@ -299,15 +306,24 @@ const char *kVS_fat = SHADER(
 
 const char *kFS_fat = SHADER(
     float saturate(float x) { return clamp(x, 0.0, 1.0); }
-
+    uniform ivec2 uFontPx;
+    uniform sampler2D uFont; 
+    
     out vec4 o_color; 
     in vec2 v_uv; 
+    in vec2 v_txt;
     in vec4 v_col;
-    in vec2 v_width_len;
+    in vec4 v_width_len_softness_character;
     void main() {
         vec2 uv = v_uv;
-        if (uv.y>0.) uv.y = max(0., uv.y - v_width_len.y);
-        float sdf = v_width_len.x-length(uv);
+        if (uv.y>0.) uv.y = max(0., uv.y - v_width_len_softness_character.y);
+        float sdf;
+        if (v_width_len_softness_character.w == 0) {
+            sdf = v_width_len_softness_character.x-length(uv);
+            sdf *= v_width_len_softness_character.z;
+        } else {
+            sdf=(texture(uFont, v_txt).r - 0.5f) * v_width_len_softness_character.x * 0.5f + 0.5f;
+        }
         o_color=v_col * saturate(sdf);
     });
 
@@ -329,6 +345,7 @@ uvec4 seed;
 uniform float cc[8];
 uniform sampler2D uFP; 
 uniform ivec2 uScreenPx;
+uniform ivec2 uFontPx;
 uniform sampler2D uFont; 
 uniform usampler2D uText; 
 uniform vec4 levels;
@@ -336,7 +353,6 @@ uniform vec4 levels_smooth;
 uniform vec2 scroll; 
 uniform vec4 cursor; 
 uniform float ui_alpha;
-uniform ivec2 uFontPx;
 uniform int status_bar_size;
 uniform sampler2D uBloom;
 uniform vec2 uARadjust;
@@ -608,6 +624,8 @@ const char *kFS_secmon = SHADER(
         o_color = vec4(rendercol.xyz, 1.0);
     }
 );
+
+
 const char *kFS_ui_suffix = SHADER_NO_VERSION(
     uniform float fade_render;
     vec3 aces(vec3 x) {
@@ -793,7 +811,7 @@ static void dump_settings(void) {
     json_print(&jp, "ui_alpha_target", G->ui_alpha_target);
     json_print(&jp, "cur_tab", (int)(curE - tabs));
     json_start_array(&jp, "tabs");
-    for (int tab = 0; tab < 2; tab++) {
+    for (int tab = 0; tab < TAB_LAST; tab++) {
         EditorState *t = &tabs[tab];
         json_start_object(&jp, NULL);
         json_print(&jp, "fname", t->fname);
@@ -871,7 +889,7 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
                     cur_tab = iter_val_as_int(&inner, cur_tab);
                 } else if (iter_key_is(&inner, "tabs")) {
                     int tabidx = 0;
-                    for (sj_iter_t inner2 = iter_start(inner.r, &inner.val); tabidx < 2 && iter_next(&inner2); tabidx++) {
+                    for (sj_iter_t inner2 = iter_start(inner.r, &inner.val); tabidx < TAB_LAST && iter_next(&inner2); tabidx++) {
                         EditorState *t = &tabs[tabidx];
                         bool they_set_fname = t->fname != NULL;
                         for (sj_iter_t inner3 = iter_start(inner2.r, &inner2.val); iter_next(&inner3);) {
@@ -905,7 +923,7 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
         tabs[TAB_SHADER].fname = stbstring_from_span("livesrc/blank.glsl", NULL, 0);
     if (tabs[TAB_AUDIO].fname == NULL)
         tabs[TAB_AUDIO].fname = stbstring_from_span("livesrc/blank.cpp", NULL, 0);
-    if (cur_tab < 0 || cur_tab >= 2)
+    if (cur_tab < 0 || cur_tab >= TAB_LAST)
         cur_tab = 0;
     curE = &tabs[cur_tab];
     free_json(&r);
@@ -1199,6 +1217,7 @@ static void char_callback(GLFWwindow *win, unsigned int codepoint) {
 }
 
 #include "sample_selector.h"
+#include "canvas.h"
 
 static void mouse_button_callback(GLFWwindow *win, int button, int action, int mods) {
     if (action == GLFW_PRESS) {
@@ -1283,6 +1302,11 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             E->font_width = 32;
             E->font_height = E->font_width * 2;
             draw_umap(E, ptr);
+        }
+        else if (E->editor_type == TAB_CANVAS) {
+            E->font_width = 32;
+            E->font_height = E->font_width * 2;
+            draw_canvas(E, ptr);
         }
 
         if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
@@ -1791,6 +1815,16 @@ void set_aradjust(GLuint shader, int fbw, int fbh) {
     check_gl("set_aradjust");
 }
 
+GLuint compile_fs_with_user_prefix(const char *fs_suffix) {
+    size_t n = strlen(kFS_user_prefix) + strlen(fs_suffix) + 1;
+    char *fs_str = (char *)malloc(n);
+    snprintf(fs_str, n, "%s%s", kFS_user_prefix, fs_suffix);
+    GLuint fs = compile_shader(NULL, GL_FRAGMENT_SHADER, fs_str);
+    free(fs_str);
+    return fs;
+}
+
+
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
 #if USING_ASAN
@@ -1832,12 +1866,8 @@ int main(int argc, char **argv) {
     mac_touch_init(nswin);
 #endif
 
-    size_t n = strlen(kFS_user_prefix) + strlen(kFS_ui_suffix) + 1;
-    char *fs_ui_str = (char *)malloc(n);
-    snprintf(fs_ui_str, n, "%s%s", kFS_user_prefix, kFS_ui_suffix);
     vs = compile_shader(NULL, GL_VERTEX_SHADER, kVS);
-    fs_ui = compile_shader(NULL, GL_FRAGMENT_SHADER, fs_ui_str);
-    free(fs_ui_str);
+    fs_ui = compile_fs_with_user_prefix(kFS_ui_suffix);
     fs_bloom = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_bloom);
     fs_taa = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_taa);
     fs_secmon = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_secmon);
@@ -1888,11 +1918,11 @@ int main(int argc, char **argv) {
 
     // fat line init
     GLuint fatvao[2] = {}, fatvbo[2] = {};
-    static const uint32_t attrib_sizes[4] = {2, 2, 1, 4};
-    static const uint32_t attrib_types[4] = {GL_FLOAT, GL_FLOAT, GL_FLOAT, GL_UNSIGNED_BYTE};
-    static const uint32_t attrib_offsets[4] = {offsetof(line_t, p0x), offsetof(line_t, p1x), offsetof(line_t, width),
-                                               offsetof(line_t, col)};
-    init_dynamic_buffer(fatvao, fatvbo, 4, attrib_sizes, attrib_types, attrib_offsets, MAX_LINES, sizeof(line_t));
+    static const uint32_t attrib_sizes[5] = {2, 2, 2, 1, 4};
+    static const uint32_t attrib_types[5] = {GL_FLOAT, GL_FLOAT, GL_FLOAT, GL_INT, GL_UNSIGNED_BYTE};
+    static const uint32_t attrib_offsets[5] = {offsetof(line_t, p0x), offsetof(line_t, p1x), offsetof(line_t, width),
+                                               offsetof(line_t, character), offsetof(line_t, col)};
+    init_dynamic_buffer(fatvao, fatvbo, 5, attrib_sizes, attrib_types, attrib_offsets, MAX_LINES, sizeof(line_t));
     check_gl("init fat line buffer post");
 
     // sphere init
@@ -1937,7 +1967,7 @@ int main(int argc, char **argv) {
         const char *want_taa_str = strstr(s, "// taa");
         if (want_taa_str && want_taa_str[6] == ' ' && want_taa_str[7] == '0')
             want_taa_str = NULL;
-        bool want_taa = want_taa_str != NULL;
+        bool want_taa = (want_taa_str != NULL) && (curE != &tabs[TAB_CANVAS]);
         const char *aperture_str = strstr(s, "// aperture ");
         if (aperture_str)
             G->camera.aperture = atof_default(aperture_str + 11, G->camera.aperture);
@@ -2128,8 +2158,11 @@ int main(int argc, char **argv) {
             glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
             glUseProgram(fat_prog);
             uniform2f(fat_prog, "fScreenPx", (float)G->fbw, (float)G->fbh);
+            uniform2i(fat_prog, "uFontPx", curE->font_width, curE->font_height);
+            bind_texture_to_slot(fat_prog, 0, "uFont", texFont, GL_LINEAR);
             glDrawArraysInstanced(GL_TRIANGLES, 0, 6, line_count);
             glBindVertexArray(0);
+            unbind_textures_from_slots(1);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
             glDisable(GL_BLEND);
             line_count = 0;

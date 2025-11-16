@@ -56,7 +56,6 @@ static inline svf_gain_output_t calculate_svf_gain_1pole(float f, float g){
 }
 
 
-void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width);
 
 
 void test_svf_gain(void) {

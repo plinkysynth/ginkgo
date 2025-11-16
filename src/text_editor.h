@@ -11,7 +11,7 @@ enum {
 
 static const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
 
-void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width);
+void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width, float softness=0.f, int character=0);
 
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
 const char *print_midinote(int note);
@@ -254,6 +254,10 @@ int looks_like_slider_comment(const char *str, int n, int idx,
 edit_op_t apply_edit_op(EditorState *E, edit_op_t op, int update_cursor_idx) {
     int old_cursor_idx = E->cursor_idx;
     int old_select_idx = E->select_idx;
+    int n = stbds_arrlen(E->str);
+    op.remove_start = clamp(op.remove_start, 0, n);
+    op.remove_end = clamp(op.remove_end, 0, n);
+
     char *removed_str = NULL;
     if (op.remove_end > op.remove_start) {
         removed_str = stbstring_from_span(E->str + op.remove_start, E->str + op.remove_end, 0);

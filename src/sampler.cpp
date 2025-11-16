@@ -232,8 +232,10 @@ void dump_all_sounds(const char *fname) {
 
 static inline stereo sample_saw(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
     // nb we DONT retrig the phase, and let the oscillator freerun to prevent clicks.
+    double phase = v->phase * P_C3;
+    //v->phase = phase / P_C3;
     float wavetable_number = h->get_param(P_NUMBER, 0.f);
-    return mono2st(shapeo(v->phase * P_C3, v->dphase * P_C3, wavetable_number));
+    return mono2st(shapeo(phase, v->dphase * P_C3, wavetable_number));
 }
 
 static inline stereo sample_supersaw(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {

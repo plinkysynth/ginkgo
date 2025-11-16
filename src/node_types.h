@@ -45,6 +45,7 @@ OP(N_OP_ROUND, "round", 0, 0, 100)
 OP(N_OP_FLOOR, "floor", 0, 0, 100)
 OP(N_OP_RANGE, "range", 2, 0, 100)
 OP(N_OP_RANGE2, "range2", 2, 0, 100)
+OP(N_OP_RIBBON, "rib", 1, 1, 100)
 
 #define X(x, str, ...) OP(N_##x, str, 1, 0, 50)
 #include "params.h"

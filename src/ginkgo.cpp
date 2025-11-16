@@ -44,19 +44,15 @@
 static song_base_t dummy_state;
 song_base_t *G = &dummy_state;
 
-
-
 static double click_mx, click_my, click_time;
 static int click_count;
 // multitouch dragging:
 static int prev_num_finger_dragging = 0;
-static float prev_drag_cx=0.f, prev_drag_cy=0.f, prev_drag_dist=0.f;
+static float prev_drag_cx = 0.f, prev_drag_cy = 0.f, prev_drag_dist = 0.f;
 static int num_finger_dragging = 0;
-static float drag_cx=0.f, drag_cy=0.f, drag_dist=0.f;
+static float drag_cx = 0.f, drag_cy = 0.f, drag_dist = 0.f;
 
-static inline bool is_two_finger_dragging(void) {
-    return num_finger_dragging==2 && prev_num_finger_dragging == 2;
-}
+static inline bool is_two_finger_dragging(void) { return num_finger_dragging == 2 && prev_num_finger_dragging == 2; }
 
 void update_multitouch_dragging(void) {
     prev_num_finger_dragging = num_finger_dragging;
@@ -69,30 +65,29 @@ void update_multitouch_dragging(void) {
     drag_cy = 0.f;
     num_finger_dragging = 0;
     for (int i = 0; i < num_touches; i++) {
-        //printf("%d %f %f :\n", touches[i].id, touches[i].x, touches[i].y);
+        // printf("%d %f %f :\n", touches[i].id, touches[i].x, touches[i].y);
         num_finger_dragging++;
         drag_cx += touches[i].x;
         drag_cy += touches[i].y;
-    
     }
-    if (num_finger_dragging) drag_cx/=num_finger_dragging, drag_cy/=num_finger_dragging;
-    //printf("dragging: %d\n", num_finger_dragging);
-    if (num_finger_dragging>1) {
-        float xx=0.f,yy=0.f;
+    if (num_finger_dragging)
+        drag_cx /= num_finger_dragging, drag_cy /= num_finger_dragging;
+    // printf("dragging: %d\n", num_finger_dragging);
+    if (num_finger_dragging > 1) {
+        float xx = 0.f, yy = 0.f;
         for (int i = 0; i < num_touches; i++) {
-            xx += square(touches[i].x-drag_cx);
-            yy += square(touches[i].y-drag_cy);
-            
+            xx += square(touches[i].x - drag_cx);
+            yy += square(touches[i].y - drag_cy);
         }
-        xx/=num_finger_dragging;
-        yy/=num_finger_dragging;
-        drag_dist=sqrtf(square(xx)+square(yy));
+        xx /= num_finger_dragging;
+        yy /= num_finger_dragging;
+        drag_dist = sqrtf(square(xx) + square(yy));
     }
 }
 
 // Named constants for magic numbers
 #define BLOOM_FADE_FACTOR (1.f / 16.f)
-#define BLOOM_SPIKEYNESS 0.3f
+#define BLOOM_SPIKEYNESS 0.3f // 0 means 'no bloom spread' (infinitely spikey)
 #define BLOOM_KERNEL_SIZE_DOWNSAMPLE 1.5f
 #define BLOOM_KERNEL_SIZE_UPSAMPLE 3.f
 #define CURSOR_SMOOTH_FACTOR 0.2f
@@ -369,7 +364,12 @@ float square(float x) { return x * x; }
 float lengthsq(vec2 v) { return dot(v, v); }
 float lengthsq(vec3 v) { return dot(v, v); }
 float lengthsq(vec4 v) { return dot(v, v); }
-#define dot2 lengthsq
+vec3 safe_normalize(vec3 p) {
+	float l =lengthsq(p);
+    if (l>1e-10) p*=inversesqrt(l);
+    return p;
+}
+
 float ndot( in vec2 a, in vec2 b ) { return a.x*b.x - a.y*b.y; }
 // awesome sdf functions following the naming and code of https://iquilezles.org/articles/distfunctions/
 // thankyou inigo :)
@@ -574,7 +574,7 @@ const char *kFS_taa = SHADER(
             // no history.
         } else {
             vec3 history = texture(uFP_prev, vec2(uu,vv)).xyz;
-            float believe_history = 0.75f;
+            float believe_history = 0.95f;
             history = max(history, mincol);
             history = min(history, maxcol);
             o = mix(o, history, believe_history);
@@ -602,7 +602,7 @@ const char *kFS_secmon = SHADER(
         vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
         vec3 rendercol= texture(uFP, user_uv).rgb;
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
-        rendercol += bloomcol * 0.3;
+        rendercol += bloomcol;// * 0.3;
         rendercol = max(vec3(0.), rendercol);
         rendercol.rgb = sqrt(aces(rendercol.rgb));
         o_color = vec4(rendercol.xyz, 1.0);
@@ -633,7 +633,7 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
         vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
         vec3 rendercol= texture(uFP, user_uv).rgb;
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
-        rendercol += bloomcol * 0.3;
+        rendercol += bloomcol ;//* 0.3;
         rendercol = max(vec3(0.), rendercol);
         
         vec2 pix = (v_uv) * vec2(uScreenPx.x, 2048.f);
@@ -725,9 +725,12 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
     });
 // clang-format on
 
-extern EditorState tabs[3];
-EditorState tabs[3] = {
-    {.fname = NULL, .editor_type = 0}, {.fname = NULL, .editor_type=1}, {.editor_type=2}};
+
+extern EditorState tabs[TAB_LAST];
+EditorState tabs[TAB_LAST] = {{.fname = NULL, .editor_type = TAB_SHADER},
+                              {.fname = NULL, .editor_type = TAB_AUDIO},
+                              {.editor_type = TAB_SAMPLES},
+                              {.editor_type = TAB_CANVAS}};
 EditorState *curE = tabs;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 static float retina = 1.0f;
@@ -748,7 +751,7 @@ void update_pattern_uniforms(pattern_t *patterns) {
         pattern_t *p = &patterns[i];
         p->uniform_idx = -1;
         if (user_pass && p->key && p->key[0] == '/') {
-            p->uniform_idx = glGetUniformLocation(user_pass, p->key+1);
+            p->uniform_idx = glGetUniformLocation(user_pass, p->key + 1);
         }
     }
 }
@@ -769,9 +772,7 @@ void parse_named_patterns_in_source(void) {
     // TODO - let the old pattern table leak because concurrency etc
     G->patterns_map = new_pattern_map_during_parse;
     new_pattern_map_during_parse = NULL;
-    
 }
-
 
 static void dump_settings(void) {
     FILE *f = fopen("settings.json", "w");
@@ -911,7 +912,6 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
     G->ui_alpha = G->ui_alpha_target;
 }
 
-
 void parse_error_log(EditorState *E);
 
 static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
@@ -946,7 +946,7 @@ static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
 }
 
 GLuint try_to_compile_shader(EditorState *E) {
-    if (E->editor_type!=0) {
+    if (E->editor_type != TAB_SHADER) {
         return 0;
     }
     int len = strlen(kFS_user_prefix) + stbds_arrlen(E->str) + strlen(kFS_user_suffix) + 64;
@@ -1071,11 +1071,11 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                 // more than one second passed..
                 tap_count = 1;
                 first_tap = now;
-                first_tap_t_q32 = (G->t_q32+(1<<28)) & ~((1 << 30) - 1);
+                first_tap_t_q32 = (G->t_q32 + (1 << 28)) & ~((1 << 30) - 1);
                 G->t_q32 = first_tap_t_q32;
             } else {
-                if (G->playing) 
-                    G->t_q32 = first_tap_t_q32 + (tap_count * (1ull<<30));
+                if (G->playing)
+                    G->t_q32 = first_tap_t_q32 + (tap_count * (1ull << 30));
                 float bpm = (60.f / (now - first_tap)) * tap_count;
                 if (tap_count > 1) {
                     fprintf(stdout, "tapped bpm: %f\n", bpm);
@@ -1103,7 +1103,6 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
             }
             last_time = now;
         }
-
     }
     if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
         glfwSetWindowShouldClose(win, GLFW_TRUE);
@@ -1117,11 +1116,12 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key == '[') {
             int f = G->t_q32 & ((1 << 30) - 1);
             G->t_q32 -= f;
-            if (f < 1<<29 && G->t_q32 >= (1<<30)) G->t_q32 -= 1<<30;
+            if (f < 1 << 29 && G->t_q32 >= (1 << 30))
+                G->t_q32 -= 1 << 30;
         }
         if (key == ']') {
             G->t_q32 &= ~((1 << 30) - 1);
-            G->t_q32 += 1<<30;
+            G->t_q32 += 1 << 30;
         }
         if (key == GLFW_KEY_P) {
             if (!G->playing) {
@@ -1144,7 +1144,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         }
         if (key == GLFW_KEY_S) {
             bool compiled = true;
-            if (E->editor_type!=0 || try_to_compile_shader(E) != 0) {
+            if (E->editor_type != TAB_SHADER || try_to_compile_shader(E) != 0) {
                 FILE *f = fopen("editor.tmp", "w");
                 if (f) {
                     fwrite(E->str, 1, stbds_arrlen(E->str), f);
@@ -1152,7 +1152,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     if (rename("editor.tmp", E->fname) == 0) {
                         set_status_bar(C_OK, "saved");
                         init_remapping(E);
-                        if (E->editor_type<2)
+                        if (E->editor_type <= TAB_AUDIO)
                             parse_named_patterns_in_source();
                     } else {
                         f = 0;
@@ -1164,9 +1164,9 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
             }
         }
         if (key == GLFW_KEY_ENTER || key == '\n') {
-            if (E->editor_type==0)
+            if (E->editor_type == TAB_SHADER)
                 try_to_compile_shader(E);
-            if (E->editor_type<2)
+            if (E->editor_type <= TAB_AUDIO)
                 parse_named_patterns_in_source();
         }
     }
@@ -1184,7 +1184,8 @@ static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
         G->mscrollx += xoffset;
         G->mscrolly += yoffset;
     }
-    if (curE->editor_type==2) return;
+    if (curE->editor_type > TAB_AUDIO)
+        return;
     curE->scroll_target_x -= xoffset * curE->font_width;
     curE->scroll_target_y -= yoffset * curE->font_height;
 }
@@ -1196,8 +1197,6 @@ static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     editor_key(win, curE, codepoint);
     curE->need_scroll_update = true;
 }
-
-
 
 void draw_umap(EditorState *E, uint32_t *ptr) {
     int tmw = G->fbw / E->font_width;
@@ -1217,7 +1216,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             iter_next(&inner);
             t.y = iter_val_as_float(&inner, t.y);
             iter_next(&inner);
-            int r=128, g=128, b=128;
+            int r = 128, g = 128, b = 128;
             r = clamp((int)(iter_val_as_float(&inner, r) * 255.f), 0, 255);
             iter_next(&inner);
             g = clamp((int)(iter_val_as_float(&inner, g) * 255.f), 0, 255);
@@ -1258,8 +1257,8 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         E->centery = G->fbh / 2.f;
         free_json(&r);
     }
-    //float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
-    
+    // float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
+
     /*
     if (G->mscrolly!=0.f) {
         float mx_e = (G->mx - E->centerx) / E->zoom;
@@ -1270,13 +1269,15 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         E->centery = G->my - my_e * E->zoom;
         G->mscrolly = 0.f;
     }
-    */  
+    */
     if (is_two_finger_dragging()) {
         float dx = drag_cx - prev_drag_cx;
         float dy = drag_cy - prev_drag_cy;
-        float velocity_sq = (dx*dx + dy*dy);
-        E->centerx += drag_cx - prev_drag_cx;
-        E->centery += drag_cy - prev_drag_cy;
+        float velocity_sq = (dx * dx + dy * dy);
+        float drag_sens = 1.f;
+        
+        E->centerx += (drag_cx - prev_drag_cx) * drag_sens;
+        E->centery += (drag_cy - prev_drag_cy) * drag_sens;
         float mx_e = (G->mx - E->centerx) / E->zoom;
         float my_e = (G->my - E->centery) / E->zoom;
         float zoom_amount = expf(velocity_sq * -0.1f); // if we are moving the center of mass of fingers, supress zoom.
@@ -1286,7 +1287,6 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         E->centery = G->my - my_e * E->zoom;
     }
 
-        
     int n = stbds_shlen(E->embeddings);
     int closest_idx = 0;
     float closest_x = G->mx;
@@ -1303,57 +1303,69 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     int num_after_filtering = 0;
     int filtlen = find_end_of_line(E, 0);
     int new_filter_hash = fnv1_hash(E->str, E->str + filtlen);
-    bool autozoom = (new_filter_hash != E->filter_hash) || E->zoom<=0.f;
+    bool autozoom = (new_filter_hash != E->filter_hash) || E->zoom <= 0.f;
     E->filter_hash = new_filter_hash;
-    float minx=1e10, miny=1e10;
-    float maxx=-1e10, maxy=-1e10;
+    float minx = 1e10, miny = 1e10;
+    float maxx = -1e10, maxy = -1e10;
     int parsed_number = 0;
     const char *line = NULL;
     const char *colon = NULL;
     float fromt = 0.f;
     float tot = 1.f;
-    if (E->cursor_y>0) {
+    if (E->cursor_y > 0) {
         // parse the line
         int start_idx = find_start_of_line(E, E->cursor_idx);
         int end_idx = find_end_of_line(E, E->cursor_idx);
         line = temp_cstring_from_span(E->str + start_idx, E->str + end_idx);
-        colon=strchr(line,':');
-        if (!colon) colon=line+strlen(line); else parsed_number=atoi(colon+1);
-        const char *s=colon;
-        while (*s && !isspace(*s)) s++;
-        const char *from = strstr(s," from ");
-        const char *to = strstr(s," to ");
-        if (from) fromt=clamp(atof(from+5), 0.f, 1.f);
-        if (to) { tot=clamp(atof(to+3), 0.f, 1.f); if (!tot) tot=1.f; }
-        if (fromt>=tot) {
-            float t=fromt; fromt=tot; tot=t;
+        colon = strchr(line, ':');
+        if (!colon)
+            colon = line + strlen(line);
+        else
+            parsed_number = atoi(colon + 1);
+        const char *s = colon;
+        while (*s && !isspace(*s))
+            s++;
+        const char *from = strstr(s, " from ");
+        const char *to = strstr(s, " to ");
+        if (from)
+            fromt = clamp(atof(from + 5), 0.f, 1.f);
+        if (to) {
+            tot = clamp(atof(to + 3), 0.f, 1.f);
+            if (!tot)
+                tot = 1.f;
+        }
+        if (fromt >= tot) {
+            float t = fromt;
+            fromt = tot;
+            tot = t;
         }
     }
-    if (E->drag_type != 0 && G->mb == 1) {
-        if (E->drag_type == 3) {
+    if (E->drag_type != DRAG_TYPE_NONE && G->mb == 1) {
+        if (E->drag_type == DRAG_TYPE_CANVAS) {
             // E->centerx += G->mx - click_mx;
             // E->centery += G->my - click_my;
             // click_mx = G->mx;
             // click_my = G->my;
         } else {
-            if (E->drag_type == 1) {
-                fromt += (G->mx - click_mx) / (G->fbw-96.f);
-            } else if (E->drag_type == 2) {
-                tot += (G->mx - click_mx) / (G->fbw-96.f);
-            } else if (E->drag_type == 4) {
-                fromt += (G->mx - click_mx) / (G->fbw-96.f);
-                tot += (G->mx - click_mx) / (G->fbw-96.f);
+            if (E->drag_type == DRAG_TYPE_SAMPLE_FROM) {
+                fromt += (G->mx - click_mx) / (G->fbw - 96.f);
+            } else if (E->drag_type == DRAG_TYPE_SAMPLE_TO) {
+                tot += (G->mx - click_mx) / (G->fbw - 96.f);
+            } else if (E->drag_type == DRAG_TYPE_SAMPLE_MIDDLE) {
+                fromt += (G->mx - click_mx) / (G->fbw - 96.f);
+                tot += (G->mx - click_mx) / (G->fbw - 96.f);
             }
             click_mx = G->mx;
             fromt = saturate(fromt);
             tot = saturate(tot);
             fromt = clamp(fromt, 0.f, tot);
             tot = clamp(tot, fromt, 1.f);
-        if (E->cursor_y > 0) {
+            if (E->cursor_y > 0) {
                 int start_idx = find_start_of_line(E, E->cursor_idx);
                 int end_idx = find_end_of_line(E, E->cursor_idx);
                 char buf[1024];
-                int n = snprintf(buf, sizeof(buf), "%s:%d from %0.5g to %0.5g", G->sounds[E->closest_sound_idx].value->name, E->closest_sound_number, fromt, tot);
+                int n = snprintf(buf, sizeof(buf), "%s:%d from %0.5g to %0.5g", G->sounds[E->closest_sound_idx].value->name,
+                                 E->closest_sound_number, fromt, tot);
                 stbds_arrdeln(E->str, start_idx, end_idx - start_idx);
                 stbds_arrinsn(E->str, start_idx, n);
                 memcpy(E->str + start_idx, buf, n);
@@ -1368,32 +1380,38 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     float2 matched_p = float2{0.f, 0.f};
     for (int i = 0; i < n; ++i) {
         sample_embedding_t *e = &E->embeddings[i];
-        if (e->sound_idx==-1) continue;
+        if (e->sound_idx == -1)
+            continue;
         const char *soundname = G->sounds[e->sound_idx].value->name;
         char soundname_with_colon[1024];
         snprintf(soundname_with_colon, sizeof soundname_with_colon, "%s:%d", soundname, e->sound_number);
         bool matched = true;
-        if (E->cursor_y>0) {
-            matched = strlen(soundname) == colon-line && strncasecmp(soundname, line, colon-line)==0 && parsed_number==e->sound_number;
-        }
-        else if (filtlen) {
+        if (E->cursor_y > 0) {
+            matched = strlen(soundname) == colon - line && strncasecmp(soundname, line, colon - line) == 0 &&
+                      parsed_number == e->sound_number;
+        } else if (filtlen) {
             matched = false;
             // find the words separated by whitespace in E->str
             const char *ws = E->str;
             const char *end = E->str + filtlen;
-            while (ws<end) {
-                while (ws < end && isspace(*ws)) ws++;
+            while (ws < end) {
+                while (ws < end && isspace(*ws))
+                    ws++;
                 const char *we = ws;
-                while (we < end && !isspace(*we)) we++;
-                if (we>ws) {
-                    for (const char *s=soundname_with_colon; *s; s++) {
-                        if (strncasecmp(s, ws, we-ws)==0) { matched = true; break; }
+                while (we < end && !isspace(*we))
+                    we++;
+                if (we > ws) {
+                    for (const char *s = soundname_with_colon; *s; s++) {
+                        if (strncasecmp(s, ws, we - ws) == 0) {
+                            matched = true;
+                            break;
+                        }
                     }
                 }
-                ws=we;
+                ws = we;
             }
         }
-        bool matched_or_shift = matched || ((last_mods & GLFW_MOD_SHIFT) && E->cursor_y==0);
+        bool matched_or_shift = matched || ((last_mods & GLFW_MOD_SHIFT) && E->cursor_y == 0);
         float2 p = draw_point(i, 1.f, matched_or_shift);
         if (matched) {
             minx = min(minx, e->x);
@@ -1411,16 +1429,16 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                 closest_x = p.x;
                 closest_y = p.y;
             }
-        }        
+        }
     }
     draw_point(closest_idx, 30.f, true);
-    if (G->mb == 0 && (E->old_closest_idx != closest_idx || fromt!=G->preview_fromt || tot!=G->preview_tot)) {
+    if (G->mb == 0 && (E->old_closest_idx != closest_idx || fromt != G->preview_fromt || tot != G->preview_tot)) {
         if (G->preview_wave_fade > 0.01f) {
             G->preview_wave_fade *= 0.999f; // start the fade
         } else {
             int wi = E->embeddings[closest_idx].wave_idx;
             wave_t *w = &G->waves[wi];
-            if (wi!=-1)
+            if (wi != -1)
                 request_wave_load(w);
             if (w->num_frames) {
                 E->old_closest_idx = closest_idx;
@@ -1439,42 +1457,43 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         const char *name = s->name;
         print_to_screen(ptr, closest_x / E->font_width + 2.f, closest_y / E->font_height - 0.5f, C_SELECTION, false, "%s:%d", name,
                         E->closest_sound_number);
-        if (closest_idx!=-1) {
+        if (closest_idx != -1) {
             sample_embedding_t *e = &E->embeddings[closest_idx];
             wave_t *w = &G->waves[e->wave_idx];
             int smp0 = 0;
-            float startx = 48.f + fromt * (G->fbw-96.f);
-            float endx = 48.f + tot * (G->fbw-96.f);
+            float startx = 48.f + fromt * (G->fbw - 96.f);
+            float endx = 48.f + tot * (G->fbw - 96.f);
             if (w->num_frames) {
                 float playpos_frac = fromt + (G->preview_wave_t * w->sample_rate / w->num_frames);
                 if (playpos_frac >= fromt && playpos_frac < tot) {
-                    float playx = 48.f + playpos_frac * (G->fbw-96.f);
-                    add_line(playx, G->fbh-256.f, playx, G->fbh, 0xffffffff, 4.f);
+                    float playx = 48.f + playpos_frac * (G->fbw - 96.f);
+                    add_line(playx, G->fbh - 256.f, playx, G->fbh, 0xffffffff, 4.f);
                 }
             }
-            add_line(startx, G->fbh-256.f, startx, G->fbh, 0xffeeeeee, 3.f);
-            add_line(endx, G->fbh-256.f, endx, G->fbh, 0xffeeeeee, 3.f);
-            for (int x=48;x<G->fbw-48.f;++x) {
-                float f = (x - 48.f) / (G->fbw-96.f);
+            add_line(startx, G->fbh - 256.f, startx, G->fbh, 0xffeeeeee, 3.f);
+            add_line(endx, G->fbh - 256.f, endx, G->fbh, 0xffeeeeee, 3.f);
+            for (int x = 48; x < G->fbw - 48.f; ++x) {
+                float f = (x - 48.f) / (G->fbw - 96.f);
                 int smp1 = ((int)(f * w->num_frames)) * w->channels;
-                float mn=1e10, mx=-1e10;
-                for (int s=smp0;s<smp1;++s) {
+                float mn = 1e10, mx = -1e10;
+                for (int s = smp0; s < smp1; ++s) {
                     float v = w->frames[s];
                     mn = min(mn, v);
                     mx = max(mx, v);
                 }
-                float ymid = G->fbh-128.f;
-                add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, (f>=fromt && f<tot) ? e->col : 0x40404040, 2.f);
+                float ymid = G->fbh - 128.f;
+                add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, (f >= fromt && f < tot) ? e->col : 0x40404040, 2.f);
                 smp0 = smp1;
             }
         }
     }
-    if (num_after_filtering==1 && (matched_p.x < 32.f || matched_p.x > G->fbw-32.f || matched_p.y < 32.f || matched_p.y > G->fbh-32.f)) {
+    if (num_after_filtering == 1 &&
+        (matched_p.x < 32.f || matched_p.x > G->fbw - 32.f || matched_p.y < 32.f || matched_p.y > G->fbh - 32.f)) {
         autozoom = true;
     }
     if (autozoom) {
-        if (num_after_filtering>1) {
-            E->zoom = min(G->fbw*0.75f / (maxx - minx + 10.f), G->fbh*0.9f / (maxy - miny + 10.f));
+        if (num_after_filtering > 1) {
+            E->zoom = min(G->fbw * 0.75f / (maxx - minx + 10.f), G->fbh * 0.9f / (maxy - miny + 10.f));
         }
         E->zoom = clamp(E->zoom, 0.01f, 100.f);
         E->centerx = G->fbw / 2.f - (maxx + minx) / 2.f * E->zoom;
@@ -1554,7 +1573,7 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
     float kick_lvl = 0.f, kick_tot = 0.f;
     float snare_lvl = 0.f, snare_tot = 0.f;
     float hat_lvl = 0.f, hat_tot = 0.f;
-    
+
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[pbo_index]);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, textBytes, NULL, GL_STREAM_DRAW);
     uint32_t *ptr = (uint32_t *)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, textBytes,
@@ -1592,30 +1611,30 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
         }
         E->scroll_target_x = clamp(E->scroll_target_x, 0.f, float((E->max_width - tmw + 4) * E->font_width));
         E->scroll_target_y = clamp(E->scroll_target_y, 0.f, float((E->num_lines - tmh + 4) * E->font_height));
-        uint32_t slow_scope_start = (scope_pos>>8);
+        uint32_t slow_scope_start = (scope_pos >> 8);
         uint32_t *scope_dst = ptr + (TMH - 4) * TMW;
-        for (int i = 0; i < TMW*2; ++i) {
-            stereo sc = slow_scope[(slow_scope_start- i) & SCOPE_MASK];
+        for (int i = 0; i < TMW * 2; ++i) {
+            stereo sc = slow_scope[(slow_scope_start - i) & SCOPE_MASK];
             uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * (32767.f) + 32768.f);
             uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * (32767.f) + 32768.f);
             scope_dst[i] = (l16 >> 8) | (r16 & 0xff00);
         }
         scope_dst = ptr + (TMH - 2) * TMW;
-        uint32_t scope_start = scope_pos - TMW*8;
-        float biggest=0.f;
-        int biggest_offset=0;
-        for (int offset = 0; offset < TMW*4-1; offset+=2) {
-            float py = scope[(scope_start+offset) & SCOPE_MASK].l;
-            float ny = scope[(scope_start+offset+1) & SCOPE_MASK].l;
+        uint32_t scope_start = scope_pos - TMW * 8;
+        float biggest = 0.f;
+        int biggest_offset = 0;
+        for (int offset = 0; offset < TMW * 4 - 1; offset += 2) {
+            float py = scope[(scope_start + offset) & SCOPE_MASK].l;
+            float ny = scope[(scope_start + offset + 1) & SCOPE_MASK].l;
             float dy = ny - py;
-            if (ny>0. && py<0. && dy>biggest) {
+            if (ny > 0. && py < 0. && dy > biggest) {
                 biggest = dy;
                 biggest_offset = offset;
             }
         }
         scope_start += biggest_offset;
-        for (int i = 0; i < TMW*2; ++i) {
-            stereo sc = scope[(scope_start+i*2) & SCOPE_MASK];
+        for (int i = 0; i < TMW * 2; ++i) {
+            stereo sc = scope[(scope_start + i * 2) & SCOPE_MASK];
             uint16_t l16 = (uint16_t)(clamp(sc.l, -1.f, 1.f) * (32767.f) + 32768.f);
             uint16_t r16 = (uint16_t)(clamp(sc.r, -1.f, 1.f) * (32767.f) + 32768.f);
             scope_dst[i] = (l16 >> 8) | (r16 & 0xff00);
@@ -1643,7 +1662,7 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
                 float x = i * scale;
                 fft_window[i] = a0 - a1 * cosf(x) + a2 * cosf(2.0f * x);
             }
-            for (int i = 0; i < FFT_SIZE/2; ++i) {
+            for (int i = 0; i < FFT_SIZE / 2; ++i) {
                 main_db_smooth[i] = -1e10f;
                 probe_db_smooth[i] = -1e10f;
             }
@@ -1664,13 +1683,13 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
         // int min=0, max=0;
         // float minv=1000.f, maxv=-1000.f;
         for (int i = 0; i < 4096; ++i) {
-            float binfreq = (i+0.5f) * (float)SAMPLE_RATE_OUTPUT / (float)FFT_SIZE;
+            float binfreq = (i + 0.5f) * (float)SAMPLE_RATE_OUTPUT / (float)FFT_SIZE;
             float binoctave = log2f(binfreq / 1000.f);
             float tilt_db = 4.5f * binoctave;
-            float mag_db =
-                squared2db(fft_buf[0][i * 2] * fft_buf[0][i * 2] + fft_buf[0][i * 2 + 1] * fft_buf[0][i * 2 + 1]) - peak_mag + tilt_db;
-            float probe_db =
-                squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) - peak_mag + tilt_db;
+            float mag_db = squared2db(fft_buf[0][i * 2] * fft_buf[0][i * 2] + fft_buf[0][i * 2 + 1] * fft_buf[0][i * 2 + 1]) -
+                           peak_mag + tilt_db;
+            float probe_db = squared2db(fft_buf[1][i * 2] * fft_buf[1][i * 2] + fft_buf[1][i * 2 + 1] * fft_buf[1][i * 2 + 1]) -
+                             peak_mag + tilt_db;
             float &smoothed_mag_db = main_db_smooth[i];
             float &probe_smoothed_db = probe_db_smooth[i];
             if (mag_db > smoothed_mag_db) {
@@ -1686,13 +1705,13 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             float peakiness = mag_db + 40.f;
             tot_lvl += peakiness;
             tot_tot++;
-            if (binfreq>=30.f && binfreq<150.f) {
+            if (binfreq >= 30.f && binfreq < 150.f) {
                 kick_lvl += peakiness;
                 kick_tot++;
-            } else if (binfreq>=500.f && binfreq<1000.f) {
+            } else if (binfreq >= 500.f && binfreq < 1000.f) {
                 snare_lvl += peakiness;
                 snare_tot++;
-            } else if (binfreq>=5000.f) {
+            } else if (binfreq >= 5000.f) {
                 hat_lvl += peakiness;
                 hat_tot++;
             }
@@ -1702,10 +1721,10 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             uint8_t r8 = (uint8_t)(clamp(255.f + smoothed_mag_db * 6.f, 0.f, 255.f));
             scope_dst[i] = (l8 << 0) | (r8 << 8);
         }
-        tot_lvl = max(0.f,tot_lvl / (tot_tot * 15.f));
-        kick_lvl = max(0.f,kick_lvl / (kick_tot * 20.f));
-        snare_lvl = max(0.f,snare_lvl / (snare_tot * 15.f));
-        hat_lvl = max(0.f,hat_lvl / (hat_tot * 10.f));
+        tot_lvl = max(0.f, tot_lvl / (tot_tot * 15.f));
+        kick_lvl = max(0.f, kick_lvl / (kick_tot * 20.f));
+        snare_lvl = max(0.f, snare_lvl / (snare_tot * 15.f));
+        hat_lvl = max(0.f, hat_lvl / (hat_tot * 10.f));
         // printf("kick: %f, snare: %f, hat: %f, tot: %f\n", kick_lvl, snare_lvl, hat_lvl, tot_lvl);
         // printf("fft min: %f in bin %d, max: %f in bin %d\n", minv, min, maxv, max);
 
@@ -1803,7 +1822,6 @@ static void unbind_textures_from_slots(int num_slots) {
 static GLFWwindow *_win;
 
 bool glfw_get_key(int key) { return _win && glfwGetKey(_win, key) == GLFW_PRESS; }
-
 
 void update_camera(GLFWwindow *win) {
     camera_state_t *cam = &G->camera;
@@ -2084,7 +2102,7 @@ int main(int argc, char **argv) {
     printf(COLOR_RED "Address sanitizer enabled\n" COLOR_RESET);
 #endif
     void install_crash_handler(void);
-    //install_crash_handler();
+    // install_crash_handler();
     if (!glfwInit())
         die("glfwInit failed");
     int count = 0;
@@ -2110,7 +2128,7 @@ int main(int argc, char **argv) {
 
     void test_minipat(void);
     test_minipat();
-    //return 0;
+    // return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);
 
@@ -2208,7 +2226,7 @@ int main(int argc, char **argv) {
         update_multitouch_dragging();
 
         double iTime = glfwGetTime() - start_time;
-        double frame_time = max(1./240., iTime - prev_frame_time);
+        double frame_time = max(1. / 240., iTime - prev_frame_time);
         prev_frame_time = iTime;
         static uint32_t iFrame = 0;
 
@@ -2279,9 +2297,10 @@ int main(int argc, char **argv) {
                     hap_span_t hs = p->make_haps({dst, dst + 8}, 8, iTime, G->t);
                     float value = -1e10f;
                     for (hap_t *h = hs.s; h < hs.e; h++) {
-                        if (h->has_param(P_NUMBER)) value=max(value, h->get_param(P_NUMBER, 0.f));
+                        if (h->has_param(P_NUMBER))
+                            value = max(value, h->get_param(P_NUMBER, 0.f));
                     }
-                    uniform1f(user_pass, p->key+1, value);
+                    uniform1f(user_pass, p->key + 1, value);
                 }
             }
             float ccs[8] = {cc(0), cc(1), cc(2), cc(3), cc(4), cc(5), cc(6), cc(7)};
@@ -2294,7 +2313,7 @@ int main(int argc, char **argv) {
             uniform2i(user_pass, "uFontPx", curE->font_width, curE->font_height);
             uniform1i(user_pass, "status_bar_size", status_bar_color ? 1 : 0);
             uniform2f(user_pass, "scroll", curE->scroll_x - curE->intscroll_x * curE->font_width,
-                        curE->scroll_y - curE->intscroll_y * curE->font_height);
+                      curE->scroll_y - curE->intscroll_y * curE->font_height);
             uniform1f(user_pass, "ui_alpha", G->ui_alpha);
             uniform4f(user_pass, "levels", lvl_peaks.x, lvl_peaks.y, lvl_peaks.z, lvl_peaks.w);
             uniform4f(user_pass, "levels_smooth", lvl_smooth.x, lvl_smooth.y, lvl_smooth.z, lvl_smooth.w);
@@ -2311,7 +2330,8 @@ int main(int argc, char **argv) {
 
             uniformMatrix4fv(user_pass, "c_cam2world", 1, GL_FALSE, (float *)G->camera.c_cam2world);
             uniformMatrix4fv(user_pass, "c_cam2world_old", 1, GL_FALSE, (float *)G->camera.c_cam2world_old);
-            uniform4f(user_pass, "c_lookat", G->camera.c_lookat.x, G->camera.c_lookat.y, G->camera.c_lookat.z, G->camera.focal_distance);
+            uniform4f(user_pass, "c_lookat", G->camera.c_lookat.x, G->camera.c_lookat.y, G->camera.c_lookat.z,
+                      G->camera.focal_distance);
             uniform1f(user_pass, "fov", G->camera.fov);
             uniform1f(user_pass, "focal_distance", G->camera.focal_distance);
             uniform1f(user_pass, "aperture", G->camera.aperture);
@@ -2344,7 +2364,7 @@ int main(int argc, char **argv) {
         uniform1i(ui_pass, "status_bar_size", status_bar_color ? 1 : 0);
         uniform1f(ui_pass, "iTime", (float)iTime);
         uniform2f(ui_pass, "scroll", curE->scroll_x - curE->intscroll_x * curE->font_width,
-                    curE->scroll_y - curE->intscroll_y * curE->font_height);
+                  curE->scroll_y - curE->intscroll_y * curE->font_height);
         uniform1f(ui_pass, "ui_alpha", G->ui_alpha);
         // if there's a second monitor, we can afford to fade the render a bit more
         // to make the code more readable.
@@ -2383,22 +2403,16 @@ int main(int argc, char **argv) {
         }
 
         static const uint32_t cc_cols[] = {
-            0x3344ee,
-            0x3344ee,
-            0x4477ee,
-            0x4477ee,
-            0x33ccff,
-            0x33ccff,
-            0xffffee,
-            0xffffee,
+            0x3344ee, 0x3344ee, 0x4477ee, 0x4477ee, 0x33ccff, 0x33ccff, 0xffffee, 0xffffee,
         };
         float cc_bar_x = G->fbw - curE->font_width * 16.f;
         float cc_bar_height = curE->font_height;
-        for (int i =0; i < 8; ++i) {
-            float x = cc_bar_x + (i-7.5f)*30.f;
+        for (int i = 0; i < 8; ++i) {
+            float x = cc_bar_x + (i - 7.5f) * 30.f;
             float y = G->fbh;
-            float y2 = y - G->midi_cc[i+0x10] * cc_bar_height / 128.f;
-            add_line(x, y-cc_bar_height, x, y, 0x3f000000 | ((cc_cols[i]>>2)&0x3f3f3f), -20.f); // negative width is square cap
+            float y2 = y - G->midi_cc[i + 0x10] * cc_bar_height / 128.f;
+            add_line(x, y - cc_bar_height, x, y, 0x3f000000 | ((cc_cols[i] >> 2) & 0x3f3f3f),
+                     -20.f); // negative width is square cap
             add_line(x, y, x, y2, 0x3f000000 | (cc_cols[i]), -20.f);
         }
 
@@ -2408,13 +2422,14 @@ int main(int argc, char **argv) {
         // fat line draw
         if (line_count > 0) {
             // line_t lines[1] = {{300.f,100.f,G->mx,G->my,0xffff00ff,54.f}};
-            GLsizeiptr bytes = (GLsizeiptr)(line_count  * sizeof(line_t));
+            GLsizeiptr bytes = (GLsizeiptr)(line_count * sizeof(line_t));
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             glBlendEquation(GL_FUNC_ADD);
             glBindVertexArray(fatvao[iFrame % 2]);
             glBindBuffer(GL_ARRAY_BUFFER, fatvbo[iFrame % 2]);
-            glFinish(); // this seems to clean up some intermittent glitching to do with the fat line buffer. weird? shouldnt be needed.
+            glFinish(); // this seems to clean up some intermittent glitching to do with the fat line buffer. weird? shouldnt be
+                        // needed.
             glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lines);
             glUseProgram(fat_prog);
             uniform2f(fat_prog, "fScreenPx", (float)G->fbw, (float)G->fbh);

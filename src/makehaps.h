@@ -571,6 +571,24 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             P_NUMBER);
         break;
     }
+    case N_OP_RIBBON: {
+        hap_t tmp_mem[tmp_size*2];
+        hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
+        hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
+        hap_span_t cycle = _make_haps(tmp0, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
+        hap_span_t num_cycles = _make_haps(tmp1, tmp_size, viz_time, (n->num_children > 2) ? n->first_child + 2 : -1, when, hash2_pcg(hapid, n->first_child + 2));
+        for (hap_t *cycle_hap = cycle.s; cycle_hap < cycle.e; cycle_hap++) {
+            float num_cycles_value = num_cycles.empty() ? 1.f : num_cycles.s->get_param(P_NUMBER, 1.f);
+            if (num_cycles_value > 0.f) {
+                hap_time child_when = fmodf(when, num_cycles_value) + cycle_hap->get_param(P_NUMBER, 0.f);
+                hap_span_t child_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, child_when, hash2_pcg(hapid, n->first_child));
+                for (hap_t *child_hap = child_haps.s; child_hap < child_haps.e; child_hap++) {
+                    child_hap->t0 += (when-child_when);
+                    child_hap->t1 += (when-child_when);
+                }
+            }
+        }
+        break; }
     case N_OP_RANGE2:
     case N_OP_RANGE: {
         _apply_unary_op(

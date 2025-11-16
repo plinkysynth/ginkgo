@@ -97,6 +97,7 @@ inline float fast_tanh(float x) {
     return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
 
+#define PHI  1.61803398875f
 #define PI 3.14159265358979323846f
 #define TAU 6.28318530717958647692f
 #define HALF_PI 1.57079632679489661923f
@@ -324,6 +325,7 @@ typedef struct wave_request_t {
 typedef struct lfo_t {
     float state[2];
     inline float operator()(float sin_dphase) { // quadrature oscillator magic
+        if (RARE(state[0]==0.f && state[1]==0.f)) state[0] = 1.f;
         state[0] -= (state[1] * sin_dphase);
         return state[1] += (state[0] * sin_dphase);
     }
@@ -331,9 +333,21 @@ typedef struct lfo_t {
 
 
 
-struct reverb_t {
+struct ginkgoverb_t {
+    const static int RVMASK = 32768-1;
+    const static int NUM_TAPS = 16;
+    float filter_state[24];
+    lfo_t taplofs[NUM_TAPS];
+    float reverbbuf[RVMASK+1];
+    int reverb_pos;
+    stereo operator()(stereo inp);
+    stereo _run_internal(stereo inp);
+};
+
+struct plinkyverb_t {
+    const static int RVMASK = 32768-1;
     float filter_state[16];
-    float reverbbuf[65536];
+    float reverbbuf[RVMASK+1];
     int reverb_pos;
     int shimmerpos1 = 2000;
     int shimmerpos2 = 1000;
@@ -432,13 +446,6 @@ typedef struct song_base_t {
 extern song_base_t *G;
 static inline void init_basic_state(void) { 
     G->bpm = 120.f; 
-    G->camera = {
-        .c_cam2world[3] = {0.f, 2.f, 10.f, 1.f},
-        .c_lookat = {0.f, 0.f, 0.f, 1.f},
-        .fov = 0.4f,
-        .focal_distance = 5.f,
-        .aperture = 0.01f,
-    };
 }
 
 
@@ -731,7 +738,7 @@ static inline float rndn(void) {
     return x * 1.4f;
 }
 
-static const int blep_os = 8;
+static const int blep_os = 16;
 static const float minblep_table[129] = { // minBLEP correction for a unit step input; 16x oversampling
     -1.000000000f, -0.998811289f, -0.996531062f, -0.992795688f, -0.987211296f, -0.979364361f, -0.968834290f, -0.955206639f,
     -0.938089255f, -0.917128234f, -0.892024074f, -0.862547495f, -0.828554201f, -0.789997837f, -0.746941039f, -0.699562613f,

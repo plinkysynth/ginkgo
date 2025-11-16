@@ -50,30 +50,28 @@ void fps_camera(void) {
     }
 }
 
-__attribute__((weak)) void update_frame(void) { 
-    fps_camera();
-}
+__attribute__((weak)) void update_frame(void) { fps_camera(); }
 
 extern "C" {
-    __attribute__((visibility("default"))) void frame_update_func(get_key_func_t _get_key_func, song_base_t *_G) {
-        G->get_key_func = _get_key_func;
-        if (G) {
-            update_frame();
-        }
+__attribute__((visibility("default"))) void frame_update_func(get_key_func_t _get_key_func, song_base_t *_G) {
+    G->get_key_func = _get_key_func;
+    if (G) {
+        update_frame();
     }
 }
+}
 
-#define RVMASK 65535
 
 static float k_reverb_fade = 240 / 256.f;                // 240 originally
-static float k_reverb_shim = 10 / 256.f;                 // 80?
+static float k_reverb_shim = 80 / 256.f;                 // 80?
 static float k_reverb_wob = 0.3333f;                     // amount of wobble
 static const float lforate1 = 1.f / 32777.f * 9.4f;      // * 2.f; // speed of wobble
 static const float lforate2 = 1.3f / 32777.f * 3.15971f; // * 2.f; // speed of wobble
 
-static inline float LINEARINTERPRV(const float *buf, int basei, float wobpos) { // read buf[basei-wobpos>>12] basically
-    basei -= (int)wobpos;
-    wobpos -= floorf(wobpos);
+static inline float LINEARINTERPRV(int RVMASK, const float *buf, int basei, float wobpos) { // read buf[basei-wobpos>>12] basically
+    float fwobpos = floorf(wobpos);
+    basei -= (int)fwobpos;
+    wobpos -= fwobpos;
     float a0 = buf[basei & RVMASK];
     float a1 = buf[(basei - 1) & RVMASK];
     return ((a0 * (1.f - wobpos) + a1 * wobpos));
@@ -101,7 +99,7 @@ stereo limiter(float state[2], stereo inp) {
     return sclip(inp * gain);
 }
 
-stereo reverb_t::_run_internal(stereo input) {
+stereo plinkyverb_t::_run_internal(stereo input) {
     int i = reverb_pos;
     float outl = 0, outr = 0;
     float wob = aplfo(lforate1) * k_reverb_wob;
@@ -123,7 +121,7 @@ stereo reverb_t::_run_internal(stereo input) {
 #define AP_WOBBLE(len, wobpos)                                                                                                     \
     {                                                                                                                              \
         int j = (i + len RVDIV) & RVMASK;                                                                                          \
-        float d = LINEARINTERPRV(reverbbuf, j, wobpos);                                                                            \
+        float d = LINEARINTERPRV(RVMASK, reverbbuf, j, wobpos);                                                                            \
         acc -= d * 0.5f;                                                                                                           \
         reverbbuf[i] = (acc);                                                                                                      \
         acc = (acc * 0.5f) + d;                                                                                                    \
@@ -142,7 +140,7 @@ stereo reverb_t::_run_internal(stereo input) {
     {                                                                                                                              \
         int j = (i + len RVDIV) & RVMASK;                                                                                          \
         reverbbuf[i] = (acc);                                                                                                      \
-        acc = LINEARINTERPRV(reverbbuf, j, wobpos);                                                                                \
+        acc = LINEARINTERPRV(RVMASK, reverbbuf, j, wobpos);                                                                                \
         i = j;                                                                                                                     \
         CHECKACC                                                                                                                   \
     }
@@ -190,9 +188,11 @@ stereo reverb_t::_run_internal(stereo input) {
         }
 
         // L = shimmer from shimmerpos1, R = shimmer from shimmerpos2
+        //reverbbuf[(i+8192)&RVMASK] = acc;
         stereo shim1 = st(reverbbuf[(i + shimmerpos1) & RVMASK], reverbbuf[(i + shimmerpos2) & RVMASK]);
         stereo shim2 = st(reverbbuf[(i + shimmerpos1 + 1) & RVMASK], reverbbuf[(i + shimmerpos2 + 1) & RVMASK]);
         stereo shim = (shim1 + shim2);
+        //i+=8192;
 
         // Fixed point crossfade:
         float shimo = shim.l * ((SHIMMER_FADE_LEN - 1) - shimmerfade) + shim.r * shimmerfade;
@@ -239,18 +239,97 @@ stereo delay_t::operator()(stereo inp, stereo time_qn, float feedback, float rot
     ret.l = lerp(delaybuf[il].l, delaybuf[(il + 1) & (delaybuf_size - 1)].l, frac(readpos.l));
     ret.r = lerp(delaybuf[ir].r, delaybuf[(ir + 1) & (delaybuf_size - 1)].r, frac(readpos.r));
     ret = rotate(ret, cosf(rotate_angle), sinf(rotate_angle));
-    delaybuf[delay_pos] = ssclip(inp + ret * feedback);
+    delaybuf[delay_pos] = sclip(inp + ret * feedback);
     delay_pos = (delay_pos + 1) & (delaybuf_size - 1);
     return ret;
 }
 
-stereo reverb_t::operator()(stereo inp) {
+stereo ginkgoverb_t::operator()(stereo inp) {
     float *state = filter_state;
-    stereo *state2 = (stereo *)(state + 8);
+    stereo *state2 = (stereo *)(state + 16);
+    ////////////////////////// 4x DOWNSAMPLE
+    const float hpf_g = svf_g(150.f);
+    const float lpf_g = svf_g(5000.f);
+    inp = (stereo){
+        svf_process_2pole(state, inp.l, lpf_g, SQRT2).lp,
+        svf_process_2pole(state + 2, inp.r, lpf_g, SQRT2).lp,
+    };
+    inp = (stereo){
+        svf_process_2pole(state + 4, inp.l, hpf_g, SQRT2).hp,
+        svf_process_2pole(state + 6, inp.r, hpf_g, SQRT2).hp,
+    };
+    int outslot = (G->sampleidx >> 2) & 3;
+    if ((G->sampleidx & 3) == 0) {
+        state2[outslot] = _run_internal(inp);
+    }
+    ////////////////////////// 4x CATMULL ROM UPSAMPLE
+    int t0 = (outslot - 3) & 3, t1 = (outslot - 2) & 3, t2 = (outslot - 1) & 3, t3 = outslot;
+    float f = ((G->sampleidx & 3) + 1) * 0.25f;
+    float lout = catmull_rom(state2[t0].l, state2[t1].l, state2[t2].l, state2[t3].l, f);
+    float rout = catmull_rom(state2[t0].r, state2[t1].r, state2[t2].r, state2[t3].r, f);
+    return (stereo){lout, rout};
+}
+
+stereo ginkgoverb_t::_run_internal(stereo inp) {
+
+    int i = reverb_pos;
+    float acc = ((inp.l));
+    AP(142);
+    AP(379);
+    acc += (inp.r);
+    AP(107);
+    AP(277);
+    float reinject = acc;
+    AP(672);
+    AP(1800);
+    #define DELAY_LEN 12000
+    float ret[4]={};
+    static int shimt=0;
+    shimt++;
+    for (int t = 0; t < NUM_TAPS; t++) {
+        int shimi=(shimt+t*(16384/NUM_TAPS))&16383;
+        int shimj = (shimi+16384/2)&16383;
+        float lfofreq = frac((t + 1) * PHI) * (1.f / SAMPLE_RATE) + (1.f / SAMPLE_RATE);
+        float pos = (1.f+taplofs[t](lfofreq)) * (DELAY_LEN/2.f - 100.f) + 50.f;
+        int basei = i + (((t&3)+1)*DELAY_LEN);
+        ret[t&3] += LINEARINTERPRV(RVMASK,reverbbuf, basei , pos);
+        float shim1 = reverbbuf[(basei-shimi-64)&RVMASK] + reverbbuf[(basei-shimi-65)&RVMASK];
+        float shim2 = reverbbuf[(basei-shimj-64)&RVMASK] + reverbbuf[(basei-shimj-65)&RVMASK];
+        int shimfade = 16384/2-abs(shimi-16384/2);
+        float shim = lerp(shim1, shim2, shimt*(0.5f/16384.f));
+        //ret[t&3] += shim1*0.1f;
+    }
+    static float dc[4];
+    dc[0] += (ret[0] - dc[0]) * 0.005f;
+    dc[1] += (ret[1] - dc[1]) * 0.005f;
+    dc[2] += (ret[2] - dc[2]) * 0.005f;
+    dc[3] += (ret[3] - dc[3]) * 0.005f;
+    ret[0] -= dc[0];
+    ret[1] -= dc[1];
+    ret[2] -= dc[2];
+    ret[3] -= dc[3];
+
+    float ret_rotated[4]={};
+    const float g = 3.f / NUM_TAPS;
+    const float svfg = svf_g(1600.f/4.f); // /4 because we run at 4x downsampled rate
+    reverbbuf[(i+0)&RVMASK] =     g*( ret[0] + ret[1] + ret[2] + ret[3] ) + acc;
+    reverbbuf[(i+DELAY_LEN)&RVMASK] = g*( ret[0] - ret[1] + ret[2] - ret[3] ) - acc;
+    reverbbuf[(i+DELAY_LEN*2)&RVMASK] = g*( ret[0] + ret[1] - ret[2] - ret[3] ) - acc;
+    reverbbuf[(i+DELAY_LEN*3)&RVMASK] = g*( ret[0] - ret[1] - ret[2] + ret[3] ) + acc;
+    i+=DELAY_LEN*4;
+       
+    stereo outp = st(ret[0] + ret[2] + acc,ret[1] + ret[3] + acc);
+    reverb_pos = (reverb_pos - 1) & RVMASK;
+    return outp;
+}
+
+stereo plinkyverb_t::operator()(stereo inp) {
+    float *state = filter_state;
+    stereo *state2 = (stereo *)(filter_state + 4);
     ////////////////////////// 4x DOWNSAMPLE
     inp = (stereo){
-        svf_process_2pole(state, inp.l, 0.5f, SQRT2).lp,
-        svf_process_2pole(state + 2, inp.r, 0.5f, SQRT2).lp,
+        svf_process_2pole(state, inp.l, 0.125f, SQRT2).lp,
+        svf_process_2pole(state + 2, inp.r, 0.125f, SQRT2).lp,
     };
     int outslot = (G->sampleidx >> 2) & 3;
     if ((G->sampleidx & 3) == 0) {
@@ -272,7 +351,7 @@ void *dsp_preamble(song_base_t *_G, stereo *audio, int reloaded, size_t state_si
         _G = (song_base_t *)calloc(1, state_size);
         if (oldg) {
             size_t sz = sizeof(song_base_t); // min(sizeof(song_base_t), min(state_size, oldg->_size));
-            memcpy(_G, oldg, sz); // preserve the basic state...
+            memcpy(_G, oldg, sz);            // preserve the basic state...
         }
         // ...but update the size.
         _G->_size = state_size;
@@ -398,8 +477,8 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
     return cache;
 }
 
-stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual,
-                                   float dist_actual, float cutoff_actual, wave_t *w) {
+stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual,
+                                   float cutoff_actual, wave_t *w) {
     stereo au;
     bool at_end = false;
     if (w && w->sample_func) {
@@ -418,7 +497,7 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     }
     if (dist_actual > 0.f) {
         float mix = saturate(dist_actual * 10.f);
-        float distgain = exp(saturate(dist_actual) * 16.f);
+        float distgain = exp(clamp(dist_actual, 0., 10.) * 2.f);
         au.l = lerp(au.l, sclip(au.l * distgain), mix);
         au.r = lerp(au.r, sclip(au.r * distgain), mix);
     }
@@ -462,7 +541,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             if (!(h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from))
                 continue;
             int i = (int)h->get_param(P_STRING, -1);
-            if (i<0 || i>=max_voices) {
+            if (i < 0 || i >= max_voices) {
                 for (; i < max_voices; ++i) {
                     hap_t *existing_hap = &voices[i].h;
                     if (existing_hap->hapid == h->hapid && existing_hap->t0 == h->t0 && existing_hap->valid_params)
@@ -532,21 +611,16 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             v->vibphase = frac(v->vibphase + vibfreq * 96.f * 8.f * G->dt);
             float trem = h->get_param(P_TREM, 0.f) * 0.5f;
             float tremfreq = h->get_param(P_TREM_FREQ, 1.5f);
-            float oldtrem = square(1.f-trem-trem*cosf(v->tremphase * TAU));
+            float oldtrem = square(1.f - trem - trem * cosf(v->tremphase * TAU));
             v->tremphase = frac(v->tremphase + tremfreq * 96.f * 8.f * G->dt);
-            float newtrem = square(1.f-trem-trem*cosf(v->tremphase * TAU));
+            float newtrem = square(1.f - trem - trem * cosf(v->tremphase * TAU));
 
-
-            double dphase = exp2((note - C3) / 12.f); // midi2dphase(note);
+            double dphase = exp2((note - C3) / 12.f);         // midi2dphase(note);
             float key_track_gain = exp2((note - C3) / -36.f); // gentle falloff of high notes
-
-            level *= key_track_gain;
-
-            float newlevel = level * newtrem;
-            level = level * oldtrem;
-            float dlevel = (newlevel-level)/96.f;
-
-
+            
+            float newlevel = level * key_track_gain * newtrem;
+            float curlevel = level * key_track_gain * oldtrem;
+            float dlevel = (newlevel - curlevel) / (96.f - first_smpl);
 
             float sustain = square(h->get_param(P_SUS, 1.f));
             float attack_k = env_k(h->get_param(P_ATT, 0.f));
@@ -580,7 +654,8 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             if (!G->playing) {
                 v->h.hapid = 0;
             }
-            if (v->phase <=0.) v->phase=dphase;
+            if (v->phase <= 0.)
+                v->phase = dphase;
             for (int smpl = first_smpl; smpl < 96; smpl++, t += G->dt) {
                 ////////////// VOICE SAMPLE
                 bool keydown = G->playing && t < h->t1 + G->dt * 0.5f;
@@ -592,14 +667,15 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
                 v->dphase = dphase;
-                audio[smpl] += v->synth_sample(h, keydown, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * level;
-                level += dlevel;
+                audio[smpl] += v->synth_sample(h, keydown, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
+                curlevel += dlevel;
                 if (v->in_use != EInUse::IN_USE) {
                     printf("voice %d released - from %f to %f\n", i, from, to);
                     h->t0 = -1e10; // mark it as 'old'.
                     break;
                 }
             } // voice sample loop
+            
         } // voice loop
     } // 96 sample block loop
     return audio[G->sampleidx % 96];
@@ -613,13 +689,13 @@ stereo prepare_preview(void) {
             float pos = w->sample_rate * G->preview_wave_t;
             G->preview_wave_t += 1.f / SAMPLE_RATE;
             bool at_end = false;
-            voice_state_t v = {.dphase = 1.f/SAMPLE_RATE, .phase = pos};
-            hap_t h = { .valid_params = (1 << P_FROM) | (1 << P_TO), 
+            voice_state_t v = {.dphase = 1.f / SAMPLE_RATE, .phase = pos, .in_use = EInUse::IN_USE};
+            hap_t h = {
+                .valid_params = (1 << P_FROM) | (1 << P_TO),
                 .params[P_FROM] = G->preview_fromt,
                 .params[P_TO] = G->preview_tot,
             };
-            preview =
-                sample_wave(&v, &h, w, &at_end) * (G->preview_wave_fade * 0.33f);
+            preview = sample_wave(&v, &h, w, &at_end) * (G->preview_wave_fade * 0.33f);
             if (pos >= w->num_frames) {
                 G->preview_wave_fade = 0.f;
             }

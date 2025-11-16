@@ -51,6 +51,30 @@ typedef struct sample_embedding_t {
     int sound_number;
 } sample_embedding_t;
 
+enum {
+    DRAG_TYPE_NONE,
+    DRAG_TYPE_SAMPLE_FROM,
+    DRAG_TYPE_SAMPLE_TO,
+    DRAG_TYPE_SAMPLE_MIDDLE,
+    DRAG_TYPE_CANVAS,
+    DRAG_TYPE_CC0 = 100,
+    DRAG_TYPE_CC1 = 101,
+    DRAG_TYPE_CC2 = 102,
+    DRAG_TYPE_CC3 = 103,
+    DRAG_TYPE_CC4 = 104,
+    DRAG_TYPE_CC5 = 105,
+    DRAG_TYPE_CC6 = 106,
+    DRAG_TYPE_CC7 = 107,
+};
+
+enum {
+    TAB_SHADER = 0,
+    TAB_AUDIO = 1,
+    TAB_SAMPLES = 2,
+    TAB_CANVAS = 3,
+    TAB_LAST
+};
+
 typedef struct EditorState {
     // all these arrays are stbds_arrs
     const char *fname;                           // name of the file
@@ -380,11 +404,11 @@ void find_line_at_idx(EditorState *E, int cursor_idx, int *start_idx, int *end_i
 }
 
 static inline void postpone_autocomplete_show(EditorState *E) { E->autocomplete_show_after = G->iTime + 0.5f; }
-extern EditorState tabs[3];
+extern EditorState tabs[TAB_LAST];
 void set_tab(EditorState *newE);
 
 void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, float y, int is_drag, int click_count) {
-    if (click_count == 1 && is_drag < 0 && E->editor_type == 2 && E->closest_sound_idx != -1) {
+    if (click_count == 1 && is_drag < 0 && E->editor_type == TAB_SAMPLES && E->closest_sound_idx != -1) {
         char buf[1024];
         snprintf(buf, sizeof(buf), "\n%s:%d", G->sounds[E->closest_sound_idx].value->name, E->closest_sound_number);
         int i = find_end_of_line(E, 0);
@@ -416,18 +440,18 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
     float cc_bar_x = G->fbw - E->font_width * 16.f;
     float cc_bar_height = E->font_height;
     if (is_drag == 0 && mx >= cc_bar_x - 240.f && my >= G->fbh - cc_bar_height) {
-        E->drag_type = 100 + clamp(int((mx - cc_bar_x + 240.f) / 30.f), 0, 7); // cc!
+        E->drag_type = DRAG_TYPE_CC0 + clamp(int((mx - cc_bar_x + 240.f) / 30.f), 0, 7); // cc!
     }
-    if (E->drag_type >= 100 && E->drag_type < 108) {
+    if (E->drag_type >= DRAG_TYPE_CC0 && E->drag_type <= DRAG_TYPE_CC7) {
         if (is_drag < 0)
-            E->drag_type = 0;
+            E->drag_type = DRAG_TYPE_NONE;
         else {
-            int cc = E->drag_type - 100;
+            int cc = E->drag_type - DRAG_TYPE_CC0;
             G->midi_cc[cc + 0x10] = clamp(int((G->fbh - my) * 128.f / cc_bar_height), 0, 127);
         }
         return;
     }
-    if (E->editor_type == 2) {
+    if (E->editor_type == TAB_SAMPLES) {
         /////////////////////////// SAMPLE PICKER DRAGGING
         if (is_drag == 0) {
             if (my > G->fbh - 256.f && E->cursor_y > 0) {
@@ -436,16 +460,16 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
                 float left = 48.f + G->preview_fromt * (G->fbw - 96.f);
                 float right = 48.f + G->preview_tot * (G->fbw - 96.f);
                 if (mx < left + 8.f) {
-                    E->drag_type = 1;
+                    E->drag_type = DRAG_TYPE_SAMPLE_FROM;
                 } else if (mx > right - 8.f) {
-                    E->drag_type = 2;
+                    E->drag_type = DRAG_TYPE_SAMPLE_TO;
                 } else
-                    E->drag_type = 4;
+                    E->drag_type = DRAG_TYPE_SAMPLE_MIDDLE;
             } else {
-                E->drag_type = 3;
+                E->drag_type = DRAG_TYPE_CANVAS;
             }
         } else if (is_drag < 0) {
-            E->drag_type = 0;
+            E->drag_type = DRAG_TYPE_NONE;
         }
         return;
     }
@@ -588,7 +612,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     int reset_selection = 0;
     idx_to_xy(E, E->cursor_idx, &E->cursor_x, &E->cursor_y);
     if (key == GLFW_KEY_ESCAPE && mods == 0) {
-        if (E->editor_type == 2) {
+        if (E->editor_type == TAB_SAMPLES) {
             int n = find_end_of_line(E, 0);
             if (stbds_arrlen(E->str) == n)
                 n = 0;

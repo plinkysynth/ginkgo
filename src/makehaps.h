@@ -376,6 +376,20 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
+    case N_UP:
+        appended = _append_number_hap(dst, nodeidx, hapid, frac(when));
+        break;
+    case N_DOWN:
+        appended = _append_number_hap(dst, nodeidx, hapid, 1.f-frac(when));
+        break;
+    case N_UPDOWN: {
+        float f= frac(when);
+        appended = _append_number_hap(dst, nodeidx, hapid, (f<0.5f) ? f*2.f : 2.f-f*2.f);
+        break;}
+    case N_DOWNUP: {
+        float f= frac(when);
+        appended = _append_number_hap(dst, nodeidx, hapid, (f<0.5f) ? 1.f-f*2.f : f*2.f-1.f);
+        break;}
     case N_SIN:
         appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * M_PI * 2) * 0.5f + 0.5f);
         break;
@@ -634,6 +648,19 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 int param_idx = __builtin_ctz(target->valid_params);
                 float v = right_hap[0]->params[P_NUMBER];
                 target->params[param_idx] *= v;
+                return 1;
+            },
+            0);
+        break;
+    case N_OP_POW:
+        _apply_unary_op(
+            dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
+            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+                if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER))
+                    return 1;
+                int param_idx = __builtin_ctz(target->valid_params);
+                float v = right_hap[0]->params[P_NUMBER];
+                target->params[param_idx] = powf(target->params[param_idx], v);
                 return 1;
             },
             0);

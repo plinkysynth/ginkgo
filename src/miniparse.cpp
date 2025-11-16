@@ -595,6 +595,14 @@ static int parse_expr_inner(pattern_maker_t *p) {
             p->nodes[nidx].max_value = p->nodes[nidx].min_value = cc;
             return nidx;
         }
+        case HASH("up"):
+            return make_node(p, N_UP, -1, -1, start_i, p->i);
+        case HASH("down"):
+            return make_node(p, N_DOWN, -1, -1, start_i, p->i);
+        case HASH("updown"):
+            return make_node(p, N_UPDOWN, -1, -1, start_i, p->i);
+        case HASH("downup"):
+            return make_node(p, N_DOWNUP, -1, -1, start_i, p->i);
         case HASH("sin"):
         case HASH("sine"):
             return make_node(p, N_SIN, -1, -1, start_i, p->i);

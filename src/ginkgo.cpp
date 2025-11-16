@@ -144,6 +144,12 @@ static void uniform1fv(GLuint shader, const char *uniform_name, int count, const
         return;
     glUniform1fv(loc, count, value);
 }
+static void uniform3fv(GLuint shader, const char *uniform_name, int count, const float *value) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform3fv(loc, count, value);
+}
 static void uniform2i(GLuint shader, const char *uniform_name, int value1, int value2) {
     int loc = glGetUniformLocation(shader, uniform_name);
     if (loc == -1)
@@ -389,6 +395,19 @@ vec3 safe_normalize(vec3 p) {
 float ndot( in vec2 a, in vec2 b ) { return a.x*b.x - a.y*b.y; }
 // awesome sdf functions following the naming and code of https://iquilezles.org/articles/distfunctions/
 // thankyou inigo :)
+
+float aa(float sdf) { return saturate(sdf*-1080.f+0.5f); }
+float sdCircle( vec2 p, float r ) { return length(p) - r; }
+float sdRect( in vec2 p, in vec2 b ) { vec2 d = abs(p)-b; return length(max(d,0.0)) + min(max(d.x,d.y),0.0); }
+float sdRoundedRect( in vec2 p, in vec2 b, in vec4 r ) {
+    r.xy = (p.x>0.0)?r.xy : r.zw;
+    r.x  = (p.y>0.0)?r.x  : r.y;
+    vec2 q = abs(p)-b+r.x;
+    return min(max(q.x,q.y),0.0) + length(max(q,0.0)) - r.x;
+}
+mat2 rot2(float a) { float c=cos(a), s=sin(a); return mat2(c,s,-s,c); }
+
+
 float sdSphere( vec3 p, float s ) { return length(p)-s; }
 float sdBox( vec3 p, vec3 b ) { vec3 q = abs(p) - b; return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0); }
 float sdRoundBox( vec3 p, vec3 b, float r ) { vec3 q = abs(p) - b + r; return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0) - r; }
@@ -519,7 +538,9 @@ const char *kFS_user_suffix = SHADER_NO_VERSION(
     void main() {
         vec2 fragCoord = gl_FragCoord.xy;
         seed = uvec4(uint(fragCoord.x), uint(fragCoord.y), uint(iFrame) , uint(23952683));
-        o_color = pixel(v_uv);
+        vec2 uv = (v_uv - 0.5);
+        uv.x *= 16./9.;
+        o_color = pixel(uv);
     });
 
 const char *kFS_bloom = SHADER(
@@ -764,9 +785,11 @@ void set_tab(EditorState *newE) {
     curE = newE;
 }
 
-void update_pattern_uniforms(pattern_t *patterns) {
+void update_pattern_uniforms(pattern_t *patterns, pattern_t *prev_patterns) {
     for (int i = 0; i < stbds_shlen(patterns); i++) {
         pattern_t *p = &patterns[i];
+        pattern_t *prev_p = stbds_shgetp_null(prev_patterns, p->key);
+        if (prev_p) p->shader_param = prev_p->shader_param;
         p->uniform_idx = -1;
         if (user_pass && p->key && p->key[0] == '/') {
             p->uniform_idx = glGetUniformLocation(user_pass, p->key + 1);
@@ -786,7 +809,7 @@ void parse_named_patterns_in_source(void) {
         init_remapping(E);
         E->error_msgs = parse_named_patterns_in_source(E->str, E->str + stbds_arrlen(E->str), E->error_msgs);
     }
-    update_pattern_uniforms(new_pattern_map_during_parse);
+    update_pattern_uniforms(new_pattern_map_during_parse, G->patterns_map);
     // TODO - let the old pattern table leak because concurrency etc
     G->patterns_map = new_pattern_map_during_parse;
     new_pattern_map_during_parse = NULL;
@@ -975,7 +998,7 @@ GLuint try_to_compile_shader(EditorState *E) {
     if (new_user_pass) {
         glDeleteProgram(user_pass);
         user_pass = new_user_pass;
-        update_pattern_uniforms(G->patterns_map);
+        update_pattern_uniforms(G->patterns_map, NULL);
     }
     if (!user_pass)
         die("Failed to compile shader");
@@ -1824,6 +1847,7 @@ GLuint compile_fs_with_user_prefix(const char *fs_suffix) {
     return fs;
 }
 
+shader_param_t param_cc[8];
 
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
@@ -2015,6 +2039,20 @@ int main(int argc, char **argv) {
             glClear(GL_COLOR_BUFFER_BIT);
         } else {
             glUseProgram(user_pass);
+            static double prev_time = 0.;
+            static double cur_time = G->t;
+            static bool was_playing = false;
+            double dt = 0.;
+            bool reset_integration = false;
+            if (G->playing) {
+                prev_time = cur_time;
+                cur_time = G->t;
+                dt = cur_time - prev_time;
+                if (!was_playing && dt<0.) reset_integration = true;
+                if (dt > 1./30.) dt = 1./30.;
+                if (dt<0.) dt = 0.;
+            }
+            was_playing = G->playing;
             for (int i = 0; i < stbds_shlen(G->patterns_map); i++) {
                 pattern_t *p = &G->patterns_map[i];
                 if (p->uniform_idx != -1) {
@@ -2025,11 +2063,18 @@ int main(int argc, char **argv) {
                         if (h->has_param(P_NUMBER))
                             value = max(value, h->get_param(P_NUMBER, 0.f));
                     }
-                    uniform1f(user_pass, p->key + 1, value);
+                    p->shader_param.update(value, dt, reset_integration);
+                    uniform3f(user_pass, p->key + 1, p->shader_param.value, p->shader_param.old_value, p->shader_param.integrated_value);
                 }
             }
-            float ccs[8] = {cc(0), cc(1), cc(2), cc(3), cc(4), cc(5), cc(6), cc(7)};
-            uniform1fv(user_pass, "cc", 8, ccs);
+            float ccs[8*3];
+            for (int i =0;i<8;++i) {
+                param_cc[i].update(cc(i), dt, reset_integration);
+                ccs[i*3+0] = param_cc[i].value;
+                ccs[i*3+1] = param_cc[i].old_value;
+                ccs[i*3+2] = param_cc[i].integrated_value;
+            }
+            uniform3fv(user_pass, "cc", 8, (float *)ccs);
             uniform2i(user_pass, "uScreenPx", RESW, RESH);
             uniform1f(user_pass, "iTime", (float)iTime);
             uniform1f(user_pass, "t", (float)G->t);

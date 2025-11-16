@@ -15,6 +15,10 @@ NODE(N_SIN)
 NODE(N_COS)
 NODE(N_SIN2)
 NODE(N_COS2)
+NODE(N_UP)
+NODE(N_DOWN)
+NODE(N_UPDOWN)
+NODE(N_DOWNUP)
 NODE(N_RAND)
 NODE(N_RAND2)
 NODE(N_RANDI) // takes a max value
@@ -62,6 +66,7 @@ OP(N_OP_MUL, "mul", 1, 0, 10)
 OP(N_OP_DIV, "div", 1, 0, 10)
 OP(N_OP_FIT, "fit", 0, 0, 10)
 OP(N_OP_FITN, "fitn", 1, 0, 10)
+OP(N_OP_POW, "pow", 1, 0, 11)
 
 
 #undef OP

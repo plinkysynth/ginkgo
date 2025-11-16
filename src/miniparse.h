@@ -63,10 +63,32 @@ typedef struct token_info_t {
     float local_time_of_eval;
 } token_info_t;
 
+typedef struct shader_param_t {
+    float value;
+    float old_value;
+    float integrated_value;
+    
+    void update(float new_value, float dt, bool reset_integration) {
+        old_value = value;
+        value = new_value;
+        if (reset_integration) integrated_value = 0.f;
+        else integrated_value += value * dt;
+    }
+    void reset(void) {
+        value = 0.f;
+        old_value = 0.f;
+        integrated_value = 0.f;
+    }
+} shader_param_t;
+
+
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
     float *curvedata; // stb_ds
+
+    // stuff for shaders:
     int uniform_idx;
+    shader_param_t shader_param;
 
     // bfs 
     token_info_t *bfs_start_end; // source code ranges

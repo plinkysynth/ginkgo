@@ -396,16 +396,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         appended = _append_number_hap(dst, nodeidx, hapid,
                                       (pcg_mix(hash2_pcg(hapid, (int)floor(when) )) & 0xffff) / 32768.f - 1.f);
         break;
-    case N_CC0:
-    case N_CC1:
-    case N_CC2:
-    case N_CC3:
-    case N_CC4:
-    case N_CC5:
-    case N_CC6:
-    case N_CC7:
-        appended = _append_number_hap(dst, nodeidx, hapid, G->midi_cc[16 + n->type - N_CC0] / 127.f);
-        break;
+    case N_CC: {
+        int cc = (int)(bfs_min_max_value[nodeidx].mx)&15;
+        appended = _append_number_hap(dst, nodeidx, hapid, G->midi_cc[16 + cc] / 127.f);
+        break; }
     case N_RANDI: {
         hap_t tmp_mem[tmp_size];
         hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
@@ -442,7 +436,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     }
     case N_POLY:
-        speed_scale = (bfs_min_max_value[nodeidx].mx > 0) ? bfs_min_max_value[nodeidx].mn
+        speed_scale = (bfs_min_max_value[nodeidx].mx > 0) ? bfs_min_max_value[nodeidx].mx
                       : (n->first_child >= 0)             ? bfs_kids_total_length[n->first_child]
                                                           : 1.;
     case N_PARALLEL: {
@@ -569,6 +563,28 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 return 1;
             },
             P_NUMBER);
+        break;
+    }
+    case N_OP_BLEND: {
+        hap_t tmp_mem[tmp_size*3];
+        hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
+        hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
+        hap_span_t tmp2 = {tmp_mem + 2 * tmp_size, tmp_mem + 3 * tmp_size};
+        hap_span_t left = _make_haps(tmp0, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
+        hap_span_t right = _make_haps(tmp1, tmp_size, viz_time, n->first_child + 2, when, hash2_pcg(hapid, n->first_child + 2));
+        hap_span_t prob = _make_haps(tmp2, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
+        int hash = 0;
+        for (hap_t *left_hap = left.s; left_hap < left.e; left_hap++) hash = hash2_pcg(hash, left_hap->hapid);
+        for (hap_t *right_hap = right.s; right_hap < right.e; right_hap++) hash = hash2_pcg(hash, right_hap->hapid);
+        float hash_prob = (hash&0xffffff) / 16777216.f;
+        float thresh = prob.empty() ? 0.5f : prob.s->get_param(P_NUMBER, 0.5f);
+        hap_span_t src = (hash_prob > thresh) ? left : right;
+        for (hap_t *src_hap = src.s; src_hap < src.e; src_hap++) {
+            if (dst.s >= dst.e)
+                break;
+            hap_t *target = dst.s++;
+            *target = *src_hap;
+        }
         break;
     }
     case N_OP_RIBBON: {

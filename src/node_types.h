@@ -18,14 +18,7 @@ NODE(N_COS2)
 NODE(N_RAND)
 NODE(N_RAND2)
 NODE(N_RANDI) // takes a max value
-NODE(N_CC0) // for now, 0-7 starting from cc 32
-NODE(N_CC1)
-NODE(N_CC2)
-NODE(N_CC3)
-NODE(N_CC4)
-NODE(N_CC5)
-NODE(N_CC6)
-NODE(N_CC7)
+NODE(N_CC) 
 NODE(N_LAMBDA)
 NODE(N_CAT)
 NODE(N_FASTCAT)
@@ -46,6 +39,7 @@ OP(N_OP_FLOOR, "floor", 0, 0, 100)
 OP(N_OP_RANGE, "range", 2, 0, 100)
 OP(N_OP_RANGE2, "range2", 2, 0, 100)
 OP(N_OP_RIBBON, "rib", 1, 1, 100)
+OP(N_OP_BLEND, "blend", 2, 0, 100)
 
 #define X(x, str, ...) OP(N_##x, str, 1, 0, 50)
 #include "params.h"

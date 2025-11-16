@@ -186,7 +186,7 @@ static int make_node(pattern_maker_t *p, int node_type, int first_child, int nex
 
 static int parse_expr(pattern_maker_t *p, int caller_precedence = 0);
 
-static int parse_args(pattern_maker_t *p, int group_type, char close, int list_delimeter = 0) {
+static int parse_args(pattern_maker_t *p, int group_type, char close, int list_delimeter = 0, bool allow_comma = true) {
     skipws(p);
     int start = p->i;
     int first_child = -1;
@@ -207,8 +207,8 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
         }
         int i;
         if (list_delimeter <= 0) {
-            i = parse_args(p, N_RANDOM, close, '|');
-        } else if (list_delimeter == '|') {
+            i = parse_args(p, N_RANDOM, close, '|', allow_comma);
+        } else if (list_delimeter == '|' && allow_comma) {
             i = parse_args(p, N_PARALLEL, close, ',');
         } else {
             i = parse_expr(p);
@@ -225,6 +225,9 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
         skipws(p);
         if (list_delimeter > 0 && !consume(p, list_delimeter))
             break;
+        if (!allow_comma && (peek(p) == ',' || peek(p) == '}')) 
+            break;
+
     }
     if (first_child < 0)
         return -1;
@@ -238,34 +241,56 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
 static int parse_leaf(pattern_maker_t *p);
 static int parse_number(const char *s, const char *e, const char **end, float *number);
 
-static int parse_group(pattern_maker_t *p, char open, char close, int node_type) {
+static int parse_group(pattern_maker_t *p, char open, char close, int node_type, bool allow_comma = true) {
     int start = p->i;
-    if (!consume(p, open)) {
+    if (open && !consume(p, open)) {
         error(p, "expected opening bracket");
         return -1;
     }
     skipws(p);
-
-    int is_poly = node_type == N_POLY;
-    int group_node = parse_args(p, node_type, close);
-    if (!consume(p, close)) {
+    int group_node = parse_args(p, node_type, close, 0, allow_comma);
+    if (close && !consume(p, close)) {
         error(p, "expected closing bracket");
         return -1;
     }
     p->nodes[group_node].end = p->i;
-    if (is_poly) {
-        skipws(p);
-        if (consume(p, '%')) {
-            int modulo_node = parse_leaf(p);
-            if (modulo_node < 0 || p->nodes[modulo_node].max_value <= 0.f) {
-                error(p, "expected positive number in modulo");
-                return -1;
-            }
-            // we store the modulo constant in our value.number. a bit of a hack...
-            p->nodes[group_node].max_value = p->nodes[modulo_node].max_value;
-        }
-    }
     return group_node;
+}
+
+static int parse_poly(pattern_maker_t *p) {
+    int start = p->i;
+    if (!consume(p, '{')) {
+        error(p, "expected opening {");
+        return -1;
+    }
+    int poly_node = make_node(p, N_POLY, -1, -1, start, start);
+    int prev_sib = -1;
+    while (1) {
+        skipws(p);
+        int group_node = parse_group(p, 0, 0, N_CAT, false);
+        if (prev_sib < 0)
+            p->nodes[poly_node].first_child = group_node;
+        else
+            p->nodes[prev_sib].next_sib = group_node;
+        prev_sib = group_node;
+        if (!consume(p, ',')) break;
+    }
+    if (!consume(p, '}')) {
+        error(p, "expected closing bracket");
+        return -1;
+    }
+    p->nodes[poly_node].end = p->i;
+    skipws(p);
+    if (consume(p, '%')) {
+        int modulo_node = parse_leaf(p);
+        if (modulo_node < 0 || p->nodes[modulo_node].max_value <= 0.f) {
+            error(p, "expected positive number in modulo");
+            return -1;
+        }
+        // we store the modulo constant in our value.number. a bit of a hack...
+        p->nodes[poly_node].max_value = p->nodes[modulo_node].max_value;
+    }
+    return poly_node;
 }
 
 static int parse_grid(pattern_maker_t *p) {
@@ -538,7 +563,7 @@ static int parse_expr_inner(pattern_maker_t *p) {
     case '<':
         return parse_group(p, '<', '>', N_CAT);
     case '{':
-        return parse_group(p, '{', '}', N_POLY);
+        return parse_poly(p);
     case '\'':
         return parse_curve(p);
     case '/':
@@ -551,22 +576,25 @@ static int parse_expr_inner(pattern_maker_t *p) {
         switch (name_hash) {
         case HASH("lambda"):
             return make_node(p, N_LAMBDA, -1, -1, start_i, p->i);
-        case HASH("cc0"):
-            return make_node(p, N_CC0, -1, -1, start_i, p->i);
-        case HASH("cc1"):
-            return make_node(p, N_CC1, -1, -1, start_i, p->i);
-        case HASH("cc2"):
-            return make_node(p, N_CC2, -1, -1, start_i, p->i);
-        case HASH("cc3"):
-            return make_node(p, N_CC3, -1, -1, start_i, p->i);
-        case HASH("cc4"):
-            return make_node(p, N_CC4, -1, -1, start_i, p->i);
-        case HASH("cc5"):
-            return make_node(p, N_CC5, -1, -1, start_i, p->i);
-        case HASH("cc6"):
-            return make_node(p, N_CC6, -1, -1, start_i, p->i);
-        case HASH("cc7"):
-            return make_node(p, N_CC7, -1, -1, start_i, p->i);
+        case HASH("cc"): {
+            if (!consume(p, '(')) {
+                error(p, "expected opening bracket in cc");
+                return -1;
+            }
+            if (!isdigit(peek(p))) {
+                error(p, "expected cc number in cc");
+                return -1;
+            }
+            int cc = peek(p) - '0';
+            consume(p, cc + '0');
+            if (!consume(p, ')')) {
+                error(p, "expected closing bracket in cc");
+                return -1;
+            }
+            int nidx = make_node(p, N_CC, -1, -1, start_i, p->i);
+            p->nodes[nidx].max_value = p->nodes[nidx].min_value = cc;
+            return nidx;
+        }
         case HASH("sin"):
         case HASH("sine"):
             return make_node(p, N_SIN, -1, -1, start_i, p->i);
@@ -796,7 +824,7 @@ void test_minipat(void) {
     // const char *s = "[a b c] * [2 1]"; // test rest in second half
     //const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
     //const char *s = "bd,bd,\n";
-    const char *s = "[a b c d] : -1 : saw";
+    const char *s = "{a b c, d e}%4";
     // const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";

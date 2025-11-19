@@ -2183,6 +2183,11 @@ int main(int argc, char **argv) {
             add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
         }
 
+        RawPen *pen = mac_pen_get();
+        if (pen) {
+            add_line(pen->x * G->fbw, pen->y * G->fbh, pen->x * G->fbw, pen->y * G->fbh, 0xffff00ff, 500.f * pen->pressure);
+        }
+
         static const uint32_t cc_cols[] = {
             0x3344ee, 0x3344ee, 0x4477ee, 0x4477ee, 0x33ccff, 0x33ccff, 0xffffee, 0xffffee,
         };

@@ -951,6 +951,7 @@ error_msg_t * parse_named_patterns_in_source(const char *s, const char *real_e, 
             pattern_t pat = parse_pattern(&p, pattern_start - code_start);
             if (p.err <= 0) {
                 pat.key = stbstring_from_span(pathstart, pathend, 0);
+                pat.seed = fnv1_hash(pat.key);
                 stbds_shputs(new_pattern_map_during_parse, pat);
                 int idx = stbds_shgeti(new_pattern_map_during_parse, pat.key);
                 printf("found pattern: %.*s - index %d\n", (int)(pathend - pathstart), pathstart, idx);

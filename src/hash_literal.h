@@ -23,7 +23,7 @@ static inline unsigned literal_hash_span(const char *s, const char *e) {
 }
 
 // FNV-1 32-bit string hash (not compile-time, but fast and simple)
-static inline unsigned fnv1_hash(const char *s, const char *e) {
+static inline unsigned fnv1_hash(const char *s, const char *e=NULL) {
     if (!e && s) e=s+strlen(s);
     unsigned h = 2166136261u;
     for (;s<e;++s) {

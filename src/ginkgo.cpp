@@ -150,6 +150,12 @@ static void uniform3fv(GLuint shader, const char *uniform_name, int count, const
         return;
     glUniform3fv(loc, count, value);
 }
+static void uniform4fv(GLuint shader, const char *uniform_name, int count, const float *value) {
+    int loc = glGetUniformLocation(shader, uniform_name);
+    if (loc == -1)
+        return;
+    glUniform4fv(loc, count, value);
+}
 static void uniform2i(GLuint shader, const char *uniform_name, int value1, int value2) {
     int loc = glGetUniformLocation(shader, uniform_name);
     if (loc == -1)
@@ -764,7 +770,6 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
     });
 // clang-format on
 
-
 extern EditorState tabs[TAB_LAST];
 EditorState tabs[TAB_LAST] = {{.fname = NULL, .editor_type = TAB_SHADER},
                               {.fname = NULL, .editor_type = TAB_AUDIO},
@@ -789,7 +794,8 @@ void update_pattern_uniforms(pattern_t *patterns, pattern_t *prev_patterns) {
     for (int i = 0; i < stbds_shlen(patterns); i++) {
         pattern_t *p = &patterns[i];
         pattern_t *prev_p = stbds_shgetp_null(prev_patterns, p->key);
-        if (prev_p) p->shader_param = prev_p->shader_param;
+        if (prev_p)
+            p->shader_param = prev_p->shader_param;
         p->uniform_idx = -1;
         if (user_pass && p->key && p->key[0] == '/') {
             p->uniform_idx = glGetUniformLocation(user_pass, p->key + 1);
@@ -1019,7 +1025,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     GLFWmonitor *secmon = NULL;
     if (primon_idx >= 0 && primon_idx < count)
         primon = mons[primon_idx];
-    if (secmon_idx < 0 && count > 1) {
+    /*if (secmon_idx < 0 && count > 1) {
         // if more than 1 monitor, default to visuals on the secondary monitor
         GLFWmonitor *monitor_to_avoid = primon ? primon : actual_primon;
         for (int i = 0; i < count; i++)
@@ -1027,7 +1033,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
                 secmon_idx = i;
                 break;
             }
-    }
+    }*/
     if (secmon_idx == primon_idx)
         secmon_idx = -1;
     if (secmon_idx >= 0 && secmon_idx < count)
@@ -1325,8 +1331,7 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             E->font_width = 32;
             E->font_height = E->font_width * 2;
             draw_umap(E, ptr);
-        }
-        else if (E->editor_type == TAB_CANVAS) {
+        } else if (E->editor_type == TAB_CANVAS) {
             E->font_width = 32;
             E->font_height = E->font_width * 2;
             draw_canvas(E, ptr);
@@ -2048,9 +2053,12 @@ int main(int argc, char **argv) {
                 prev_time = cur_time;
                 cur_time = G->t;
                 dt = cur_time - prev_time;
-                if (!was_playing && dt<0.) reset_integration = true;
-                if (dt > 1./30.) dt = 1./30.;
-                if (dt<0.) dt = 0.;
+                if (!was_playing && dt < 0.)
+                    reset_integration = true;
+                if (dt > 1. / 30.)
+                    dt = 1. / 30.;
+                if (dt < 0.)
+                    dt = 0.;
             }
             was_playing = G->playing;
             for (int i = 0; i < stbds_shlen(G->patterns_map); i++) {
@@ -2063,18 +2071,21 @@ int main(int argc, char **argv) {
                         if (h->has_param(P_NUMBER))
                             value = max(value, h->get_param(P_NUMBER, 0.f));
                     }
+                    if (value==-1e10f) value=p->shader_param.value;
                     p->shader_param.update(value, dt, reset_integration);
-                    uniform3f(user_pass, p->key + 1, p->shader_param.value, p->shader_param.old_value, p->shader_param.integrated_value);
+                    uniform4f(user_pass, p->key + 1, p->shader_param.value, p->shader_param.old_value,
+                              p->shader_param.integrated_value, p->shader_param.old_integrated_value);
                 }
             }
-            float ccs[8*3];
-            for (int i =0;i<8;++i) {
+            float ccs[8 * 4];
+            for (int i = 0; i < 8; ++i) {
                 param_cc[i].update(cc(i), dt, reset_integration);
-                ccs[i*3+0] = param_cc[i].value;
-                ccs[i*3+1] = param_cc[i].old_value;
-                ccs[i*3+2] = param_cc[i].integrated_value;
+                ccs[i * 4 + 0] = param_cc[i].value;
+                ccs[i * 4 + 1] = param_cc[i].old_value;
+                ccs[i * 4 + 2] = param_cc[i].integrated_value;
+                ccs[i * 4 + 3] = param_cc[i].old_integrated_value;
             }
-            uniform3fv(user_pass, "cc", 8, (float *)ccs);
+            uniform4fv(user_pass, "cc", 8, (float *)ccs);
             uniform2i(user_pass, "uScreenPx", RESW, RESH);
             uniform1f(user_pass, "iTime", (float)iTime);
             uniform1f(user_pass, "t", (float)G->t);
@@ -2258,7 +2269,7 @@ int main(int argc, char **argv) {
 
         // pump wave load requests
         pump_wave_load_requests_main_thread();
-        // usleep(100000);
+        //usleep(100000);
     }
 
     dump_settings();

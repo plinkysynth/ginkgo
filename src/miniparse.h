@@ -67,23 +67,27 @@ typedef struct shader_param_t {
     float value;
     float old_value;
     float integrated_value;
+    float old_integrated_value;
     
     void update(float new_value, float dt, bool reset_integration) {
         old_value = value;
         value = new_value;
-        if (reset_integration) integrated_value = 0.f;
+        old_integrated_value = integrated_value;
+        if (reset_integration) old_integrated_value = integrated_value = 0.f;
         else integrated_value += value * dt;
     }
     void reset(void) {
         value = 0.f;
         old_value = 0.f;
         integrated_value = 0.f;
+        old_integrated_value = 0.f;
     }
 } shader_param_t;
 
 
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
+    uint32_t seed;
     float *curvedata; // stb_ds
 
     // stuff for shaders:
@@ -105,7 +109,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
     bool _append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid); // does random range 
     bool _append_number_hap(hap_span_t &dst, int nodeidx, int hapid, float value); 
     hap_span_t make_haps(hap_span_t dst, int tmp_size, float viz_time, hap_time when) { 
-        return _make_haps(dst, tmp_size, viz_time, 0, when, 1);
+        return _make_haps(dst, tmp_size, viz_time, 0, when, seed);
     }
     void unalloc() {
         stbds_arrfree(curvedata);

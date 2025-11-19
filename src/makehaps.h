@@ -520,8 +520,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             }
             if (speed_scale <= 0.f)
                 continue;
-            hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale,
-                                              hash2_pcg(hapid, right_hap->hapid));
+            hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale, hapid); // this used to include right hapid, but it means rand inside a *4 with offset for smooth broke... 
+//                                              hash2_pcg(hapid, right_hap->hapid));
             _filter_haps(left_haps, speed_scale, tofs, when);
         }
         break;
@@ -619,6 +619,39 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             }
         }
         break; }
+    case N_OP_EASE:
+    case N_OP_SMOOTH: {
+        // eval at when and when+1, then blend between them.
+        hap_t tmp_mem[tmp_size*2];
+        hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
+        hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
+        bool is_ease = n->type == N_OP_EASE;
+        hap_time t = is_ease ? when : (when-0.5);
+        hap_span_t out = _make_haps(dst, tmp_size, viz_time, n->first_child, t, hapid);
+        hap_span_t blendwith = _make_haps(tmp0, tmp_size, viz_time, n->first_child, t + 1., hapid);
+        hap_span_t power = _make_haps(tmp1, tmp_size, viz_time, (n->num_children > 1) ?  n->first_child + 1 : -1, when, hash2_pcg(hapid, n->first_child + 1));
+        float power_value = power.empty() ? 1.f : expf((is_ease ? -1.f : 1.f) *power.s->get_param(P_NUMBER, 0.f));
+        t=frac(t);
+        if (is_ease) t = powf(t, power_value); else {
+            t = 0.5f * ((t<0.5f) ? powf(t*2.f, power_value) : 2.f-powf((2.f-t*2.f), power_value));
+        }
+        const hap_t *srchap = blendwith.s;
+        for (hap_t *out_hap = out.s; out_hap < out.e; out_hap++) {
+            if (!is_ease) {
+                out_hap->t0 += 0.5;
+                out_hap->t1 += 0.5;
+            }
+            if (srchap < blendwith.e) {
+                int shared_params = srchap->valid_params & out_hap->valid_params;
+                while (shared_params) {
+                    int bit = __builtin_ctz(shared_params);
+                    out_hap->params[bit] = out_hap->params[bit] * (1.0f - t) + srchap->params[bit] * t;
+                    shared_params &= ~(1 << bit);
+                }
+            }
+        }
+        break;
+    }
     case N_OP_RANGE2:
     case N_OP_RANGE: {
         _apply_unary_op(

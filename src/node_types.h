@@ -67,6 +67,8 @@ OP(N_OP_DIV, "div", 1, 0, 10)
 OP(N_OP_FIT, "fit", 0, 0, 10)
 OP(N_OP_FITN, "fitn", 1, 0, 10)
 OP(N_OP_POW, "pow", 1, 0, 11)
+OP(N_OP_EASE, "ease", 1, 0, 11)
+OP(N_OP_SMOOTH, "smooth", 1, 0, 11)
 
 
 #undef OP

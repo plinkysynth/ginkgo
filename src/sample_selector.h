@@ -1,6 +1,33 @@
 // sample selector editor
 // TODO - there are some instances of if editor_type == TAB_SAMPLES that should be cleaned up and moved in here.
 
+void update_zoom_and_center(EditorState *E) {
+    if (E->zoom==0.f) {
+        E->zoom = 1.f;
+    }
+    if (is_two_finger_dragging() && G->mb == 0) {
+        float dx = drag_cx - prev_drag_cx;
+        float dy = drag_cy - prev_drag_cy;
+        float velocity_sq = (dx * dx + dy * dy);
+        float drag_sens = 1.f;
+        
+        E->centerx += (drag_cx - prev_drag_cx) * drag_sens;
+        E->centery += (drag_cy - prev_drag_cy) * drag_sens;
+        float mx_e = (G->mx - E->centerx) / E->zoom;
+        float my_e = (G->my - E->centery) / E->zoom;
+        float zoom_amount = expf(velocity_sq * -0.1f); // if we are moving the center of mass of fingers, supress zoom.
+        E->zoom *= powf(drag_dist / prev_drag_dist, zoom_amount);
+        E->zoom = clamp(E->zoom, 0.01f, 100.f);
+        E->centerx = G->mx - mx_e * E->zoom;
+        E->centery = G->my - my_e * E->zoom;
+    }
+    E->zoom = clamp(E->zoom, 0.01f, 100.f);
+    E->zoom_sm += (E->zoom - E->zoom_sm) * 0.2f;
+    E->centerx_sm += (E->centerx - E->centerx_sm) * 0.2f;
+    E->centery_sm += (E->centery - E->centery_sm) * 0.2f;
+
+}
+
 void draw_umap(EditorState *E, uint32_t *ptr) {
     int tmw = G->fbw / E->font_width;
     int tmh = G->fbh / E->font_height;
@@ -62,33 +89,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     }
     // float extra_size = max(maxx - minx, maxy - miny) / sqrtf(1.f + num_after_filtering) * 0.125f;
 
-    /*
-    if (G->mscrolly!=0.f) {
-        float mx_e = (G->mx - E->centerx) / E->zoom;
-        float my_e = (G->my - E->centery) / E->zoom;
-        E->zoom *= exp2f(G->mscrolly * -0.02f);
-        E->zoom = clamp(E->zoom, 0.01f, 100.f);
-        E->centerx = G->mx - mx_e * E->zoom;
-        E->centery = G->my - my_e * E->zoom;
-        G->mscrolly = 0.f;
-    }
-    */
-    if (is_two_finger_dragging() && G->mb == 0) {
-        float dx = drag_cx - prev_drag_cx;
-        float dy = drag_cy - prev_drag_cy;
-        float velocity_sq = (dx * dx + dy * dy);
-        float drag_sens = 1.f;
-        
-        E->centerx += (drag_cx - prev_drag_cx) * drag_sens;
-        E->centery += (drag_cy - prev_drag_cy) * drag_sens;
-        float mx_e = (G->mx - E->centerx) / E->zoom;
-        float my_e = (G->my - E->centery) / E->zoom;
-        float zoom_amount = expf(velocity_sq * -0.1f); // if we are moving the center of mass of fingers, supress zoom.
-        E->zoom *= powf(drag_dist / prev_drag_dist, zoom_amount);
-        E->zoom = clamp(E->zoom, 0.01f, 100.f);
-        E->centerx = G->mx - mx_e * E->zoom;
-        E->centery = G->my - my_e * E->zoom;
-    }
+    update_zoom_and_center(E);
 
     int n = stbds_shlen(E->embeddings);
     int closest_idx = 0;
@@ -302,8 +303,4 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         E->centerx = G->fbw / 2.f - (maxx + minx) / 2.f * E->zoom;
         E->centery = G->fbh / 2.f - (maxy + miny) / 2.f * E->zoom;
     }
-    E->zoom = clamp(E->zoom, 0.01f, 100.f);
-    E->zoom_sm += (E->zoom - E->zoom_sm) * 0.2f;
-    E->centerx_sm += (E->centerx - E->centerx_sm) * 0.2f;
-    E->centery_sm += (E->centery - E->centery_sm) * 0.2f;
 }

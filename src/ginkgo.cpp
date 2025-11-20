@@ -82,6 +82,7 @@ void update_multitouch_dragging(void) {
         xx /= num_finger_dragging;
         yy /= num_finger_dragging;
         drag_dist = sqrtf(square(xx) + square(yy));
+        //printf("drag_dist: %f\n", drag_dist);
     }
 }
 
@@ -103,6 +104,7 @@ static void check_gl(const char *where) {
     GLenum e = glGetError();
     if (e != GL_NO_ERROR) {
         fprintf(stderr, "GL error 0x%04x at %s\n", e, where);
+
         exit(1);
     }
 }
@@ -275,6 +277,40 @@ static GLuint link_program(GLuint vs, GLuint fs) {
 
 // clang-format off
 
+const char *kVS_stroke = SHADER(
+    layout(location=0) in vec4 in_xy_radii;
+    layout(location=1) in vec4 in_col;
+    uniform vec2 fScreenPx;
+    uniform vec3 center_and_zoom;
+    out vec4 v_col;
+    out vec4 v_uv_radii;
+    void main() {
+        vec2 xy = in_xy_radii.xy;
+        // 0    1/5
+        // 2/4    3
+        int corner = gl_VertexID % 6;
+        vec2 uv;
+        uv.x = ((corner&1)!=0) ? 1.0 : -1.0;
+        uv.y = (corner>=2 && corner<=4) ? 1.0 : -1.0;
+        uv *= in_xy_radii.ww;
+        xy += uv;
+        v_uv_radii = vec4(uv, in_xy_radii.zw);
+        v_col = in_col;
+        xy = xy * center_and_zoom.z + center_and_zoom.xy;
+        xy.y = fScreenPx.y - xy.y;
+        gl_Position = vec4(xy * 2.0 / fScreenPx - 1.0, 0.0, 1.0);
+    });
+const char *kFS_stroke = SHADER(
+    in vec4 v_col;
+    in vec4 v_uv_radii;
+    out vec4 o_color;
+    void main() {
+        float d = length(v_uv_radii.xy);
+        vec4 col = vec4(v_col.xyz * v_col.w, v_col.w);
+        float alpha = clamp(1.f-(d-v_uv_radii.z)/(v_uv_radii.w-v_uv_radii.z), 0.f, 1.f) * 0.5f;
+        o_color = col * alpha;
+    }
+    );
 const char *kVS_fat = SHADER(
     layout(location=0) in vec2 in_p1;
     layout(location=1) in vec2 in_p2;
@@ -309,7 +345,14 @@ const char *kVS_fat = SHADER(
         p=p+t+n;
         v_uv  = uv;
         v_col = in_col;
-        v_width_len_softness_character = vec4(hw, len, 1.f/(1.f+in_width_softness.y), in_character);
+        float sdf_scale;
+        if (in_width_softness.y >=0.f) {
+            sdf_scale = 1.f/(1.f+in_width_softness.y);
+        } else {
+            sdf_scale = in_width_softness.y;
+        }
+        
+        v_width_len_softness_character = vec4(hw, len, sdf_scale, in_character);
         p*=2.f/fScreenPx;
         p-=1.f;
         p.y=-p.y;
@@ -332,7 +375,11 @@ const char *kFS_fat = SHADER(
         float sdf;
         if (v_width_len_softness_character.w == 0) {
             sdf = v_width_len_softness_character.x-length(uv);
-            sdf *= v_width_len_softness_character.z;
+            if (v_width_len_softness_character.z > 0.) {
+               sdf *= v_width_len_softness_character.z;
+            } else {
+                sdf = -(abs(sdf + v_width_len_softness_character.z) + v_width_len_softness_character.z);
+            }
         } else {
             sdf=(texture(uFont, v_txt).r - 0.5f) * v_width_len_softness_character.x * 0.5f + 0.5f;
         }
@@ -781,6 +828,7 @@ static float retina = 1.0f;
 
 GLuint ui_pass = 0, user_pass = 0, bloom_pass = 0, taa_pass = 0, secmon_pass = 0;
 GLuint vs = 0, fs_ui = 0, fs_bloom = 0, fs_taa = 0, fs_secmon = 0;
+GLuint stroke_prog = 0;
 GLuint pbos[3];
 int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
@@ -1245,6 +1293,34 @@ static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     curE->need_scroll_update = true;
 }
 
+
+static void unbind_textures_from_slots(int num_slots) {
+    for (int i = 0; i < num_slots; ++i) {
+        glActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+}
+
+void init_dynamic_buffer(int n, GLuint *vao, GLuint *vbo, int attrib_count, const uint32_t *attrib_sizes,
+                         const uint32_t *attrib_types, const uint32_t *attrib_offsets, uint32_t max_elements, uint32_t stride) {
+    glGenVertexArrays(n, vao);
+    glGenBuffers(n, vbo);
+    for (int i = 0; i < n; i++) {
+        glBindVertexArray(vao[i]);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo[i]);
+        if (max_elements > 0)
+            glBufferData(GL_ARRAY_BUFFER, stride * max_elements, NULL, GL_DYNAMIC_DRAW); // pre-alloc
+        for (int j = 0; j < attrib_count; j++) {
+            glEnableVertexAttribArray(j);
+            glVertexAttribPointer(j, attrib_sizes[j], attrib_types[j], attrib_types[j] == GL_UNSIGNED_BYTE ? GL_TRUE : GL_FALSE,
+                                  stride, (void *)(size_t)attrib_offsets[j]);
+            glVertexAttribDivisor(j, 1);
+        }
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+}
+
 #include "sample_selector.h"
 #include "canvas.h"
 
@@ -1331,11 +1407,7 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             E->font_width = 32;
             E->font_height = E->font_width * 2;
             draw_umap(E, ptr);
-        } else if (E->editor_type == TAB_CANVAS) {
-            E->font_width = 32;
-            E->font_height = E->font_width * 2;
-            draw_canvas(E, ptr);
-        }
+        } 
 
         if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
             int x = tmw - strlen(status_bar) + 1;
@@ -1559,12 +1631,6 @@ static void init_audio_midi(ma_device *dev) {
     printf("ma_device_start success\n");
 }
 
-static void unbind_textures_from_slots(int num_slots) {
-    for (int i = 0; i < num_slots; ++i) {
-        glActiveTexture(GL_TEXTURE0 + i);
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-}
 
 static GLFWwindow *_win;
 
@@ -1702,25 +1768,6 @@ GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mod
     check_gl("load texture");
     glBindTexture(GL_TEXTURE_2D, 0);
     return tex;
-}
-
-void init_dynamic_buffer(GLuint vao[2], GLuint vbo[2], int attrib_count, const uint32_t *attrib_sizes, const uint32_t *attrib_types,
-                         const uint32_t *attrib_offsets, uint32_t max_elements, uint32_t stride) {
-    glGenVertexArrays(2, vao);
-    glGenBuffers(2, vbo);
-    for (int i = 0; i < 2; i++) {
-        glBindVertexArray(vao[i]);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo[i]);
-        glBufferData(GL_ARRAY_BUFFER, stride * max_elements, NULL, GL_DYNAMIC_DRAW); // pre-alloc
-        for (int j = 0; j < attrib_count; j++) {
-            glEnableVertexAttribArray(j);
-            glVertexAttribPointer(j, attrib_sizes[j], attrib_types[j], attrib_types[j] == GL_UNSIGNED_BYTE ? GL_TRUE : GL_FALSE,
-                                  stride, (void *)(size_t)attrib_offsets[j]);
-            glVertexAttribDivisor(j, 1);
-        }
-        glBindVertexArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
 }
 
 struct sky_t {
@@ -1913,6 +1960,12 @@ int main(int argc, char **argv) {
     glDeleteShader(fs_fat);
     glDeleteShader(vs_fat);
 
+    GLuint vs_stroke = compile_shader(NULL, GL_VERTEX_SHADER, kVS_stroke);
+    GLuint fs_stroke = compile_shader(NULL, GL_FRAGMENT_SHADER, kFS_stroke);
+    stroke_prog = link_program(vs_stroke, fs_stroke);
+    glDeleteShader(fs_stroke);
+    glDeleteShader(vs_stroke);
+
     load_file_into_editor(&tabs[TAB_SHADER]);
     load_file_into_editor(&tabs[TAB_AUDIO]);
     try_to_compile_shader(&tabs[TAB_SHADER]);
@@ -1951,8 +2004,10 @@ int main(int argc, char **argv) {
     static const uint32_t attrib_types[5] = {GL_FLOAT, GL_FLOAT, GL_FLOAT, GL_INT, GL_UNSIGNED_BYTE};
     static const uint32_t attrib_offsets[5] = {offsetof(line_t, p0x), offsetof(line_t, p1x), offsetof(line_t, width),
                                                offsetof(line_t, character), offsetof(line_t, col)};
-    init_dynamic_buffer(fatvao, fatvbo, 5, attrib_sizes, attrib_types, attrib_offsets, MAX_LINES, sizeof(line_t));
+    init_dynamic_buffer(2, fatvao, fatvbo, 5, attrib_sizes, attrib_types, attrib_offsets, MAX_LINES, sizeof(line_t));
     check_gl("init fat line buffer post");
+
+    init_stroke_buffer();
 
     // sphere init
     GLuint spheretbotex;
@@ -2071,7 +2126,8 @@ int main(int argc, char **argv) {
                         if (h->has_param(P_NUMBER))
                             value = max(value, h->get_param(P_NUMBER, 0.f));
                     }
-                    if (value==-1e10f) value=p->shader_param.value;
+                    if (value == -1e10f)
+                        value = p->shader_param.value;
                     p->shader_param.update(value, dt, reset_integration);
                     uniform4f(user_pass, p->key + 1, p->shader_param.value, p->shader_param.old_value,
                               p->shader_param.integrated_value, p->shader_param.old_integrated_value);
@@ -2161,7 +2217,17 @@ int main(int argc, char **argv) {
 
         draw_fullscreen_pass(0, G->fbw, G->fbh, vao);
         unbind_textures_from_slots(4);
+
         //////////////////////////////
+
+        if (curE->editor_type == TAB_CANVAS) {
+            curE->font_width = 32;
+            curE->font_height = curE->font_width * 2;
+            draw_canvas(curE);
+        }
+
+
+
 #define MOUSE_LEN 8
 #define MOUSE_MASK (MOUSE_LEN - 1)
         static float mxhistory[MOUSE_LEN], myhistory[MOUSE_LEN];
@@ -2182,11 +2248,9 @@ int main(int argc, char **argv) {
                 col = 0;
             add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
         }
+        
 
-        RawPen *pen = mac_pen_get();
-        if (pen) {
-            add_line(pen->x * G->fbw, pen->y * G->fbh, pen->x * G->fbw, pen->y * G->fbh, 0xffff00ff, 500.f * pen->pressure);
-        }
+
 
         static const uint32_t cc_cols[] = {
             0x3344ee, 0x3344ee, 0x4477ee, 0x4477ee, 0x33ccff, 0x33ccff, 0xffffee, 0xffffee,
@@ -2227,6 +2291,7 @@ int main(int argc, char **argv) {
             glBindBuffer(GL_ARRAY_BUFFER, 0);
             glDisable(GL_BLEND);
             line_count = 0;
+            check_gl("fat line draw post");
         }
 
         G->ui_alpha += (G->ui_alpha_target - G->ui_alpha) * 0.1;
@@ -2274,7 +2339,7 @@ int main(int argc, char **argv) {
 
         // pump wave load requests
         pump_wave_load_requests_main_thread();
-        //usleep(100000);
+        // usleep(100000);
     }
 
     dump_settings();

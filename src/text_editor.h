@@ -75,6 +75,12 @@ enum {
     TAB_LAST
 };
 
+typedef struct stroke_t {
+    float x, y, inner_rad, outer_rad;
+    uint32_t col; // NOT premultiplied alpha
+} stroke_t;
+
+
 typedef struct EditorState {
     // all these arrays are stbds_arrs
     const char *fname;                           // name of the file
@@ -128,6 +134,14 @@ typedef struct EditorState {
     int filter_hash;
     int drag_type;
     // end of sample picker
+    // canvas
+    float cur_inner_rad;
+    float cur_outer_rad;
+    int cur_col_idx;
+    stroke_t **strokes;
+    int strokes_idx;
+
+    // end of canvas
 } EditorState;
 
 static inline bool isspaceortab(char c) { return c == ' ' || c == '\t'; }
@@ -602,12 +616,32 @@ void cancel_autocomplete(EditorState *E, bool completely_ban) {
         E->autocomplete_show_after = G->iTime + 10000.f; // completely ban autocomplete if you press escape.
 }
 
+void canvas_undo(EditorState *E);
+void canvas_redo(EditorState *E);
+
 void editor_key(GLFWwindow *win, EditorState *E, int key) {
-    int n = stbds_arrlen(E->str);
     int mods = key >> 16;
     int shift = mods & GLFW_MOD_SHIFT;
     int ctrl = mods & GLFW_MOD_CONTROL;
     int super = mods & GLFW_MOD_SUPER;
+    if (E->editor_type == TAB_CANVAS) {
+        if (super && (key&0xFFFF) == GLFW_KEY_Z) {
+            if (shift) canvas_redo(E); else canvas_undo(E);
+            return;
+        } else if (super && (key&0xFFFF) == GLFW_KEY_Y) {
+            canvas_redo(E);
+            return;
+        }
+        if (mods==0) {
+            if (key>='1' && key<='9') { E->cur_col_idx = key - '1'; return; }
+            if (key == '[') { E->cur_inner_rad /= 1.1; E->cur_outer_rad /= 1.1; }
+            if (key == ']') { E->cur_inner_rad *= 1.1; E->cur_outer_rad *= 1.1; }
+            if (key == '{') E->cur_inner_rad /= 1.1;
+            if (key == '}') E->cur_inner_rad *= 1.1;
+        }
+        return;
+    }
+    int n = stbds_arrlen(E->str);
     int has_selection = E->cursor_idx != E->select_idx;
     int set_target_x = 1;
     int reset_selection = 0;

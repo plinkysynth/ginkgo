@@ -85,9 +85,9 @@ static BOOL g_pen_valid = NO;
     return NO;
 }
 
-- (void)mouseDown:(NSEvent *)event   { [self handleMouseTabletEvent:event down:1]; }
-- (void)mouseDragged:(NSEvent *)event{ [self handleMouseTabletEvent:event down:1]; }
-- (void)mouseUp:(NSEvent *)event     { [self handleMouseTabletEvent:event down:0]; }
+- (void)mouseDown:(NSEvent *)event   { [self handleMouseTabletEvent:event down:1]; [self.nextResponder mouseDown:event];}
+- (void)mouseDragged:(NSEvent *)event{ [self handleMouseTabletEvent:event down:1]; [self.nextResponder mouseDragged:event];}
+- (void)mouseUp:(NSEvent *)event     { [self handleMouseTabletEvent:event down:0]; [self.nextResponder mouseUp:event];}
 
 - (void)handleMouseTabletEvent:(NSEvent *)event down:(int)down {
     if (event.subtype != NSEventSubtypeTabletPoint)

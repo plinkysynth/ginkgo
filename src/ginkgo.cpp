@@ -902,6 +902,8 @@ void parse_named_patterns_in_source(void) {
     }
     update_pattern_color_bitmasks(new_pattern_map_during_parse);
     update_pattern_uniforms(new_pattern_map_during_parse, G->patterns_map);
+    void update_all_pattern_over_colors(pattern_t *patterns, EditorState *E);
+    update_all_pattern_over_colors(new_pattern_map_during_parse, &tabs[TAB_CANVAS]);
     // TODO - let the old pattern table leak because concurrency etc
     G->patterns_map = new_pattern_map_during_parse;
     new_pattern_map_during_parse = NULL;

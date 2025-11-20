@@ -1948,7 +1948,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         for (int i = 0; i < 8; i++) {
                             if (cur_pattern->colbitmask & (1 << i) && t.x>=0 && t.x<TMW && t.y>=0 && t.y<TMH) {
                                 const uint32_t cols_bars[8] = { 0x444fff00, 0x400f0000, 0x430fd000, 0x0400f000, 0x0430fd00, 0x00400f00, 0x403f0d00, 0x11100000 };
-                                t.ptr[t.y * TMW + t.x] = cols_bars[i] | vertical_bar(i);
+                                int lvl = clamp((int)(cur_pattern->get_color_output(i)*16.f+0.5f), 0, 15);
+                                t.ptr[t.y * TMW + t.x] = cols_bars[i] | vertical_bar(lvl);
                                 t.x++;
                             }
                         }

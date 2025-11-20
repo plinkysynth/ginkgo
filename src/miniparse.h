@@ -102,20 +102,27 @@ typedef struct pattern_t { // a parsed version of a min notation string
         return 40.f * 40.f / dsq * 10.f;
     }
     float get_color_output(int c) const {
-        static const float4 dots[7] = {
-            {0.333f, 0.333f, 0.333f, 0.f}, // white
-            {1.f, -0.5f, -0.5f, 0.f}, // red
-            {0.5f, 0.5f, -1.f, 0.f}, // yellow
-            {-0.5f, 1.f, -0.5f, 0.f}, // green
-            {-1.f, 0.5f, 0.5f, 0.f}, // cyan
-            {-0.5f, -0.5f, 1.f, 0.f}, // blue
-            {0.5f, -1.f, 0.5f, 0.f}, // pink
+        static const float4 cols[8] = {
+            {1,1,1,0}, // white
+            {1,0,0,0}, // red
+            {1,0.81,0,0}, // yellow
+            {0,1,0,0}, // green
+            {0,1,0.81,0}, // cyan
+            {0,0,1,0}, // blue
+            {0.81,0,1,0}, // pink
+            {0,0,0,0}, // black
         };
         switch (c) {
             case 8: return x * (1.f / 1920.f);
             case 9: return 1.f - y * (1.f / 1080.f);
-            case 7: return 1.f - (over_color.x + over_color.y + over_color.z) * 0.333f; // black
-            case 0 ... 6: return dot(dots[c], over_color);
+            case 0 ... 7: {
+                if (over_color.w<=0.f) return 0.f;
+                float4 oc = over_color / over_color.w;
+                oc.w = 0.f;
+                float rv = 1.f - length(cols[c] - oc);
+                if (rv<0.f) return 0.f;
+                return rv * over_color.w;
+            }
             default: return 0.f;
         }
     }

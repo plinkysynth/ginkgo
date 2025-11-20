@@ -25,6 +25,49 @@ void canvas_redo(EditorState *E) {
     }
 }
 
+void update_pattern_over_color(pattern_t *p, EditorState *canvasE) {
+    if (!canvasE || !p || !canvasE->strokes) return;
+    if (!p->colbitmask)
+    return;
+    assert(canvasE->editor_type == TAB_CANVAS);
+    stroke_t *strokes = canvasE->strokes[canvasE->strokes_idx];
+    float4 over_color = {0.f};
+    // TODO : acceleration structure for the strokes.
+    for (int i = 0; i < stbds_arrlen(strokes); i++) {
+        stroke_t *s = &strokes[i];
+        float dx = s->x - p->x;
+        float dy = s->y - p->y;
+        float dsq = dx*dx+dy*dy;
+        float inner_rad = s->inner_rad;
+        float outer_rad = s->outer_rad + 10.f; // always add a bit of softness
+        if (dsq > outer_rad*outer_rad) continue;
+        float alpha;
+        float d= sqrtf(dsq);
+        if (d <= s->inner_rad) alpha=1.f; 
+        else alpha=1.f-(d-inner_rad)/(outer_rad-inner_rad);
+        if (alpha<0.f) continue;
+        alpha*=(s->col>>24)/255.f;
+        over_color *= (1.f-alpha);
+        over_color.x += ((s->col>>0)&0xff)*(alpha/255.f);
+        over_color.y += ((s->col>>8)&0xff)*(alpha/255.f);
+        over_color.z += ((s->col>>16)&0xff)*(alpha/255.f);
+        over_color.w += alpha;
+    }
+    p->over_color = over_color;
+}
+
+void update_all_pattern_over_colors(pattern_t *patterns, EditorState *E) {
+    for (int i = 0; i < stbds_shlen(patterns); i++) {
+        pattern_t *p = &patterns[i];
+        if (p->x == 0.f && p->y == 0.f) {
+            // uninited position
+            p->x = i * 60.f + 30.f;
+            p->y = 1080.f / 4.f;
+        }
+        update_pattern_over_color(p, E);
+    }
+}
+
 void draw_canvas(EditorState *E) {
     update_zoom_and_center(E);
     const static uint32_t cols[] = {0xffffffff, 0xff0000ee, 0xff00d0fc, 0xff00ee00, 0xfffcd000,
@@ -123,11 +166,6 @@ void draw_canvas(EditorState *E) {
         pattern_t *p = &G->patterns_map[i];
         if (!p->colbitmask)
             continue;
-        if (p->x == 0.f && p->y == 0.f) {
-            // uninited position
-            p->x = i * 60.f + 30.f;
-            p->y = 1080.f / 4.f;
-        }
         float px = p->x * E->zoom_sm + E->centerx_sm;
         float py = p->y * E->zoom_sm + E->centery_sm;
         int cbm = p->colbitmask & 0xff;
@@ -135,9 +173,12 @@ void draw_canvas(EditorState *E) {
         float dmx = x - p->x, dmy = y - p->y;
         float dm = sqrtf(dmx * dmx + dmy * dmy);
         if (dm < 20.f + extrarad && hover_pattern_idx == -1) {
+            uint32_t overcol = (int(p->over_color.x * 255.f)<<0) | (int(p->over_color.y * 255.f)<<8) | (int(p->over_color.z * 255.f)<<16) | (int(p->over_color.w * 255.f)<<24);
+            add_line(px, py, px, py, overcol, (20.f + 8.f) * E->zoom_sm * 2.f);
             add_line(px, py, px, py, 0xffffffff, (20.f + 4.f) * E->zoom_sm * 2.f);
             hover_pattern_idx = i;
         }
+        add_line(px, py, px, py, 0xff000000, (21.f) * E->zoom_sm * 2.f); // outline
         if (!cbm) {
             add_line(px, py, px, py, 0xff808080, (20.f) * E->zoom_sm * 2.f);
             continue;
@@ -178,7 +219,6 @@ void draw_canvas(EditorState *E) {
     inner_rad *= pressure_to_size;
     outer_rad *= pressure_to_size;
 
-    // 181 160 32
     static float y_offsets[9] = {};
     for (int i = 0; i < countof(cols); i++) {
         int c = cols[i];
@@ -216,6 +256,7 @@ void draw_canvas(EditorState *E) {
             pattern_t *p = &G->patterns_map[drag_pattern_idx];
             p->x = x;
             p->y = y;
+            update_pattern_over_color(p, E);
         } else {
             if (!was_drawing) {
                 // append a copy of the current strokes to the undo history
@@ -295,12 +336,14 @@ void draw_canvas(EditorState *E) {
             glBindBuffer(GL_ARRAY_BUFFER, strokevbo);
             glBufferData(GL_ARRAY_BUFFER, stroke_capacity * sizeof(stroke_t), E->strokes[E->strokes_idx], GL_DYNAMIC_DRAW);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
+            update_all_pattern_over_colors(G->patterns_map, E);
         } else {
             if (stroke_dirty_from < stroke_count) {
                 glBufferSubData(GL_ARRAY_BUFFER, stroke_dirty_from * sizeof(stroke_t),
                                 (stroke_count - stroke_dirty_from) * sizeof(stroke_t),
                                 E->strokes[E->strokes_idx] + stroke_dirty_from);
                 stroke_dirty_from = stroke_count;
+                update_all_pattern_over_colors(G->patterns_map, E);
             }
         }
         check_gl("stroke draw post1");

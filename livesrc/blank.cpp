@@ -8,7 +8,7 @@
        , [[- rim:0 - -] late 0.2] 
          , [- - - - - bd ^ 0.25 - -]] dist 0.1
 
-/colors sd * 16 gain near /foobar 
+/colors sd * 16 gain yellow 
 /foobar 1
 
 
@@ -35,8 +35,8 @@ struct song : public song_base_t {
   plinkyverb_t reverb;
   stereo do_sample(stereo inp) {
       stereo x = (s1("/pattern", 0.75));
-      x += delay(x, st(0.75,1.), 0.75)*0.3;
-      x+=reverb(x*0.1 + preview * 0.1f);
+      //x += delay(x, st(0.75,1.), 0.75)*0.3;
+      //x+=reverb(x*0.1 + preview * 0.1f);
      //x+=s2("/zpattern", 0.5);
       //x+=s2("/breakz",0.5);
       //x+=inp*10.;

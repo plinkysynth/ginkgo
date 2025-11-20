@@ -170,7 +170,7 @@ static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' 
 static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<' || c == '#'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
-static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end) {
+static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end, float maxval = -1.f) {
     int i = stbds_arrlen(p->nodes);
     Node n = (Node){.type = (uint8_t)node_type,
                     .start = start,
@@ -180,6 +180,8 @@ static int make_node(pattern_maker_t *p, int node_type, int first_child, int nex
                     .next_sib = next_sib,
                     .total_length = 0,
                     .num_children = 0};
+    if (maxval !=-1.f) 
+        n.max_value = maxval;
     stbds_arrput(p->nodes, n);
     return i;
 }
@@ -537,6 +539,7 @@ pattern_t *new_pattern_map_during_parse = NULL;
 pattern_t *get_pattern(const char *name) { return stbds_shgetp_null(G->patterns_map, name); }
 
 static int parse_call(pattern_maker_t *p) {
+    skipws(p);
     const char *start = p->s + p->i;
     const char *end = skip_path(start, p->s + p->n);
     const char *name = temp_cstring_from_span(start, end);
@@ -595,6 +598,30 @@ static int parse_expr_inner(pattern_maker_t *p) {
             p->nodes[nidx].max_value = p->nodes[nidx].min_value = cc;
             return nidx;
         }
+        case HASH("white"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 0.f);
+        case HASH("red"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 1.f);
+        case HASH("yellow"):
+        case HASH("orange"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 2.f);
+        case HASH("green"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 3.f);
+        case HASH("teal"):
+        case HASH("cyan"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 4.f);
+        case HASH("blue"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 5.f);
+        case HASH("pink"):
+        case HASH("purple"):
+        case HASH("maganta"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 6.f);
+        case HASH("black"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 7.f);
+        case HASH("x"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 8.f);
+        case HASH("y"):
+            return make_node(p, N_COLOR, -1, -1, start_i, p->i, 9.f);
         case HASH("up"):
             return make_node(p, N_UP, -1, -1, start_i, p->i);
         case HASH("down"):
@@ -628,6 +655,15 @@ static int parse_expr_inner(pattern_maker_t *p) {
         case HASH("randi"): {
             int param = parse_expr_inner(p);
             return make_node(p, N_RANDI, param, -1, start_i, p->i);
+        }
+        case HASH("near"): {
+            int param = parse_call(p);
+            if (param <0) {
+                error(p, "expected pattern name after near");
+                return -1;
+            }
+            return make_node(p, N_NEAR, -1, -1, start_i, p->i, p->nodes[param].max_value);        
+        
         }
         default:
             p->i = start_i;
@@ -799,7 +835,7 @@ static void update_lengths(pattern_maker_t *p, int node) {
     // leaf nodes dont want to overwrite their max value with the max of their children (real data is there!)
     // poly nodes use it as a hack for the % figure.
     // single child elongate nodes use it as a count to elongate by.
-    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID) {
+    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID && n->type != N_NEAR && n->type != N_COLOR) {
         n->max_value = max_value;
     }
 }
@@ -832,7 +868,8 @@ void test_minipat(void) {
     // const char *s = "[a b c] * [2 1]"; // test rest in second half
     //const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
     //const char *s = "bd,bd,\n";
-    const char *s = "{a b c, d e}%4";
+    //const char *s = "{a b c, d e}%4";
+    const char *s = "near /bd";
     // const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";

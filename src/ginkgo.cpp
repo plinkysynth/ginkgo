@@ -82,7 +82,7 @@ void update_multitouch_dragging(void) {
         xx /= num_finger_dragging;
         yy /= num_finger_dragging;
         drag_dist = sqrtf(square(xx) + square(yy));
-        //printf("drag_dist: %f\n", drag_dist);
+        // printf("drag_dist: %f\n", drag_dist);
     }
 }
 
@@ -326,15 +326,16 @@ const char *kVS_fat = SHADER(
     void main() {
         vec2 p1 = in_p1, p2 = in_p2;
         float hw = abs(0.5 * in_width_softness.x);
+        float hw_plus_1 = hw+1.f;
         vec2 dir = p2-p1;
         float len = length(dir);
-        vec2 t = (len<1e-6) ? vec2(0.0f, hw) : dir * -(hw/len);
+        vec2 t = (len<1e-6) ? vec2(0.0f, hw_plus_1) : dir * -(hw_plus_1/len);
         vec2 n = vec2(-t.y, t.x);
         // 0    1/5
         // 2/4    3
         int corner = gl_VertexID % 6;
         vec2 p = p1;
-        float vhw = hw; 
+        float vhw = hw_plus_1; 
         if (in_width_softness.x < 0.) { vhw = 0.; t=vec2(0.); } // square cap if in_width is negative
         if (in_character != 0) { vhw *= 0.5f; t*=0.5f; } // half width for characters
         vec2 uv = vec2(-hw,-vhw);
@@ -838,12 +839,48 @@ void set_tab(EditorState *newE) {
     curE = newE;
 }
 
+int update_pattern_color_bitmask(pattern_t *patterns, pattern_t *root, pattern_t *p, int depth) {
+    int mask = 0;
+    for (int j = 0; j < stbds_arrlen(p->bfs_nodes); j++) {
+        if (p->bfs_nodes[j].type == N_COLOR) {
+            mask |= 1 << (int)p->bfs_min_max_value[j].mx;
+        }
+        if (p->bfs_nodes[j].type == N_NEAR) {
+            mask |= 1<<24;
+            int pidx = (int)p->bfs_min_max_value[j].mx;
+            if (pidx >= 0 && pidx < stbds_shlen(patterns)) {
+                pattern_t *target_pat = &patterns[pidx];
+                target_pat->colbitmask |= 1<<25; // target of a near... to make the node appear in the canvas.
+            }
+        }
+        /* TODO: add upper bits and _color words to allow for nested colors via call. 
+        if (p->bfs_nodes[j].type == N_CALL && depth < 4) {
+            int patidx = (int)p->bfs_min_max_value[j].mx;
+            if (patidx >= 0 && patidx < stbds_shlen(patterns)) {
+                pattern_t *pat = &patterns[patidx];
+                mask |= update_pattern_color_bitmask(patterns, root, pat, depth + 1);
+            }
+        }*/
+    }
+    return mask;
+}
+
+void update_pattern_color_bitmasks(pattern_t *patterns) {
+    for (int i = 0; i < stbds_shlen(patterns); i++) {
+        pattern_t *p = &patterns[i];
+        p->colbitmask = update_pattern_color_bitmask(patterns, p, p, 0);
+    }
+}
+
 void update_pattern_uniforms(pattern_t *patterns, pattern_t *prev_patterns) {
     for (int i = 0; i < stbds_shlen(patterns); i++) {
         pattern_t *p = &patterns[i];
         pattern_t *prev_p = stbds_shgetp_null(prev_patterns, p->key);
-        if (prev_p)
+        if (prev_p) {
             p->shader_param = prev_p->shader_param;
+            p->x = prev_p->x;
+            p->y = prev_p->y;
+        }
         p->uniform_idx = -1;
         if (user_pass && p->key && p->key[0] == '/') {
             p->uniform_idx = glGetUniformLocation(user_pass, p->key + 1);
@@ -863,6 +900,7 @@ void parse_named_patterns_in_source(void) {
         init_remapping(E);
         E->error_msgs = parse_named_patterns_in_source(E->str, E->str + stbds_arrlen(E->str), E->error_msgs);
     }
+    update_pattern_color_bitmasks(new_pattern_map_during_parse);
     update_pattern_uniforms(new_pattern_map_during_parse, G->patterns_map);
     // TODO - let the old pattern table leak because concurrency etc
     G->patterns_map = new_pattern_map_during_parse;
@@ -1293,7 +1331,6 @@ static void char_callback(GLFWwindow *win, unsigned int codepoint) {
     curE->need_scroll_update = true;
 }
 
-
 static void unbind_textures_from_slots(int num_slots) {
     for (int i = 0; i < num_slots; ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
@@ -1407,7 +1444,7 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             E->font_width = 32;
             E->font_height = E->font_width * 2;
             draw_umap(E, ptr);
-        } 
+        }
 
         if (status_bar_time > glfwGetTime() - 3.0 && status_bar_color) {
             int x = tmw - strlen(status_bar) + 1;
@@ -1630,7 +1667,6 @@ static void init_audio_midi(ma_device *dev) {
     }
     printf("ma_device_start success\n");
 }
-
 
 static GLFWwindow *_win;
 
@@ -2226,8 +2262,6 @@ int main(int argc, char **argv) {
             draw_canvas(curE);
         }
 
-
-
 #define MOUSE_LEN 8
 #define MOUSE_MASK (MOUSE_LEN - 1)
         static float mxhistory[MOUSE_LEN], myhistory[MOUSE_LEN];
@@ -2248,9 +2282,6 @@ int main(int argc, char **argv) {
                 col = 0;
             add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
         }
-        
-
-
 
         static const uint32_t cc_cols[] = {
             0x3344ee, 0x3344ee, 0x4477ee, 0x4477ee, 0x33ccff, 0x33ccff, 0xffffee, 0xffffee,

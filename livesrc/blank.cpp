@@ -8,6 +8,9 @@
        , [[- rim:0 - -] late 0.2] 
          , [- - - - - bd ^ 0.25 - -]] dist 0.1
 
+/colors sd * 16 gain near /foobar 
+/foobar 1
+
 
 /ropattern //[c a f e] blend /*=======*/cc(0) [c4 ] sus 0
 	[[[c4-g5]?0.2*12 ^ 0-1] rib 83 1 : sin * 0.0437 range 1. 1.4 : 
@@ -19,7 +22,8 @@
     //<[a1 a2 a1 a2] [c1 c2] [f1 f2 f1 f2] [g1 g2 g1 g2]> sus 0.8 cut 800 gain 0.3 string 0 glide 0.3
     <a1 c2 f1 g1>:-0.5 sus 0.9 cut 800 gain 0.3 dist 0.3 string 0 glide 0.6
     
-/pattern /ropattern
+// /pattern /ropattern
+/pattern /colors
 
 /bpm 101.4
 #endif
@@ -33,7 +37,7 @@ struct song : public song_base_t {
       stereo x = (s1("/pattern", 0.75));
       x += delay(x, st(0.75,1.), 0.75)*0.3;
       x+=reverb(x*0.1 + preview * 0.1f);
-     x+=s2("/zpattern", 0.5);
+     //x+=s2("/zpattern", 0.5);
       //x+=s2("/breakz",0.5);
       //x+=inp*10.;
       // final vu meter for fun

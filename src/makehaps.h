@@ -390,6 +390,19 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         float f= frac(when);
         appended = _append_number_hap(dst, nodeidx, hapid, (f<0.5f) ? 1.f-f*2.f : f*2.f-1.f);
         break;}
+    case N_NEAR: {
+        int pidx = (int)bfs_min_max_value[nodeidx].mx;
+        if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) {
+            pattern_t *pat = &G->patterns_map[pidx];
+            appended = _append_number_hap(dst, nodeidx, hapid, pat->get_near_output(this));
+        }
+        break;
+    }
+    case N_COLOR: {
+        float c = get_color_output((int)bfs_min_max_value[nodeidx].mx);
+        appended = _append_number_hap(dst, nodeidx, hapid, c);
+        break;
+    }
     case N_SIN:
         appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * M_PI * 2) * 0.5f + 0.5f);
         break;

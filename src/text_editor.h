@@ -1488,6 +1488,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     int grid_line_hilight = -1;
     uint32_t empty_bgcol = 0x11100000u;
     pattern_t *cur_pattern = NULL;
+    int cur_pattern_line = 0;
     hilite_region_t *hilites = NULL;
     int cursor_in_curve_hilite_idx = -1;
     // hap_t viz_hap_mem[128];
@@ -1590,6 +1591,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     ///////// START OF A NEW PATTERN
                     jump_after_columns();
                     cur_pattern = get_pattern(temp_cstring_from_span(s, e));
+                    cur_pattern_line = 0;
                     stbds_arrsetlen(hilites, 0);
                     if (cur_pattern) {
                         int n = stbds_arrlen(cur_pattern->bfs_nodes);
@@ -1776,6 +1778,34 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         wasinclude = true;
                         col = C_PREPROC;
                         break;
+                    case HASH("white"):
+                    col = 0xfff00;
+                    break;
+                    case HASH("red"):
+                    col = 0xf0000;
+                    break;
+                    case HASH("yellow"):
+                    case HASH("orange"):
+                    col = 0xfd000;
+                    break;
+                    case HASH("green"):
+                    col=0x0f000;
+                    break;
+                    case HASH("cyan"):
+                    case HASH("teal"):
+                    col=0x0fd00;
+                    break;
+                    case HASH("blue"):
+                    col=0x000f00;
+                    break;
+                    case HASH("pink"):
+                    case HASH("purple"):
+                    case HASH("maganta"):
+                    col=0xf0d00;
+                    break;
+                    case HASH("black"):
+                    col=0x000000;
+                    break;
                     default:
                         if (pattern_mode) {
                             Sound *s = get_sound_span(t.str + i, t.str + j);
@@ -1911,24 +1941,18 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
 
-                // add any haps that need visualizing
-                // if (grid_line_start != INVALID_LINE && viz_haps.e > viz_haps.s) {
-                //     int hapy = ysc - grid_line_start - 1;
-                //     int linestart = find_start_of_line(E, i);
-                //     int lineend = find_end_of_line(E, i);
-                //     uint32_t col = empty_bgcol | 0x55500u;
-                //     for (hap_t *hap = viz_haps.s; hap < viz_haps.e; hap++) {
-                //         if (hap->t0 >= hapy && hap->t0 < hapy + 1) {
-                //             const char *note = print_midinote(hap->params[P_NOTE]);
-                //             if (spanstr(E->str + linestart, E->str + lineend, note) == 0) { // only show ghost notes if not
-                //             already in the line
-                //                 t.x+=print_to_screen(t.ptr, t.x, t.y, col, false, " %s", print_midinote(hap->params[P_NOTE]));
-                //             }
-                //         }
-                //     }
-                // }
                 // fill to the end of the line
                 if (pattern_mode) {
+                    if (pattern_mode && cur_pattern && cur_pattern_line == 0 && cur_pattern->colbitmask) {
+                        t.x++;
+                        for (int i = 0; i < 8; i++) {
+                            if (cur_pattern->colbitmask & (1 << i) && t.x>=0 && t.x<TMW && t.y>=0 && t.y<TMH) {
+                                const uint32_t cols_bars[8] = { 0x444fff00, 0x400f0000, 0x430fd000, 0x0400f000, 0x0430fd00, 0x00400f00, 0x403f0d00, 0x11100000 };
+                                t.ptr[t.y * TMW + t.x] = cols_bars[i] | vertical_bar(i);
+                                t.x++;
+                            }
+                        }
+                    }
                     if (t.y >= 0 && t.y < TMH) {
                         for (; t.x < tmw; t.x++) {
                             if (t.x >= 0)
@@ -1944,6 +1968,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         if (grid_line_end == INVALID_LINE || t.y > grid_line_end)
                             grid_line_end = t.y;
                     }
+                    cur_pattern_line++;
                 }
 
                 t.x = left;

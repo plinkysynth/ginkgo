@@ -89,7 +89,36 @@ typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
     uint32_t seed;
     float *curvedata; // stb_ds
-
+    uint32_t colbitmask;
+    float4 over_color;
+    float x,y;
+    float get_near_output(pattern_t *other) const {
+        if (!other) return 0.f;
+        float dx = x - other->x;
+        float dy = y - other->y;
+        float dsq = (dx*dx+dy*dy);
+        // max is 10 at a distance of 40 pixels.
+        if (dsq < 40.f * 40.f) return 10.f;
+        return 40.f * 40.f / dsq * 10.f;
+    }
+    float get_color_output(int c) const {
+        static const float4 dots[7] = {
+            {0.333f, 0.333f, 0.333f, 0.f}, // white
+            {1.f, -0.5f, -0.5f, 0.f}, // red
+            {0.5f, 0.5f, -1.f, 0.f}, // yellow
+            {-0.5f, 1.f, -0.5f, 0.f}, // green
+            {-1.f, 0.5f, 0.5f, 0.f}, // cyan
+            {-0.5f, -0.5f, 1.f, 0.f}, // blue
+            {0.5f, -1.f, 0.5f, 0.f}, // pink
+        };
+        switch (c) {
+            case 8: return x * (1.f / 1920.f);
+            case 9: return 1.f - y * (1.f / 1080.f);
+            case 7: return 1.f - (over_color.x + over_color.y + over_color.z) * 0.333f; // black
+            case 0 ... 6: return dot(dots[c], over_color);
+            default: return 0.f;
+        }
+    }
     // stuff for shaders:
     int uniform_idx;
     shader_param_t shader_param;

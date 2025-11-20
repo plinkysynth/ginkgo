@@ -497,7 +497,7 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     }
     if (dist_actual > 0.f) {
         float mix = saturate(dist_actual * 10.f);
-        float distgain = exp(clamp(dist_actual, 0., 10.) * 2.f);
+        float distgain = exp(clamp(dist_actual, 0., 5.) * 4.f);
         au.l = lerp(au.l, sclip(au.l * distgain), mix);
         au.r = lerp(au.r, sclip(au.r * distgain), mix);
     }

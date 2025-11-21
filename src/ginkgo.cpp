@@ -9,7 +9,6 @@
 #endif
 #ifdef __WINDOWS__
 #define GLFW_EXPOSE_NATIVE_WIN32
-static inline int mkdir(const char *path, int mode) { return mkdir(path); }
 #endif
 #define GLFW_INCLUDE_NONE
 #include "3rdparty/glad/include/glad/glad.h"

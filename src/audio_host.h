@@ -181,7 +181,11 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     }
     char cmd[1024];
     int version = g_version + 1;
+#ifdef __WINDOWS__
+    mkdir("build");
+#else
     mkdir("build", 0755);
+#endif
     #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment " \
     "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ " BUILD_LIB
 #if USING_ASAN

@@ -99,7 +99,11 @@ const char*fetch_to_cache(const char *url, int prefer_offline, http_fetch_callba
     for (; *p; p++) {
         if (*p == '/') {
             *p = 0;
+            #ifdef __WINDOWS__
+            mkdir(out_path);
+            #else
             mkdir(out_path, 0755);
+            #endif
             *p = '/';
         }
     }

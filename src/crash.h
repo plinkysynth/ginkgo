@@ -1,3 +1,4 @@
+#ifdef __APPLE__
 #include <execinfo.h>
 #include <dlfcn.h>
 #include <signal.h>
@@ -99,4 +100,7 @@ void install_crash_handler(void) {
     sigaction(SIGFPE,  &sa, NULL); // divide by zero, FP exc.
     
 }
-
+#else
+void install_crash_handler(void) {
+}
+#endif

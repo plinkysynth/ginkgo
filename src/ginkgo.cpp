@@ -16,10 +16,8 @@
 #include <GLFW/glfw3native.h>
 #endif
 #include <stdio.h>
-#include <dlfcn.h>
 #include <time.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>

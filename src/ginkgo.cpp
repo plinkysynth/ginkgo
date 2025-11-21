@@ -5,8 +5,6 @@
 #ifdef __APPLE__
 #define GLFW_EXPOSE_NATIVE_COCOA
 #endif
-#ifdef __LINUX__
-#endif
 #ifdef __WINDOWS__
 #define GLFW_EXPOSE_NATIVE_WIN32
 #endif
@@ -1542,7 +1540,7 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
             fft_window = (float *)pffft_aligned_malloc(FFT_SIZE * sizeof(float));
 
             const float a0 = 0.42f, a1 = 0.5f, a2 = 0.08f;
-            const float scale = (float)(2.0 * M_PI) / (float)(FFT_SIZE - 1);
+            const float scale = (float)(2.0 * PI) / (float)(FFT_SIZE - 1);
             for (int i = 0; i < FFT_SIZE; ++i) {
                 float x = i * scale;
                 fft_window[i] = a0 - a1 * cosf(x) + a2 * cosf(2.0f * x);

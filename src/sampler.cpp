@@ -28,7 +28,7 @@ const char *trimurl(const char *url) {
 bool decode_file_to_f32(const char *path, wave_t *out) {
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0); // keep source ch/sr
     float *pcm = NULL;
-    uint64_t num_frames = 0;
+    ma_uint64 num_frames = 0;
     ma_result rc = ma_decode_file(path, &cfg, &num_frames, (void **)&pcm);
     if (rc != MA_SUCCESS || num_frames == 0) {
         free(pcm);

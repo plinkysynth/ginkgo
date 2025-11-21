@@ -1,6 +1,8 @@
 foo
 gpu
-ginkgo
+ginkgo_mac
+ginkgo_linux
+ginkgo_windows
 dsp.*.so
 build/
 .DS_Store

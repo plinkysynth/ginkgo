@@ -240,7 +240,7 @@ static inline svf_output_t svf_process_1pole(float *f, float x, float g) {
     float v = x - f[0];
     float lp = a * v + f[0];
     *f = lp + a * v; // TPT integrator update
-    return (svf_output_t){.lp = lp, .hp = x - lp, .bp = a * v};
+    return (svf_output_t){.lp = lp, .bp = a * v, .hp = x - lp};
 }
 
 // approximation to tanh for 0-0.25 nyquist.

@@ -2,10 +2,19 @@
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
 #define MINIAUDIO_IMPLEMENTATION
+#ifdef __APPLE__
 #define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #include <OpenGL/gl3.h> // core profile headers
+#endif
+#ifdef __LINUX__
+#define GL_GLEXT_PROTOTYPES
+#include <GL/gl.h>
+#include <GL/glext.h>
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+#endif
 #include <stdio.h>
 #include <dlfcn.h>
 #include <time.h>
@@ -26,7 +35,7 @@
 #include "ginkgo.h"
 #include "utils.h"
 #include "audio_host.h"
-#include "midi_mac.h"
+#include "midi.h"
 #include "sampler.h"
 #include "text_editor.h"
 #include "svf_gain.h"
@@ -1630,28 +1639,8 @@ void on_midi_input(uint8_t data[3], void *user) {
 
 // Audio and MIDI initialization
 static void init_audio_midi(ma_device *dev) {
-    int num_inputs = midi_get_num_inputs();
-    int num_outputs = midi_get_num_outputs();
-    printf("midi: " COLOR_GREEN "%d" COLOR_RESET " inputs, " COLOR_GREEN "%d" COLOR_RESET " outputs\n", num_inputs, num_outputs);
-
-    int midi_input_idx = 0;
-    for (int i = 0; i < num_inputs; ++i) {
-        const char *name = midi_get_input_name(i);
-        if (strstr(name, "Music Thing")) {
-            midi_input_idx = i;
-            break;
-        }
-    }
-    for (int i = 0; i < num_inputs; ++i) {
-        const char *name = midi_get_input_name(i);
-        printf("input %d: %c" COLOR_YELLOW "%s" COLOR_RESET "\n", i, (i == midi_input_idx) ? '*' : ' ', name);
-    }
-
     midi_init(on_midi_input, NULL);
-    printf("opening input %d\n", midi_input_idx);
-    midi_open_input(midi_input_idx);
     printf("starting audio - device config init\n");
-
     ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
     cfg.sampleRate = SAMPLE_RATE_OUTPUT;
     cfg.capture.format = cfg.playback.format = ma_format_f32;

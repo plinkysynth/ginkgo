@@ -1,6 +1,12 @@
 #include "wavfile.h"
 #include <sys/time.h>
 #include <stdatomic.h>
+
+#ifdef __APPLE__
+#define BUILD_LIB "build/mac/ginkgo_lib.a"
+#elif defined(__LINUX__)
+#define BUILD_LIB "build/linux/ginkgo_lib.a"
+#endif
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // hot reload and scope
 
@@ -18,9 +24,23 @@ int xyscope[128][128];
 uint32_t scope_pos = 0;
 
 static inline uint64_t nsec_now(void) {
-    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); // excludes sleep; great for profiling
-    // return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW); // includes sleep
-  }
+#if defined(__APPLE__)
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
+#elif defined(__LINUX__)
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
+#elif defined(__WINDOWS__)
+    LARGE_INTEGER f, t;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t);
+    return uint64_t(t.QuadPart) * 1000000000ull / uint64_t(f.QuadPart);
+#else
+    #error unsupported platform
+#endif  
+}
 
 static frame_update_func_t g_frame_update_func = NULL;
 static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
@@ -153,7 +173,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     int version = g_version + 1;
     mkdir("build", 0755);
     #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment " \
-    "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ build/ginkgo_lib.a "
+    "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ " BUILD_LIB
 #if USING_ASAN
     #define SANITIZE_OPTIONS "-fsanitize=address"
 #else

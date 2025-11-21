@@ -2,7 +2,7 @@ foo
 gpu
 ginkgo_mac
 ginkgo_linux
-ginkgo_windows
+ginkgo_windows.exe
 dsp.*.so
 build/
 .DS_Store

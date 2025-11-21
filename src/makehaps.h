@@ -592,6 +592,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             P_NUMBER);
         break;
     }
+    /*
     case N_OP_BLEND: {
         hap_t tmp_mem[tmp_size*3];
         hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
@@ -614,6 +615,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
+        */
     case N_OP_RIBBON: {
         hap_t tmp_mem[tmp_size*2];
         hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};

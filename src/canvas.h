@@ -2,6 +2,85 @@ GLuint strokevao = 0, strokevbo = 0;
 int stroke_capacity = 1024;
 int stroke_dirty_from = 0;
 
+bool load_canvas(EditorState *E) {
+    sj_Reader r = read_json_file(E->fname);
+    for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
+        if (iter_key_is(&outer, "patterns")) {
+            for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
+                const char *patname = temp_cstring_from_span(inner.key.start, inner.key.end);
+                pattern_t *p = get_pattern(patname);
+                if (!p) continue;
+                for (sj_iter_t inner2 = iter_start(inner.r, &inner.val); iter_next(&inner2);) {
+                    if (iter_key_is(&inner2, "x")) {
+                        p->x = iter_val_as_float(&inner2, p->x);
+                    } else if (iter_key_is(&inner2, "y")) {
+                        p->y = iter_val_as_float(&inner2, p->y);
+                    }
+                }
+            } // pattern loop
+        } // patterns object
+        if (iter_key_is(&outer, "strokes")) {
+            stroke_t *strokes = NULL;
+            for (sj_iter_t strokearr = iter_start(outer.r, &outer.val); iter_next(&strokearr);) {
+                sj_iter_t strokeval = iter_start(strokearr.r, &strokearr.val);
+                stroke_t s={};
+                iter_next(&strokeval);
+                s.x = iter_val_as_float(&strokeval, 0.f);
+                iter_next(&strokeval);
+                s.y = iter_val_as_float(&strokeval, 0.f);
+                iter_next(&strokeval);
+                s.inner_rad = iter_val_as_float(&strokeval, 0.f);
+                iter_next(&strokeval);
+                s.outer_rad = iter_val_as_float(&strokeval, 0.f);
+                iter_next(&strokeval);
+                s.col = iter_val_as_uint(&strokeval, 0xffffffff);
+                iter_next(&strokeval);
+                stbds_arrpush(strokes, s);
+            }
+            stbds_arrpush(E->strokes, strokes);
+            E->strokes_idx = stbds_arrlen(E->strokes)-1;
+            stroke_dirty_from=0;            
+        }
+    } // outer loop
+    free_json(&r);
+    return true;
+}
+
+bool save_canvas(EditorState *E) {
+    FILE *f = fopen(E->fname, "wb");
+    if (!f)
+        return false;
+    json_printer_t jp = {f};
+    json_start_object(&jp, NULL);
+    json_start_object(&jp, "patterns");
+    for (int i = 0; i < stbds_shlen(G->patterns_map); i++) {
+        pattern_t *p = &G->patterns_map[i];
+        if (!p->colbitmask)
+            continue;
+        json_start_object(&jp, p->key);
+        json_print(&jp, "x", p->x);
+        json_print(&jp, "y", p->y);
+        json_end_object(&jp);
+    }
+    json_end_object(&jp); // patterns
+
+    json_start_array(&jp, "strokes");
+    stroke_t *strokes = E->strokes ? E->strokes[E->strokes_idx] : NULL;
+    for (int i = 0; i < stbds_arrlen(strokes); ++i) {
+        json_start_array(&jp, "");
+        json_print(&jp, "x", strokes[i].x);
+        json_print(&jp, "y", strokes[i].y);
+        json_print(&jp, "inner_rad", strokes[i].inner_rad);
+        json_print(&jp, "outer_rad", strokes[i].outer_rad);
+        json_print(&jp, "col", strokes[i].col);
+        json_end_array(&jp);
+    }
+    json_end_array(&jp); // strokes
+    json_end_object(&jp); // anonymous {}
+    json_end_file(&jp);
+    return true;
+}
+
 void init_stroke_buffer(void) {
     static const uint32_t attrib_sizes[2] = {4, 4};
     static const uint32_t attrib_types[2] = {GL_FLOAT, GL_UNSIGNED_BYTE};
@@ -26,9 +105,10 @@ void canvas_redo(EditorState *E) {
 }
 
 void update_pattern_over_color(pattern_t *p, EditorState *canvasE) {
-    if (!canvasE || !p || !canvasE->strokes) return;
+    if (!canvasE || !p || !canvasE->strokes)
+        return;
     if (!p->colbitmask)
-    return;
+        return;
     assert(canvasE->editor_type == TAB_CANVAS);
     stroke_t *strokes = canvasE->strokes[canvasE->strokes_idx];
     float4 over_color = {0.f};
@@ -37,20 +117,24 @@ void update_pattern_over_color(pattern_t *p, EditorState *canvasE) {
         stroke_t *s = &strokes[i];
         float dx = s->x - p->x;
         float dy = s->y - p->y;
-        float dsq = dx*dx+dy*dy;
+        float dsq = dx * dx + dy * dy;
         float inner_rad = s->inner_rad;
         float outer_rad = s->outer_rad + 10.f; // always add a bit of softness
-        if (dsq > outer_rad*outer_rad) continue;
+        if (dsq > outer_rad * outer_rad)
+            continue;
         float alpha;
-        float d= sqrtf(dsq);
-        if (d <= s->inner_rad) alpha=1.f; 
-        else alpha=1.f-(d-inner_rad)/(outer_rad-inner_rad);
-        if (alpha<0.f) continue;
-        alpha*=(s->col>>24)/255.f;
-        over_color *= (1.f-alpha);
-        over_color.x += ((s->col>>0)&0xff)*(alpha/255.f);
-        over_color.y += ((s->col>>8)&0xff)*(alpha/255.f);
-        over_color.z += ((s->col>>16)&0xff)*(alpha/255.f);
+        float d = sqrtf(dsq);
+        if (d <= s->inner_rad)
+            alpha = 1.f;
+        else
+            alpha = 1.f - (d - inner_rad) / (outer_rad - inner_rad);
+        if (alpha < 0.f)
+            continue;
+        alpha *= (s->col >> 24) / 255.f;
+        over_color *= (1.f - alpha);
+        over_color.x += ((s->col >> 0) & 0xff) * (alpha / 255.f);
+        over_color.y += ((s->col >> 8) & 0xff) * (alpha / 255.f);
+        over_color.z += ((s->col >> 16) & 0xff) * (alpha / 255.f);
         over_color.w += alpha;
     }
     p->over_color = over_color;
@@ -137,7 +221,7 @@ void draw_canvas(EditorState *E) {
         }
         if (cbm & (1 << 24)) {
             // near
-            for (int j=0;j<stbds_arrlen(p->bfs_nodes);j++) {
+            for (int j = 0; j < stbds_arrlen(p->bfs_nodes); j++) {
                 if (p->bfs_nodes[j].type == N_NEAR) {
                     int pidx = (int)p->bfs_min_max_value[j].mx;
                     if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) {
@@ -146,12 +230,14 @@ void draw_canvas(EditorState *E) {
                         float tpy = target_pat->y * E->zoom_sm + E->centery_sm;
                         float nearness = p->get_near_output(target_pat);
                         if (nearness > 0.f) {
-                            float dx = (tpx-px);
-                            float dy = (tpy-py);
-                            float d=sqrtf(dx*dx+dy*dy);
-                            if (d) { 
-                                dx*=arrowhead/d; dy*=arrowhead/d; 
-                                tpx -= dx*((20.f+lw)/15.f); tpy -= dy*((20.f+lw)/15.f);
+                            float dx = (tpx - px);
+                            float dy = (tpy - py);
+                            float d = sqrtf(dx * dx + dy * dy);
+                            if (d) {
+                                dx *= arrowhead / d;
+                                dy *= arrowhead / d;
+                                tpx -= dx * ((20.f + lw) / 15.f);
+                                tpy -= dy * ((20.f + lw) / 15.f);
                                 add_line(px, py, tpx, tpy, 0xffffffff, lw * nearness);
                                 add_line(tpx, tpy, tpx - dx - dy, tpy - dy + dx, 0xffffffff, lw * nearness);
                                 add_line(tpx, tpy, tpx - dx + dy, tpy - dy - dx, 0xffffffff, lw * nearness);
@@ -173,7 +259,8 @@ void draw_canvas(EditorState *E) {
         float dmx = x - p->x, dmy = y - p->y;
         float dm = sqrtf(dmx * dmx + dmy * dmy);
         if (dm < 20.f + extrarad && hover_pattern_idx == -1) {
-            uint32_t overcol = (int(p->over_color.x * 255.f)<<0) | (int(p->over_color.y * 255.f)<<8) | (int(p->over_color.z * 255.f)<<16) | (int(p->over_color.w * 255.f)<<24);
+            uint32_t overcol = (int(p->over_color.x * 255.f) << 0) | (int(p->over_color.y * 255.f) << 8) |
+                               (int(p->over_color.z * 255.f) << 16) | (int(p->over_color.w * 255.f) << 24);
             add_line(px, py, px, py, overcol, (20.f + 8.f) * E->zoom_sm * 2.f);
             add_line(px, py, px, py, 0xffffffff, (20.f + 4.f) * E->zoom_sm * 2.f);
             hover_pattern_idx = i;
@@ -206,8 +293,8 @@ void draw_canvas(EditorState *E) {
         float tx = (p->x + 30.f) * E->zoom_sm + E->centerx_sm;
         float ty = p->y * E->zoom_sm + E->centery_sm;
         for (const char *c = p->key; *c; c++) {
-            add_line(tx, ty, tx+0.001f, ty, 0xffffffff, 30.f * E->zoom_sm, 0.f, *c);
-            tx+=30.f * 0.5f * E->zoom_sm;
+            add_line(tx, ty, tx + 0.001f, ty, 0xffffffff, 30.f * E->zoom_sm, 0.f, *c);
+            tx += 30.f * 0.5f * E->zoom_sm;
         }
     }
 

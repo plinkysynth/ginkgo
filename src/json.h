@@ -55,6 +55,11 @@ static inline int iter_val_as_int(sj_iter_t *iter, int default_val=0) {
     return atoi(temp_cstring_from_span(iter->val.start, iter->val.end));
 }
 
+static inline unsigned int iter_val_as_uint(sj_iter_t *iter, int default_val=0) {
+    if (iter->val.type != SJ_NUMBER) return default_val;
+    return strtoul(temp_cstring_from_span(iter->val.start, iter->val.end), 0, 10);
+}
+
 #ifdef _EXT_VECTOR_H
 static inline float4 iter_val_as_float4(sj_iter_t *iter, float4 default_val={}) {
     if (iter->val.type != SJ_ARRAY) return default_val;
@@ -70,6 +75,7 @@ static inline float4 iter_val_as_float4(sj_iter_t *iter, float4 default_val={}) 
 static inline char *iter_key_as_stbstring(sj_iter_t *iter) {
     return stbstring_from_span(iter->key.start, iter->key.end, 0);
 }
+
 
 static inline char *iter_val_as_stbstring(sj_iter_t *iter, const char *default_val=NULL) {
     if (iter->val.type != SJ_STRING) return (char*)default_val;
@@ -106,6 +112,11 @@ static inline void json_print(json_printer_t *jp, const char *key, float val) {
 static inline void json_print(json_printer_t *jp, const char *key, int val) {
     json_print_trailing_comma_and_key(jp, key);
     fprintf(jp->f, "%d", val);
+}
+
+static inline void json_print(json_printer_t *jp, const char *key, unsigned int val) {
+    json_print_trailing_comma_and_key(jp, key);
+    fprintf(jp->f, "%u", val);
 }
 
 static inline void json_print(json_printer_t *jp, const char *key, const char *val, const char *e = 0) {

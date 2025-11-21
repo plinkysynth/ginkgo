@@ -656,6 +656,31 @@ static int parse_expr_inner(pattern_maker_t *p) {
             int param = parse_expr_inner(p);
             return make_node(p, N_RANDI, param, -1, start_i, p->i);
         }
+        case HASH("blend"):
+        case HASH("blendnear"): {
+            int param = parse_expr_inner(p);
+            if (param < 0) {
+                error(p, "expected a list after blend");
+                return -1;
+            }
+            Node *n = &p->nodes[param];
+            if (n->type!=N_POLY && n->type!=N_FASTCAT && n->type!=N_CAT) {
+                error(p, "expected a list after blend");
+                return -1;
+            }
+            bool is_blendnear = name_hash == HASH("blendnear");
+            int num_kids = 0;
+            for (int i = n->first_child; i>=0; i=p->nodes[i].next_sib) {
+                Node *kid = &p->nodes[i];
+                if (is_blendnear && kid->type!=N_CALL) {
+                    error(p, "the list for blendnear must all be /pattern names");
+                    return -1;
+                }
+                num_kids++;
+            }
+            return make_node(p, is_blendnear ? N_BLENDNEAR : N_BLEND, n->first_child, -1, start_i, p->i);
+        }
+
         case HASH("near"): {
             int param = parse_call(p);
             if (param <0) {
@@ -869,7 +894,7 @@ void test_minipat(void) {
     //const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
     //const char *s = "bd,bd,\n";
     //const char *s = "{a b c, d e}%4";
-    const char *s = "near /bd";
+    const char *s = "blendnear [/foo /bar]";
     // const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";

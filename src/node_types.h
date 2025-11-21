@@ -24,6 +24,8 @@ NODE(N_RAND)
 NODE(N_RAND2)
 NODE(N_RANDI) // takes a max value
 NODE(N_NEAR) // takes a pattern name
+NODE(N_BLEND) // takes a list of patterns & weights (alternating)
+NODE(N_BLENDNEAR) // takes a list of calls
 NODE(N_CC) 
 NODE(N_LAMBDA)
 NODE(N_CAT)
@@ -45,7 +47,6 @@ OP(N_OP_FLOOR, "floor", 0, 0, 100)
 OP(N_OP_RANGE, "range", 2, 0, 100)
 OP(N_OP_RANGE2, "range2", 2, 0, 100)
 OP(N_OP_RIBBON, "rib", 1, 1, 100)
-OP(N_OP_BLEND, "blend", 2, 0, 100)
 
 #define X(x, str, ...) OP(N_##x, str, 1, 0, 50)
 #include "params.h"

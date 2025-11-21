@@ -989,6 +989,8 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
             tabs[TAB_AUDIO].fname = stbstring_from_span(argv[i], NULL, 0);
         else if (strstr(argv[i], ".json"))
             settings_fname = argv[i];
+        else if (strstr(argv[i], ".canvas"))
+            tabs[TAB_CANVAS].fname = stbstring_from_span(argv[i], NULL, 0);
     }
     sj_Reader r = read_json_file(settings_fname);
     for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
@@ -1048,6 +1050,8 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
         tabs[TAB_SHADER].fname = stbstring_from_span("livesrc/blank.glsl", NULL, 0);
     if (tabs[TAB_AUDIO].fname == NULL)
         tabs[TAB_AUDIO].fname = stbstring_from_span("livesrc/blank.cpp", NULL, 0);
+    if (tabs[TAB_CANVAS].fname == NULL)
+        tabs[TAB_CANVAS].fname = stbstring_from_span("livesrc/blank.canvas", NULL, 0);
     if (cur_tab < 0 || cur_tab >= TAB_LAST)
         cur_tab = 0;
     curE = &tabs[cur_tab];
@@ -1290,7 +1294,14 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         }
         if (key == GLFW_KEY_S) {
             bool compiled = true;
-            if (E->editor_type != TAB_SHADER || try_to_compile_shader(E) != 0) {
+            if (E->editor_type== TAB_CANVAS) {
+                bool save_canvas(EditorState *E);
+                if (save_canvas(E))
+                    set_status_bar(C_OK, "saved canvas");
+                else
+                    set_status_bar(C_ERR,"failed to save canvas");
+            }
+            else if (E->editor_type != TAB_SHADER || try_to_compile_shader(E) != 0) {
                 FILE *f = fopen("editor.tmp", "w");
                 if (f) {
                     fwrite(E->str, 1, stbds_arrlen(E->str), f);
@@ -1999,6 +2010,8 @@ int main(int argc, char **argv) {
     load_file_into_editor(&tabs[TAB_AUDIO]);
     try_to_compile_shader(&tabs[TAB_SHADER]);
     parse_named_patterns_in_source();
+    bool load_canvas(EditorState *E);
+    load_canvas(&tabs[TAB_CANVAS]);
 
     texFont = load_texture("assets/font_sdf.png");
 

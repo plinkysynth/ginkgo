@@ -4,6 +4,7 @@
 void update_zoom_and_center(EditorState *E) {
     if (E->zoom==0.f) {
         E->zoom = 1.f;
+        E->zoom_sm = 1.f;
     }
     if (is_two_finger_dragging() && G->mb == 0) {
         float dx = drag_cx - prev_drag_cx;

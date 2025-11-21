@@ -11,11 +11,11 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct song : public song_base_t {
-  synth_t s1,s2;
-  delay_t delay;
+  synth_t s1;
   plinkyverb_t reverb;
   stereo do_sample(stereo inp) {
       stereo x = s1("/pattern", 0.75);
+      x+=reverb(x*0.5f);
       return x;
   }
 };

@@ -89,7 +89,7 @@ static const char* midi_get_output_name(int index) {
     return namebuf;
 }
 
-static void midi_init(midi_receive_cb cb, void *cb_user) {
+static void midi_init(const char *match_name ,midi_receive_cb cb, void *cb_user) {
     MIDIClientCreate(CFSTR("midi"), NULL, NULL, &midi_state.client);
     MIDIInputPortCreate(midi_state.client, CFSTR("in"), midi_input_proc, NULL, &midi_state.in_port);
     MIDIOutputPortCreate(midi_state.client, CFSTR("out"), &midi_state.out_port);
@@ -99,7 +99,7 @@ static void midi_init(midi_receive_cb cb, void *cb_user) {
     int idx = 0;
     for (int i = 0; i < ni; i++) {
         const char *name = midi_get_input_name(i);
-        if (strstr(name, "Music Thing Modular")) {
+        if (strstr(name, match_name)) {
             idx = i;
             break;
         }
@@ -146,7 +146,7 @@ static void* midi_read_thread(void *arg) {
     return NULL;
 }
 
-static void midi_init(midi_receive_cb cb, void *cb_user) {
+static void midi_init(const char *match_name ,midi_receive_cb cb, void *cb_user) {
     midi_state.cb = cb;
     midi_state.cb_user = cb_user;
     midi_state.in = NULL;
@@ -154,6 +154,7 @@ static void midi_init(midi_receive_cb cb, void *cb_user) {
     midi_state.running = 0;
 
     // try to open hw:1,0,0 for both in and out; if it fails, we just stay inactive
+    // TODO implement match_name
     if (snd_rawmidi_open(&midi_state.in, &midi_state.out, "hw:1,0,0", 0) < 0) {
         midi_state.in = NULL;
         midi_state.out = NULL;
@@ -171,3 +172,93 @@ static void midi_send(uint8_t data[3]) {
 }
 
 #endif
+#ifdef __WINDOWS__
+
+#include <windows.h>
+#include <mmsystem.h>
+#include <stdint.h>
+#include <string.h>
+
+#pragma comment(lib, "winmm.lib")
+
+typedef void (*midi_receive_cb)(uint8_t data[3], void *user);
+
+static struct {
+    HMIDIIN in;
+    HMIDIOUT out;
+    midi_receive_cb cb;
+    void *cb_user;
+} midi_state = {0};
+
+static void CALLBACK midi_in_proc(HMIDIIN hMidiIn, UINT wMsg, DWORD_PTR dwInstance,
+                                  DWORD_PTR dwParam1, DWORD_PTR dwParam2) {
+    (void)hMidiIn; (void)dwInstance; (void)dwParam2;
+    if (wMsg != MIM_DATA) return;
+    midi_receive_cb cb = midi_state.cb;
+    if (!cb) return;
+
+    DWORD msg = (DWORD)dwParam1;
+    uint8_t b0 = (uint8_t)(msg & 0xFF);
+    uint8_t b1 = (uint8_t)((msg >> 8) & 0xFF);
+    uint8_t b2 = (uint8_t)((msg >> 16) & 0xFF);
+
+    uint8_t data[3] = { b0, b1, b2 };
+    cb(data, midi_state.cb_user);
+}
+
+static void midi_init(const char *match_name, midi_receive_cb cb, void *cb_user) {
+    midi_state.cb = cb;
+    midi_state.cb_user = cb_user;
+    midi_state.in = NULL;
+    midi_state.out = NULL;
+
+    UINT in_count = midiInGetNumDevs();
+    UINT out_count = midiOutGetNumDevs();
+
+    UINT in_index = 0, out_index = 0;
+
+    if (match_name && match_name[0]) {
+        // try to find first input that matches
+        for (UINT i = 0; i < in_count; ++i) {
+            MIDIINCAPS caps;
+            if (midiInGetDevCaps(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
+                if (strstr(caps.szPname, match_name)) {
+                    in_index = i;
+                    break;
+                }
+            }
+        }
+        // try to find first output that matches
+        for (UINT i = 0; i < out_count; ++i) {
+            MIDIOUTCAPS caps;
+            if (midiOutGetDevCaps(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
+                if (strstr(caps.szPname, match_name)) {
+                    out_index = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (in_count > 0) {
+        if (midiInOpen(&midi_state.in, in_index, (DWORD_PTR)midi_in_proc, 0, CALLBACK_FUNCTION) != MMSYSERR_NOERROR) {
+            midi_state.in = NULL;
+        } else {
+            midiInStart(midi_state.in);
+        }
+    }
+
+    if (out_count > 0) {
+        if (midiOutOpen(&midi_state.out, out_index, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
+            midi_state.out = NULL;
+        }
+    }
+}
+
+static void midi_send(uint8_t data[3]) {
+    if (!midi_state.out) return;
+    DWORD msg = (DWORD)data[0] | ((DWORD)data[1] << 8) | ((DWORD)data[2] << 16);
+    midiOutShortMsg(midi_state.out, msg);
+}
+
+#endif // __WINDOWS__

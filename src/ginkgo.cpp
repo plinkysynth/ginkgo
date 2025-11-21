@@ -1202,6 +1202,12 @@ static uint32_t last_mods = 0;
 
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
     // printf("key: %d\n", key);
+    #ifdef __WINDOWS__
+    if (mods & GLFW_MOD_CONTROL) {
+        mods &= ~GLFW_MOD_CONTROL;
+        mods |= GLFW_MOD_SUPER;
+    }
+    #endif
     last_mods = mods;
     EditorState *E = curE;
     if (action != GLFW_PRESS && action != GLFW_REPEAT)

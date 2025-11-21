@@ -163,7 +163,7 @@ static inline float tanhXdX(float x) {
     // IIRC I got this as Pade-approx for tanh(sqrt(x))/sqrt(x)
     return ((a + 105) * a + 945) / ((15 * a + 420) * a + 945);
 }
-// double f = tan(M_PI * cutoff);
+// double f = tan(PI * cutoff);
 // double r = (40.0/9.0) * resonance;
 
 static inline float ladder(float s[5],float inp, float f, float r) {
@@ -221,7 +221,7 @@ typedef struct svf_output_t {
     float lp, bp, hp;
 } svf_output_t;
 
-// g = tanf(M_PI * fc / fs), R = 1/Q
+// g = tanf(PI * fc / fs), R = 1/Q
 static inline svf_output_t svf_process_2pole(float *f, float v0, float g, float R) {
     // https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf
     const float a1 = 1.f / (1.f + g * (g + R)); // precompute?

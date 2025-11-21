@@ -404,16 +404,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     }
     case N_SIN:
-        appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * M_PI * 2) * 0.5f + 0.5f);
+        appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * PI * 2) * 0.5f + 0.5f);
         break;
     case N_SIN2:
-        appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * M_PI * 2));
+        appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * PI * 2));
         break;
     case N_COS:
-        appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * M_PI * 2) * 0.5f + 0.5f);
+        appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * PI * 2) * 0.5f + 0.5f);
         break;
     case N_COS2:
-        appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * M_PI * 2));
+        appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * PI * 2));
         break;
     case N_RAND:
         appended =

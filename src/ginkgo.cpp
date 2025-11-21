@@ -43,6 +43,13 @@
 #include "crash.h"
 #include "mac_touch_input.h"
 
+#ifndef __APPLE__
+RawPen *mac_pen_get(void) { return NULL; }  // returns pointer to pen if valid, NULL if no pen
+int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh) { return 0; }  // returns number of touches
+void mac_touch_init(void *cocoa_window) {}          // pass NSWindow* from GLFW
+#endif
+
+
 #define RESW 1920
 #define RESH 1080
 

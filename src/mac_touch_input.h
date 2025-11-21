@@ -10,8 +10,6 @@ typedef struct {
     float pressure;
 } RawTouch;
 
-int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh);  // returns number of touches
-void mac_touch_init(void *cocoa_window);          // pass NSWindow* from GLFW
 
 typedef struct {
     float x;
@@ -22,6 +20,8 @@ typedef struct {
 } RawPen;
 
 RawPen *mac_pen_get(void);  // returns pointer to pen if valid, NULL if no pen
+int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh);  // returns number of touches
+void mac_touch_init(void *cocoa_window);          // pass NSWindow* from GLFW
 
 #ifdef __cplusplus
 }

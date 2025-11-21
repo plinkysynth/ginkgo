@@ -9,7 +9,7 @@
             "type": "lldb",
             "expressions": "native",
             "request": "launch",
-            "program": "${workspaceFolder}/ginkgo",
+            "program": "${workspaceFolder}/ginkgo_mac",
             "cwd": "${workspaceFolder}",
             //"args": ["-f"],
             "env": {},

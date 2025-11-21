@@ -1,4 +1,12 @@
 #include "wavfile.h"
+
+#ifdef __WINDOWS__
+#include <windows.h>
+#define dlopen(lib, flag)   LoadLibraryA(lib)
+#define dlsym(handle, sym)  GetProcAddress((HMODULE)(handle), (sym))
+#define dlclose(handle)     FreeLibrary((HMODULE)(handle))
+#define dlerror()           ""
+#endif
 #include <sys/time.h>
 #include <stdatomic.h>
 

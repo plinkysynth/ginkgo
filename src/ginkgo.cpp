@@ -4,26 +4,18 @@
 #define MINIAUDIO_IMPLEMENTATION
 #ifdef __APPLE__
 #define GLFW_EXPOSE_NATIVE_COCOA
-#include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
-#include <OpenGL/gl3.h> // core profile headers
 #endif
 #ifdef __LINUX__
-#define GL_GLEXT_PROTOTYPES
-#include <GL/gl.h>
-#include <GL/glext.h>
-#include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
 #endif
 #ifdef __WINDOWS__
 #define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
-#include <windows.h>
-#include <GL/gl.h>
-#include <io.h>
 static inline int mkdir(const char *path, int mode) { return mkdir(path); }
 #endif
+#define GLFW_INCLUDE_NONE
+#include "3rdparty/glad/include/glad/glad.h"
+#include "3rdparty/glad/src/glad.c"
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
 #include <stdio.h>
 #include <time.h>
 #include <sys/stat.h>
@@ -1167,6 +1159,9 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     glfwGetWindowContentScale(win, &retina, NULL);
     // printf("retina: %f\n", retina);
     glfwMakeContextCurrent(win);
+    if (!gladLoadGL()) 
+        die("Failed to load OpenGL");
+
     glfwSwapInterval(secmon ? 0 : 1); // let the secondary monitor determine the swap interval
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
@@ -1176,8 +1171,8 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #ifdef __APPLE__
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-#endif
         glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, false);
+#endif
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
         glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_FALSE);

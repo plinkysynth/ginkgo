@@ -1658,7 +1658,7 @@ void on_midi_input(uint8_t data[3], void *user) {
 
 // Audio and MIDI initialization
 static void init_audio_midi(ma_device *dev) {
-    midi_init(on_midi_input, NULL);
+    midi_init("Music Thing Modular", on_midi_input, NULL);
     printf("starting audio - device config init\n");
     ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
     cfg.sampleRate = SAMPLE_RATE_OUTPUT;

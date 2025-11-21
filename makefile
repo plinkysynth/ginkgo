@@ -30,6 +30,7 @@ else ifeq ($(OS),Windows_NT)
 TARGET = ginkgo_windows
 LIB_NAME := ginkgo_lib.lib
 BUILDDIR = build/windows
+CXXFLAGS_COMMON += -D__WINDOWS__
 APP_EXTRA_OBJ = 
 else
 

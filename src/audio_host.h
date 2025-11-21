@@ -6,6 +6,8 @@
 #define BUILD_LIB "build/mac/ginkgo_lib.a"
 #elif defined(__LINUX__)
 #define BUILD_LIB "build/linux/ginkgo_lib.a"
+#elif defined(__WINDOWS__)
+#define BUILD_LIB "build/windows/ginkgo_lib.lib"
 #endif
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // hot reload and scope

@@ -15,6 +15,15 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #endif
+#ifdef __WINDOWS__
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+#include <windows.h>
+#include <GL/gl.h>
+#include <io.h>
+static inline int mkdir(const char *path, int mode) { return mkdir(path); }
+#endif
 #include <stdio.h>
 #include <time.h>
 #include <sys/stat.h>

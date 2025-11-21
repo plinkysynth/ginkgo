@@ -31,6 +31,7 @@ TARGET = ginkgo_windows
 LIB_NAME := ginkgo_lib.lib
 BUILDDIR = build/windows
 CXXFLAGS_COMMON += -D__WINDOWS__
+LDFLAGS_COMMON  = -lglfw3 -lcurl -lopengl32 -lws2_32 -lwinmm -lgdi32
 APP_EXTRA_OBJ = 
 else
 

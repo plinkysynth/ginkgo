@@ -1,6 +1,10 @@
 #pragma once 
 #define _EXT_VECTOR_H
-#include <arm_neon.h>
+
+#if defined(__ARM_NEON__)
+    #include <arm_neon.h>
+#endif
+
 typedef float float2 __attribute__((ext_vector_type(2)));
 typedef int int2 __attribute__((ext_vector_type(2)));
 typedef unsigned int uint2 __attribute__((ext_vector_type(2)));
@@ -14,8 +18,7 @@ typedef int int4 __attribute__((ext_vector_type(4)));
 typedef unsigned int uint4 __attribute__((ext_vector_type(4)));
 
 
-// TODO: x64 version of the following functions.
-
+#if defined(__ARM_NEON__)
 static inline float rsqrtf_fast(float x) {
     float32x2_t vx = vdup_n_f32(x);
     float32x2_t y  = vrsqrte_f32(vx);
@@ -28,6 +31,15 @@ static inline float dot(float4 a, float4 b) {
     float32x4_t p = vmulq_f32(*(const float32x4_t*)&a, *(const float32x4_t*)&b);
     return vaddvq_f32(p);
 }
+#else
+static inline float rsqrtf_fast(float x) {
+    return 1.0f / sqrtf(x);
+}
+
+static inline float dot(float4 a, float4 b) { 
+    return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+#endif
 
 static inline float dot(float2 a, float2 b) { 
     return a.x * b.x + a.y * b.y;
@@ -35,7 +47,6 @@ static inline float dot(float2 a, float2 b) {
 
 // the rest is cross platform
 // clang ext_vector ftw
-
 
 static inline float lengthsq(float4 x) { return dot(x, x); }
 
@@ -50,5 +61,10 @@ static inline float4 normalize(float4 x) {
 
 static inline float4 cross(float4 a, float4 b) { return (a * b.yzxw - a.yzxw * b).yzxw; }
 
+#if defined(__ARM_NEON__)
 static inline float4 min(float4 a, float4 b) { return vminq_f32(a, b); }
 static inline float4 max(float4 a, float4 b) { return vmaxq_f32(a, b); }
+#else
+static inline float4 min(float4 a, float4 b) { return (a < b) ? a : b; }
+static inline float4 max(float4 a, float4 b) { return (a > b) ? a : b; }
+#endif

@@ -1153,7 +1153,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     const GLFWvidmode *vm = primon ? glfwGetVideoMode(primon) : NULL;
     int ww = primon ? vm->width : 1920 / 2;
     int wh = primon ? vm->height : 1200 / 2;
-    if (ww > vm->width || wh > vm->height) {
+    if (vm && (ww > vm->width || wh > vm->height)) {
         ww /=2;
         wh /=2;
     }

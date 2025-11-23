@@ -37,8 +37,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
     if (tmh > 256 - 8)
         tmh = 256 - 8;
     if (!E->embeddings) {
-        FILE *f = fopen("embeddings.bin", "rb");
-        sj_Reader r = read_json_file("webcache/umap_sounds.json");
+        sj_Reader r = read_json_file("assets/umap_sounds.json");
         for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
             sample_embedding_t t = {.key = iter_key_as_stbstring(&outer)};
             sj_iter_t inner = iter_start(&r, &outer.val);

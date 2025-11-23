@@ -14,6 +14,14 @@ bool get_key(int key) { return G && G->get_key_func && G->get_key_func(key); }
 
 void update_camera_matrix(camera_state_t *cam) {
     float4 c_up = {0.f, 1.f, 0.f, 0.f}; // up
+    if (!isfinite(cam->c_lookat) || !cam->c_lookat.w) {
+        cam->c_lookat = {0.f, 0.f, 0.f, 1.f};
+    }
+    if (!isfinite(cam->c_pos) || !cam->c_pos.w) {
+        cam->c_pos = {0.f, 0.f, -4.f, 1.f};
+    }
+    cam->c_lookat.w = 1.f;
+    cam->c_pos.w = 1.f;
     cam->c_fwd = normalize(cam->c_lookat - cam->c_pos);
     cam->c_right = normalize(cross(c_up, cam->c_fwd));
     cam->c_up = normalize(cross(cam->c_fwd, cam->c_right));

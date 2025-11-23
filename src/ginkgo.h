@@ -211,6 +211,8 @@ static inline float clip(float x) { return clamp(x, -1.f, 1.f); }
 
 static inline float ensure_finite(float s) { return isfinite(s) ? s : 0.f; }
 
+static inline bool isfinite(float4 x) { return isfinite(x.x) && isfinite(x.y) && isfinite(x.z) && isfinite(x.w); }
+
 static inline stereo ensure_finite(stereo s) { return (stereo){.l = ensure_finite(s.l), .r = ensure_finite(s.r)}; }
 
 static inline stereo ssclip(stereo s) { return (stereo){.l = atanf(s.l) * (2.f / PI), .r = atanf(s.r) * (2.f / PI)}; }

@@ -1,66 +1,58 @@
-//taa
+// taa
+// sky venice_sunset
 #ifdef PATTERNS
 /vispat [1 0 0.5 0]
 #endif
 
 uniform float vispat;
-float map(vec3 p) {
-	float b = p.y+1.;
-    b=min(b,1.-p.x);
-    b=min(b,sdBox(p-vec3(-2.,7.,5.), vec3(1.,0.1,1.)));
-    p.yz=fract((p.yz+1.)*0.5)*2.-1.;
-    return min(b,sdSphere(p, 0.9));
+vec3 skycol(vec3 d_norm, float lod) {
+    return textureLod(uSky, vec2(atan(d_norm.x,d_norm.z)*(0.5/PI), 0.5-asin(d_norm.y)*(1./PI)), lod).xyz;
 }
+
 vec4 pixel(vec2 uv) {
     vec4 o=vec4(0.);
     vec4 r4=rnd4();
     float tofs = r4.x;
     vec3 c=vec3(0.);
-    for (int smpl = 0; smpl<2;smpl++) {
+    float disparity=0.;
+    for (int smpl = 0; smpl<4;smpl++) {
         float shuttert= (smpl+tofs)*(1.f/16.f)+0.5f;
         vec3 ro,rd;
         eyeray(shuttert, ro, rd);
-        vec3 thpt=vec3(1.);
-        for (int bounce = 0;bounce<5;++bounce) {
-            float rayt=0.02,d=0,prevd=0;
-            for (int iter =0 ;iter<50;++iter,prevd=d) {
-                vec3 p = ro + rayt * rd;
-                d = map(p);
-                if (d<=0) break;
-                rayt += d+0.03;
-            }
-            if (prevd!=d) rayt += (d/(prevd-d)) * (prevd+0.03);
-            vec3 p = ro + rayt * rd;
-            vec3 albedo = (p.y> -0.9) ? vec3(0.6,0.8,1.) : vec3(0.9);
-            if (p.x>0.99) albedo=vec3(1.,0.6,0.5);
-            vec2 eps=vec2(0.01,0.);
-            vec3 n=safe_normalize(vec3(map(p+eps.xyy), map(p+eps.yxy), map(p+eps.yyx))-map(p));
-            r4 = rnd4();
-            vec3 lightpos = vec3(r4.x*2.-1-2., 6.8, r4.y*2.-1.+5.);
-            vec3 l = lightpos-p;
-            float ldist = length(l);
-            if (ldist<0.001f) {
+        float thpt=0.1;
+        for (int bounce = 0; bounce < 3; ++bounce) {
+            float tplane = -ro.z / rd.z;
+            if (tplane > 0.0001) {
+                vec2 tbox = aabb_intersect(ro, 1./rd, vec3(-2.), vec3(2.,2.,10.));
+                vec3 n=vec3(0,0,-1.);
+                if (ro.z>0.) { // inside the box 
+                    tplane=tbox.y;
+                    ro = ro + rd * tplane;
+                    if (ro.z<0.) {
+                        c+=skycol(rd,0.) * thpt;
+                        break;
+                    }
+                } else
+                if (tbox.x<tplane && tbox.y>tplane) {
+                    tplane=tbox.y;
+                    ro = ro + rd * tplane;
+                    if (ro.x>1.999) n=vec3(-1,0,0); 
+                    else if (ro.x< -1.999) n=vec3(1,0,0);
+                    else if (ro.y> 1.999) n=vec3(0,-1,0);
+                    else if (ro.y< -1.999) n=vec3(0,1,0);
+                }
+                ro = ro + rd * tplane;
+                r4=rnd4();
+                rd = rnd_dir_cos(n, r4.xy);
+                thpt *= 0.9;
+                if (bounce ==0) disparity=1./tplane;
+            } else {
+                c+=skycol(rd,0.) * thpt;
                 break;
             }
-            l/=ldist;
-            // shadow ray
-            float st = 0.02f;
-            float geom = max(0.,dot(l,n)) / (ldist*ldist);
-            for (int iter = 0; iter<100 && st<ldist;++iter) {
-                float d=map(p + st*l);
-                if (d<=0.) { geom=0.f; break; }
-                st += d + 0.02f;
-            }
-            if (bounce == 0 && abs(p.y-7.)<0.1 && abs(p.x+2.)<1. && abs(p.z-5.)<1.) {
-                c+=vec3(1.)*2.;
-                break;
-            }
-            thpt *= albedo;
-            c += vec3(1.) * thpt * geom;
-            ro = p;
-            rd = rnd_dir_cos(n, r4.zw);
         }
     }
-    o = vec4(c, 1.);//1./rayt);
+    c*=1./2.;
+    o = vec4(c, disparity);
     return o;
 }

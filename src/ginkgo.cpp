@@ -439,6 +439,7 @@ uniform float aperture;
 // uniform sampler2D uPaperDiff;
 // uniform sampler2D uPaperDisp;
 // uniform sampler2D uPaperNorm;
+const float PI = 3.14159265358979323846f;
 uvec4 pcg4d() {
     uvec4 v = seed * 1664525u + 1013904223u;
     v.x += v.y*v.w; v.y += v.z*v.x; v.z += v.x*v.y; v.w += v.y*v.z;
@@ -531,17 +532,23 @@ vec2 sphere_intersect( in vec3 ro, in vec3 rd, float ra ) {
     h = sqrt( h );
     return vec2( -b-h, -b+h );
 }
+float plane_intersect(vec3 ro, vec3 rd, vec3 plane_n, float plane_d) {
+    float denom = dot(rd, plane_n);
+    if (abs(denom) > 1e-6) {
+        float t = (plane_d - dot(ro, plane_n)) / denom;
+        return t;
+    }
+    return 1e9;
+}
 
-float aabb_intersect(vec3 ro, vec3 inv_rd, vec3 boxmin, vec3 boxmax) {
+vec2 aabb_intersect(vec3 ro, vec3 inv_rd, vec3 boxmin, vec3 boxmax) {
     vec3 t0 = (boxmin - ro) * inv_rd;
     vec3 t1 = (boxmax - ro) * inv_rd;
     vec3 tmin_v = min(t0, t1);
     vec3 tmax_v = max(t0, t1);
     float tmin = max(max(tmin_v.x, tmin_v.y), tmin_v.z);
     float tmax = min(min(tmax_v.x, tmax_v.y), tmax_v.z);
-    // 'carefully' designed so that if we start inside the box, we get a negative value but not inf.
-    // but if we miss or start after the box, we return inf.
-    return (tmin >= tmax || tmax<=0.) ? 1e9 : tmin;
+    return vec2(tmin, tmax);
 }
 
 void eyeray(float t, out vec3 ro, out vec3 rd) {
@@ -1146,6 +1153,10 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     const GLFWvidmode *vm = primon ? glfwGetVideoMode(primon) : NULL;
     int ww = primon ? vm->width : 1920 / 2;
     int wh = primon ? vm->height : 1200 / 2;
+    if (ww > vm->width || wh > vm->height) {
+        ww /=2;
+        wh /=2;
+    }
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -1690,6 +1701,8 @@ void update_camera(GLFWwindow *win) {
     camera_state_t *cam = &G->camera;
     memcpy(cam->c_cam2world_old, cam->c_cam2world, sizeof(cam->c_cam2world));
     update_camera_matrix(cam);
+    if (!cam->fov) cam->fov = 0.4f;
+    cam->focal_distance = length(cam->c_lookat - cam->c_pos);
     _win = win;
     if (g_frame_update_func)
         g_frame_update_func(glfw_get_key, G);
@@ -1951,6 +1964,10 @@ GLuint compile_fs_with_user_prefix(const char *fs_suffix) {
 
 shader_param_t param_cc[8];
 
+void error_callback(int error, const char *description) {
+    fprintf(stderr, "GLFW error %d: %s\n", error, description);
+}
+
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
 #if USING_ASAN
@@ -1958,6 +1975,7 @@ int main(int argc, char **argv) {
 #endif
     void install_crash_handler(void);
     // install_crash_handler();
+    glfwSetErrorCallback(error_callback);
     if (!glfwInit())
         die("glfwInit failed");
     int count = 0;

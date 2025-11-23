@@ -592,6 +592,64 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             P_NUMBER);
         break;
     }
+    case N_BLEND: case N_BLENDNEAR: {
+        bool is_blendnear = n->type == N_BLENDNEAR;
+        int num_weights = (is_blendnear) ? n->num_children : (n->num_children + 1)/2;
+        if (!num_weights) break;
+        int need_zero_weight = n->num_children & 1;
+        float weights[num_weights];
+        float tot_weight = 0.f;
+        if (is_blendnear) {
+            // todo
+        } else {
+            for (int i = need_zero_weight; i < n->num_children; i += 2) {
+                hap_t tmp_mem[tmp_size];
+                hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
+                hap_span_t hs = _make_haps(tmp, tmp_size, viz_time, n->first_child + i, when, hash2_pcg(hapid, n->first_child + i));
+                weights[i] = 0.f;
+                for (hap_t *h = hs.s; h < hs.e; h++) 
+                    weights[i] = max(weights[i], h->get_param(P_NUMBER, weights[i]));
+                tot_weight += weights[i];
+            }
+            if (need_zero_weight) {
+                weights[0] = max(1.f - tot_weight, 0.f);
+                tot_weight += weights[0];
+            }
+        }
+        int step = is_blendnear ? 1 : 2;
+        hap_t tmp_mem[tmp_size * num_weights];
+        hap_span_t tmp[num_weights];
+        int hash = 0;
+        bool has_sound_or_note = false;
+        for (int i = need_zero_weight ? 0 : 1; i < n->num_children; i += step) {
+            tmp[i] = {tmp_mem + i * tmp_size, tmp_mem + (i + 1) * tmp_size};
+            tmp[i] = _make_haps(tmp[i], tmp_size, viz_time, n->first_child + i, when, hash2_pcg(hapid, n->first_child + i));
+            // if it contains sound or note, update the hash with that hap
+            // then select between them
+            for (hap_t *hap = tmp[i].s; hap < tmp[i].e; hap++) {
+                if (hap->has_param(P_SOUND) || hap->has_param(P_NOTE)) {
+                    has_sound_or_note = true;
+                    hash = hash2_pcg(hash, hap->hapid);
+                }
+            }
+        }
+        if (has_sound_or_note) {
+            // pick an index from 0 to numweights based on the cdf of weights
+            float pick = (tot_weight * 0x1000000) / (hash & 0xffffff);
+            for (int i = 0; i < num_weights; i++) {
+                if (pick < weights[i] || i == num_weights-1) {
+                    break;
+                }
+                pick -= weights[i];
+            }
+        } else {
+            // blend all the haps together according to the weights
+            if (tot_weight > 0.f) tot_weight = 1.f / tot_weight;
+            for (int i = 0; i < num_weights; i++) {
+            }
+        }
+        break;
+    }
     /*
     case N_OP_BLEND: {
         hap_t tmp_mem[tmp_size*3];

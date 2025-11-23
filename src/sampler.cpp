@@ -47,12 +47,8 @@ bool decode_file_to_f32(const char *path, wave_t *out) {
 
 static float _silence[16] = {};
 
-static void wave_loaded(const char *url, const char *fname, void *userdata) {}
-
-void load_wave_now(wave_t *wave) {
-    if (wave->frames)
-        return; // already loaded
-    const char *fname = fetch_to_cache(wave->key, 1, wave_loaded, nullptr);
+static void wave_loaded(const char *url, const char *fname, void *userdata) {
+    wave_t *wave = (wave_t *)userdata;
     if (fname) {
         decode_file_to_f32(fname, wave);
     }
@@ -64,6 +60,26 @@ void load_wave_now(wave_t *wave) {
         wave->channels = 1;
         wave->frames = _silence;
     }
+    wave->download_in_progress = 0;
+    spin_lock(&G->load_request_cs);
+    // printf("num load requests: %d\n", (int)stbds_hmlen(G->load_requests));
+    stbds_hmdel(G->load_requests, wave);
+    // printf("num load requests: %d\n", (int)stbds_hmlen(G->load_requests));
+    spin_unlock(&G->load_request_cs);
+
+}
+
+void load_wave_now(wave_t *wave) {
+    if (wave->frames || wave->download_in_progress)
+        return; // already loaded
+    wave->download_in_progress = 1;
+    #define ASYNC_WAVE_LOADING 1
+    #ifdef ASYNC_WAVE_LOADING
+    const char *fname = fetch_to_cache(wave->key, 1 , wave_loaded, wave);
+    #else
+    const char *fname = fetch_to_cache(wave->key, 1);
+    wave_loaded(wave->key, fname, wave);
+    #endif
 }
 
 int parse_strudel_alias_json(const char *json_url) {
@@ -115,7 +131,7 @@ static inline const char *escape_url(char *dstbuf, const char *s, const char *e)
     return dstbuf;
 }
 
-int parse_strudel_json(const char *json_url, const char *sound_prefix, bool eager) {
+int parse_strudel_json(const char *json_url, const char *sound_prefix) {
     int prefix_len = sound_prefix ? strlen(sound_prefix) : 0;
     const char *json_fname = fetch_to_cache(json_url, 1);
     sj_Reader r = read_json_file(json_fname);
@@ -166,8 +182,6 @@ int parse_strudel_json(const char *json_url, const char *sound_prefix, bool eage
                         waveidx = stbds_shgeti(G->waves, url);
                         assert(waveidx != -1);
                     }
-                    if (eager)
-                        load_wave_now(&G->waves[waveidx]);
                     stbds_arrput(
                         sound->wave_indices,
                         waveidx); // TODO; if this causes sound->waves to grow, we may get an exception on the other thread...
@@ -260,12 +274,7 @@ static inline stereo sample_supersaw(voice_state_t *v, hap_t *h, wave_t *w, bool
 
 
 int init_sampler(bool eager) {
-    if (eager) {
-        printf(COLOR_RED "===========================================\n" COLOR_RESET);
-        printf(COLOR_RED "prefetching all sample assets\n" COLOR_RESET);
-        printf(COLOR_RED "===========================================\n" COLOR_RESET);
-
-    }
+    ensure_curl_global();
     // add sounds for 'rest'.
     if (stbds_hmlen(G->sounds) == 0) {
         get_sound_init_only("~");
@@ -274,28 +283,39 @@ int init_sampler(bool eager) {
         register_osc("supersaw", sample_supersaw);
     }
 
+
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"
 #define TS "https://raw.githubusercontent.com/todepond/samples/main/"
     // bd seems to be in here...
-    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/uzu-drumkit/refs/heads/main/strudel.json", NULL, eager);
-    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json", NULL,
-                       eager); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
+    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/uzu-drumkit/refs/heads/main/strudel.json", NULL);
+    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json", NULL); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
     // parse_strudel_json(DS "Dirt-Samples/strudel.json");
-    parse_strudel_json(DS "tidal-drum-machines.json", NULL, eager);
-    parse_strudel_json(DS "piano.json", NULL, eager);
+    parse_strudel_json(DS "tidal-drum-machines.json", NULL);
+    parse_strudel_json(DS "piano.json", NULL);
     // parse_strudel_json(DS "Dirt-Samples.json");
-    parse_strudel_json(DS "EmuSP12.json", NULL, eager);
+    parse_strudel_json(DS "EmuSP12.json", NULL);
     // parse_strudel_json(DS "uzu-drumkit.json"); 404 not found?
-    parse_strudel_json(DS "vcsl.json", NULL, eager);
-    parse_strudel_json(DS "mridangam.json", NULL, eager);
-    parse_strudel_json("https://raw.githubusercontent.com/yaxu/clean-breaks/main/strudel.json", "break_", eager);
-    parse_strudel_json("https://raw.githubusercontent.com/switchangel/breaks/main/strudel.json", "switchangel_", eager);
-    parse_strudel_json("https://raw.githubusercontent.com/switchangel/pad/main/strudel.json", "switchangel_", eager);
-    parse_strudel_json("file://samples/junglejungle/strudel.json", NULL, eager);
+    parse_strudel_json(DS "vcsl.json", NULL);
+    parse_strudel_json(DS "mridangam.json", NULL);
+    parse_strudel_json("https://raw.githubusercontent.com/yaxu/clean-breaks/main/strudel.json", "break_");
+    parse_strudel_json("https://raw.githubusercontent.com/switchangel/breaks/main/strudel.json", "switchangel_");
+    parse_strudel_json("https://raw.githubusercontent.com/switchangel/pad/main/strudel.json", "switchangel_");
+    parse_strudel_json("file://samples/junglejungle/strudel.json", NULL);
     parse_strudel_alias_json(TS "tidal-drum-machines-alias.json");
     printf(COLOR_YELLOW "%d" COLOR_RESET " sounds registered, " COLOR_GREEN "%d" COLOR_RESET " waves.\n", num_sounds(),
            num_waves());
     dump_all_sounds("allsounds.json");
+    if (eager) {
+        printf(COLOR_RED "===========================================" COLOR_RESET "\n");
+        printf(COLOR_RED "prefetching all sample assets\n" COLOR_RESET "\n");
+        printf(COLOR_RED "===========================================" COLOR_RESET "\n");
+    
+        for (int i = 0; i < stbds_shlen(G->waves); i++) {
+            load_wave_now(&G->waves[i]);
+        }
+
+    }
+
     return 0;
 }
 
@@ -314,15 +334,7 @@ void pump_wave_load_requests_main_thread(void) {
         if (i >= n)
             return;
         if (req) {
-            // TODO: add multi download with curl, and move the lines after 'load wave now' into the done-callback.
-            req->download_in_progress = 1;
             load_wave_now(req);
-            req->download_in_progress = 0;
-            spin_lock(&G->load_request_cs);
-            // printf("num load requests: %d\n", (int)stbds_hmlen(G->load_requests));
-            stbds_hmdel(G->load_requests, req);
-            // printf("num load requests: %d\n", (int)stbds_hmlen(G->load_requests));
-            spin_unlock(&G->load_request_cs);
         }
     }
 }

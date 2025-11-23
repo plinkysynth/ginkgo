@@ -2,20 +2,32 @@
 
 #ifdef __WINDOWS__
 #include <windows.h>
-#define dlopen(lib, flag)   LoadLibraryA(lib)
-#define dlsym(handle, sym)  GetProcAddress((HMODULE)(handle), (sym))
-#define dlclose(handle)     FreeLibrary((HMODULE)(handle))
-#define dlerror()           ""
+#define dlopen(lib, flag) LoadLibraryA(lib)
+#define dlsym(handle, sym) GetProcAddress((HMODULE)(handle), (sym))
+#define dlclose(handle) FreeLibrary((HMODULE)(handle))
+#define dlerror() ""
 #endif
 #include <sys/time.h>
 #include <stdatomic.h>
 
 #ifdef __APPLE__
 #define BUILD_LIB "build/mac/ginkgo_lib.a"
+#define BUILD_LIB_EXT "so"
+#define CLANG_OPTIONS                                                                                                              \
+    "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment "                              \
+    "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ " BUILD_LIB
 #elif defined(__LINUX__)
 #define BUILD_LIB "build/linux/ginkgo_lib.a"
+#define BUILD_LIB_EXT "so"
+#define CLANG_OPTIONS                                                                                                              \
+    "-g -std=c++11 -O2 -fPIC -shared -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment "                                  \
+    "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ " BUILD_LIB
 #elif defined(__WINDOWS__)
 #define BUILD_LIB "build/windows/ginkgo_lib.lib"
+#define BUILD_LIB_EXT "dll"
+#define CLANG_OPTIONS                                                                                                              \
+    "-g -std=c++11 -O2 -shared -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment "                                        \
+    "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ " BUILD_LIB
 #endif
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // hot reload and scope
@@ -26,10 +38,9 @@
 stereo scope[SCOPE_SIZE];
 stereo slow_scope[SCOPE_SIZE];
 stereo probe_scope[SCOPE_SIZE];
-float probe_db_smooth[FFT_SIZE/2];
-float main_db_smooth[FFT_SIZE/2];
+float probe_db_smooth[FFT_SIZE / 2];
+float main_db_smooth[FFT_SIZE / 2];
 
-    
 int xyscope[128][128];
 uint32_t scope_pos = 0;
 
@@ -48,8 +59,8 @@ static inline uint64_t nsec_now(void) {
     QueryPerformanceCounter(&t);
     return uint64_t(t.QuadPart) * 1000000000ull / uint64_t(f.QuadPart);
 #else
-    #error unsupported platform
-#endif  
+#error unsupported platform
+#endif
 }
 
 static frame_update_func_t g_frame_update_func = NULL;
@@ -61,15 +72,15 @@ static FILE *wav_recording = NULL;
 static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) {
     stereo *o = (stereo *)out;
     const stereo *i = (const stereo *)in;
-    stereo audio[OVERSAMPLE*frames*2]; // *2 because of probe (4 channels iow)
+    stereo audio[OVERSAMPLE * frames * 2]; // *2 because of probe (4 channels iow)
     static stereo prev_input;
     static_assert(OVERSAMPLE == 2 || OVERSAMPLE == 1, "OVERSAMPLE must be 2 or 1");
     if (OVERSAMPLE == 2) {
         // upsample the input audio...
         for (int k = 0; k < frames; k++) {
             stereo new_input = i[k];
-            audio[k * 2 + 0].l =(prev_input.l + new_input.l)* 0.5f;
-            audio[k * 2 + 0].r =(prev_input.r + new_input.r)* 0.5f;
+            audio[k * 2 + 0].l = (prev_input.l + new_input.l) * 0.5f;
+            audio[k * 2 + 0].r = (prev_input.r + new_input.r) * 0.5f;
             audio[k * 2 + 1] = new_input;
             prev_input = new_input;
         }
@@ -85,7 +96,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         G = dsp(G, audio, (int)frames * OVERSAMPLE, dsp != old_dsp);
     uint64_t t1 = nsec_now();
     uint64_t budget = (1000000000ull * frames * OVERSAMPLE) / SAMPLE_RATE;
-    float cpu_usage = (t1-t0)/double(budget);
+    float cpu_usage = (t1 - t0) / double(budget);
     G->cpu_usage = cpu_usage;
     if (cpu_usage > G->cpu_usage_smooth)
         G->cpu_usage_smooth = cpu_usage;
@@ -102,8 +113,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         write_wav_header(wav_recording, G->sampleidx, SAMPLE_RATE, 2);
         fseek(wav_recording, 0, SEEK_END);
     }
-    
-    
+
     // downsample the output audio and update the scopes...
 #define K 16 // the kernel has this many non-center non-zero taps.
     // example with K=3:
@@ -121,9 +131,9 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         // saturation on output...
         stereo acc, probe;
         if (OVERSAMPLE == 2) {
-            probe = (audio[k*2+0+frames*2]+audio[k*2+1+frames*2]); // cheap downsample for probe ;) 
-            history[history_pos & 63] = limiter(G->limiter_state, ensure_finite(audio[k*2+0]));
-            history[(history_pos + 1) & 63] = limiter(G->limiter_state, ensure_finite(audio[k*2+1]));
+            probe = (audio[k * 2 + 0 + frames * 2] + audio[k * 2 + 1 + frames * 2]); // cheap downsample for probe ;)
+            history[history_pos & 63] = limiter(G->limiter_state, ensure_finite(audio[k * 2 + 0]));
+            history[(history_pos + 1) & 63] = limiter(G->limiter_state, ensure_finite(audio[k * 2 + 1]));
             history_pos += 2;
             // 2x downsample FIR
             int center_idx = history_pos - K * 2;
@@ -137,7 +147,7 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
                 acc.r += fir_kernel[tap] * (t0.r + t1.r);
             }
         } else {
-            probe = audio[k+frames];
+            probe = audio[k + frames];
             acc = limiter(G->limiter_state, ensure_finite(audio[k]));
         }
         o[k] = acc;
@@ -186,14 +196,19 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
 #else
     mkdir("build", 0755);
 #endif
-    #define CLANG_OPTIONS "-g -std=c++11 -O2 -fPIC -dynamiclib -fno-caret-diagnostics -fno-color-diagnostics -Wno-comment " \
-    "-Wno-vla-cxx-extension -D LIVECODE -I. -Isrc/ " BUILD_LIB
 #if USING_ASAN
-    #define SANITIZE_OPTIONS "-fsanitize=address"
+#define SANITIZE_OPTIONS "-fsanitize=address"
 #else
-    #define SANITIZE_OPTIONS ""
+#define SANITIZE_OPTIONS ""
 #endif
-    snprintf(cmd, sizeof(cmd), "echo \"#include \\\"ginkgo.h\\\"\n#include \\\"%s\\\"\n#include \\\"ginkgo_post.h\\\"\" |clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " -o build/dsp.%d.so -x c++ - 2>&1", fname, version);
+
+    snprintf(cmd, sizeof(cmd),
+             "clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " -include ginkgo.h"
+             " -include \"%s\""
+             " -include ginkgo_post.h"
+             " src/empty.cpp"
+             " -o build/dsp.%d." BUILD_LIB_EXT " 2>&1",
+             fname, version);
     printf("[%s]\n", cmd);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
@@ -204,29 +219,29 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     char buf[1024];
     int n = strlen(fname);
     fprintf(stderr, "compile %s\n", fname);
-    
+
     while (fgets(buf, sizeof(buf), fp)) {
         fprintf(stderr, "%s", buf);
         int n = strlen(buf);
-        char* errbuf = stbds_arraddnptr(*errorlog, n);
+        char *errbuf = stbds_arraddnptr(*errorlog, n);
         memcpy(errbuf, buf, n);
     }
     stbds_arrput(*errorlog, 0);
     int rc = pclose(fp);
     int64_t t1 = get_time_us();
-    if (rc!=0)
+    if (rc != 0)
         return false;
-    // this block unloads the old dll after forcing a null dsp pointer. causes a long click
-    // but stops asan from crashing
-    #if USING_ASAN
+// this block unloads the old dll after forcing a null dsp pointer. causes a long click
+// but stops asan from crashing
+#if USING_ASAN
     atomic_store_explicit(&g_dsp_req, 0, memory_order_release);
     while (atomic_load_explicit(&g_dsp_used, memory_order_acquire) != 0) {
         usleep(1000);
     }
     dlclose(g_handle);
     g_handle = NULL;
-    #endif
-    snprintf(cmd, sizeof(cmd), "build/dsp.%d.so", version);
+#endif
+    snprintf(cmd, sizeof(cmd), "build/dsp.%d." BUILD_LIB_EXT, version);
     void *h = dlopen(cmd, RTLD_NOW | RTLD_LOCAL);
     if (!h) {
         fprintf(stderr, "dlopen %s failed: %s\n", cmd, dlerror());
@@ -250,7 +265,7 @@ static bool try_to_compile_audio(const char *fname, char **errorlog) {
     g_handle = h;
     g_version = version;
     fprintf(stderr, "compile %s succeeded in %.3fms\n", cmd, (t1 - t0) / 1000.0);
-    snprintf(cmd, sizeof(cmd), "build/dsp.%d.so", version - 1);
+    snprintf(cmd, sizeof(cmd), "build/dsp.%d." BUILD_LIB_EXT, version - 1);
     unlink(cmd);
     return true;
 }

@@ -532,14 +532,6 @@ vec2 sphere_intersect( in vec3 ro, in vec3 rd, float ra ) {
     h = sqrt( h );
     return vec2( -b-h, -b+h );
 }
-float plane_intersect(vec3 ro, vec3 rd, vec3 plane_n, float plane_d) {
-    float denom = dot(rd, plane_n);
-    if (abs(denom) > 1e-6) {
-        float t = (plane_d - dot(ro, plane_n)) / denom;
-        return t;
-    }
-    return 1e9;
-}
 
 vec2 aabb_intersect(vec3 ro, vec3 inv_rd, vec3 boxmin, vec3 boxmax) {
     vec3 t0 = (boxmin - ro) * inv_rd;
@@ -1275,7 +1267,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
             last_time = now;
         }
     }
-    if (key == GLFW_KEY_F4 && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
+    if ((key == GLFW_KEY_F4 || key == GLFW_KEY_Q) && (mods == GLFW_MOD_CONTROL || mods == GLFW_MOD_SUPER || mods == GLFW_MOD_ALT)) {
         glfwSetWindowShouldClose(win, GLFW_TRUE);
     }
 

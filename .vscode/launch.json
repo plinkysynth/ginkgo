@@ -15,6 +15,23 @@
             "env": {},
             "terminal": "integrated",
             "preLaunchTask": "make",
-        }
+        },
+        {
+            "name": "Debug ginkgo (MSYS2 gdb)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/ginkgo_windows.exe",   // or whatever your .exe is called
+            "cwd": "${workspaceFolder}",
+      
+            "MIMode": "gdb",
+            // If you start VS Code from the MSYS2 clang64 shell, PATH will already include this,
+            // so this can be just "gdb.exe". I’d still recommend the explicit path:
+            "miDebuggerPath": "C:/msys64/clang64/bin/gdb.exe",
+      
+            "args": [],
+            "environment": [],
+            "externalConsole": false,          // use VS Code terminal
+            "preLaunchTask": "make"            // if you want the same behaviour as on mac
+          }
     ]
 }

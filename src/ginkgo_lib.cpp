@@ -37,24 +37,27 @@ void fps_camera(void) {
         float rc = cam->focal_distance * cosf(phi);
         cam->c_lookat = cam->c_pos + float4{cosf(theta) * rc, sinf(phi) * cam->focal_distance, sinf(theta) * rc, 0.f}; // pos
         const float speed = 0.1f;
+        float4 v={};
         if (get_key('W')) {
-            cam->c_pos += cam->c_fwd * speed;
+            v += cam->c_fwd * speed;
         }
         if (get_key('S')) {
-            cam->c_pos -= cam->c_fwd * speed;
+            v -= cam->c_fwd * speed;
         }
         if (get_key('A')) {
-            cam->c_pos -= cam->c_right * speed;
+            v -= cam->c_right * speed;
         }
         if (get_key('D')) {
-            cam->c_pos += cam->c_right * speed;
+            v += cam->c_right * speed;
         }
         if (get_key('Q')) {
-            cam->c_pos += cam->c_up * speed;
+            v += cam->c_up * speed;
         }
         if (get_key('E')) {
-            cam->c_pos -= cam->c_up * speed;
+            v -= cam->c_up * speed;
         }
+        cam->c_pos += v;
+        cam->c_lookat += v;
     }
 }
 

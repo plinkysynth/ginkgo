@@ -259,7 +259,13 @@ static inline stereo sample_supersaw(voice_state_t *v, hap_t *h, wave_t *w, bool
 
 
 
-int init_sampler(void) {
+int init_sampler(bool eager) {
+    if (eager) {
+        printf(COLOR_RED "===========================================\n" COLOR_RESET);
+        printf(COLOR_RED "prefetching all sample assets\n" COLOR_RESET);
+        printf(COLOR_RED "===========================================\n" COLOR_RESET);
+
+    }
     // add sounds for 'rest'.
     if (stbds_hmlen(G->sounds) == 0) {
         get_sound_init_only("~");
@@ -268,7 +274,6 @@ int init_sampler(void) {
         register_osc("supersaw", sample_supersaw);
     }
 
-    bool eager = false;
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"
 #define TS "https://raw.githubusercontent.com/todepond/samples/main/"
     // bd seems to be in here...

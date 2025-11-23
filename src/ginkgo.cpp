@@ -953,7 +953,7 @@ static void dump_settings(void) {
     json_end_file(&jp);
 }
 
-static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_idx) {
+static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_idx, bool *prefetch) {
     int cur_tab = 0;
     const char *settings_fname = "settings.json";
     for (int i = 1; i < argc; i++) {
@@ -961,6 +961,7 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
             if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
                 printf(COLOR_YELLOW "Usage: " COLOR_CYAN "ginkgo" COLOR_RESET " [options] [filename]\n");
                 printf("Options:\n");
+                printf(COLOR_YELLOW "  --prefetch, -p " COLOR_RESET " - prefetch all sample assets\n");
                 printf(COLOR_YELLOW "  --fullscreen, -f, -e index " COLOR_RESET
                                     " - run editor fullscreen on the specified monitor\n");
                 printf(COLOR_YELLOW "  --settings, -s file.json " COLOR_RESET " - load settings from file\n");
@@ -969,6 +970,9 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
                 printf("\nif filename is .glsl or .cpp it will be loaded as the first or second tab respectively\n");
                 printf("if filename is .json it will be loaded as the settings file\n");
                 _exit(0);
+            }
+            if (strcmp(argv[i], "--prefetch") == 0 || strcmp(argv[i], "-p") == 0) {
+                *prefetch = true;
             }
             if (strcmp(argv[i], "--fullscreen") == 0 || strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "-e") == 0) {
                 if (i + 1 < argc)
@@ -1986,10 +1990,11 @@ int main(int argc, char **argv) {
 
     int primon_idx = -1;
     int secmon_idx = -1;
-    load_settings(argc, argv, &primon_idx, &secmon_idx);
+    bool prefetch = false;
+    load_settings(argc, argv, &primon_idx, &secmon_idx, &prefetch);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    init_sampler();
+    init_sampler(prefetch);
 
     void test_minipat(void);
     test_minipat();

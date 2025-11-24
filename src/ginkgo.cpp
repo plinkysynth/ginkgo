@@ -448,6 +448,15 @@ uvec4 pcg4d() {
     seed += v;
     return v;
 }
+uvec4 pcg4d_seed(inout uvec4 seed) {
+    uvec4 v = seed * 1664525u + 1013904223u;
+    v.x += v.y*v.w; v.y += v.z*v.x; v.z += v.x*v.y; v.w += v.y*v.z;
+    v ^= v >> 16u;
+    v.x += v.y*v.w; v.y += v.z*v.x; v.z += v.x*v.y; v.w += v.y*v.z;
+    seed += v;
+    return v;
+}
+
 float saturate(float x) { return clamp(x, 0.0, 1.0); }
 float square(float x) { return x * x; }
 float lengthsq(vec2 v) { return dot(v, v); }
@@ -504,6 +513,7 @@ vec2 wave_read(float x, int y_base) {
 float fft(float x) { return (wave_read(x, 256 - 12).x) * (1.f/256.f); }
 
 vec4 rnd4() { return vec4(pcg4d()) * (1.f / 4294967296.f); }
+vec4 rnd4_seed(inout uvec4 seed) { return vec4(pcg4d_seed(seed)) * (1.f / 4294967296.f); }
 vec2 rnd_disc_cauchy(vec2 z) {
     vec2 h = z * vec2(6.28318530718, 3.1 / 2.);
     h.y = tan(h.y);
@@ -1698,7 +1708,7 @@ void update_camera(GLFWwindow *win) {
     memcpy(cam->c_cam2world_old, cam->c_cam2world, sizeof(cam->c_cam2world));
     update_camera_matrix(cam);
     if (!cam->fov) cam->fov = 0.4f;
-    cam->focal_distance = length(cam->c_lookat - cam->c_pos);
+    //cam->focal_distance = length(cam->c_lookat - cam->c_pos);
     _win = win;
     if (g_frame_update_func)
         g_frame_update_func(glfw_get_key, G);

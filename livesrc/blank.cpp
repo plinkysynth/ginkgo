@@ -4,7 +4,7 @@
 /snare [- sd] * 4 gain y
 /kick bd * 4 gain x
 /hats [- hh] * 8 gain yellow
-/pattern /snare, /kick, /hats
+/pattern /snare, /kick, /hats // [c a f e] sus 0 dec 0.3
 
 /bpm 101.4
 #endif

@@ -56,6 +56,10 @@ void fps_camera(void) {
         if (get_key('E')) {
             v -= cam->c_up * speed;
         }
+        if (get_key('H')) {
+            cam->c_lookat=float4{0,0,0,1};
+            cam->c_pos=float4{0,0,-5,1};
+        }
         cam->c_pos += v;
         cam->c_lookat += v;
     }

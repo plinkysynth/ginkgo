@@ -20,8 +20,8 @@ when you see ⌘ on windows, use CTRL
 | --- | ---- | 
 | F1 | select VISUALS tab
 | F2 |  select MUSIC tab
-| F3 |  select SAMPLE SELECTOR tab
-| F4 |  select CANVAS tab
+| F3 |  select CANVAS tab
+| F4 |  select SAMPLE SELECTOR tab
 | F12 |  tap tempo; tap once to re-sync, or more than once to set a tempo. overwrites /bpm pattern in the music tab.
 | ⌘Enter | re-evaluate patterns in the first two tabs.
 | ⌘P |  play/pause
@@ -30,6 +30,7 @@ when you see ⌘ on windows, use CTRL
 | ⌘S |  save current tab only
 | ⌘Q |  quit (warning: doesnt save)
 | ⌘up / ⌘down | when the cursor is over a number, it will nudge it up or down a bit
+| ⌘- / ⌘= | change text size
 
 in CANVAS tab, `[ ]` changes brush size; `{ }` changes brush softness; `1-9` selects colour.
 

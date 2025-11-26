@@ -560,32 +560,36 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             [](hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
                 if (!right_hap[0] || !right_hap[0]->valid_params)
                     return 0;
-                param_idx = __builtin_ctz(right_hap[0]->valid_params);
-                if (param_idx == P_NUMBER && target->has_param(P_SCALEBITS) && !target->has_param(P_NOTE)) {
-                    // apply a number to a scale -> index scale into a note
-                    target->params[P_NOTE] =
-                        scale_index_to_note(target->scale_bits, target->params[P_SCALEBITS], (int)right_hap[0]->params[P_NUMBER]);
-                    target->valid_params |= 1 << P_NOTE;
-                } else if (param_idx == P_SCALEBITS && target->has_param(P_NUMBER) && !target->has_param(P_NOTE)) {
-                    // apply a scale to a number -> index scale into a note
-                    target->params[P_NOTE] = scale_index_to_note(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
-                                                                 (int)target->params[P_NUMBER]);
-                    target->valid_params |= (1 << P_NOTE) | (1 << P_SCALEBITS);
-                    target->valid_params &= ~(1 << P_NUMBER);
-                    target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
-                    target->scale_bits = right_hap[0]->scale_bits;
-                } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
-                    // apply a scale to a note -> quantize to scale
-                    target->params[P_NOTE] = quantize_note_to_scale(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
-                                                                    (int)target->params[P_NOTE]);
-                    target->valid_params |= (1 << P_SCALEBITS);
-                    target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
-                    target->scale_bits = right_hap[0]->scale_bits;
-                } else { // just copy the value
-                    target->params[param_idx] = right_hap[0]->params[param_idx];
-                    if (param_idx == P_SCALEBITS)
+                int right_params = right_hap[0]->valid_params;
+                while (right_params) {
+                    int param_idx = __builtin_ctz(right_params);
+                    right_params &= ~(1 << param_idx);
+                    if (param_idx == P_NUMBER && target->has_param(P_SCALEBITS) && !target->has_param(P_NOTE)) {
+                        // apply a number to a scale -> index scale into a note
+                        target->params[P_NOTE] =
+                            scale_index_to_note(target->scale_bits, target->params[P_SCALEBITS], (int)right_hap[0]->params[P_NUMBER]);
+                        target->valid_params |= 1 << P_NOTE;
+                    } else if (param_idx == P_SCALEBITS && target->has_param(P_NUMBER) && !target->has_param(P_NOTE)) {
+                        // apply a scale to a number -> index scale into a note
+                        target->params[P_NOTE] = scale_index_to_note(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
+                                                                    (int)target->params[P_NUMBER]);
+                        target->valid_params |= (1 << P_NOTE) | (1 << P_SCALEBITS);
+                        target->valid_params &= ~(1 << P_NUMBER);
+                        target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
                         target->scale_bits = right_hap[0]->scale_bits;
-                    target->valid_params |= 1 << param_idx;
+                    } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
+                        // apply a scale to a note -> quantize to scale
+                        target->params[P_NOTE] = quantize_note_to_scale(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
+                                                                        (int)target->params[P_NOTE]);
+                        target->valid_params |= (1 << P_SCALEBITS);
+                        target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
+                        target->scale_bits = right_hap[0]->scale_bits;
+                    } else { // just copy the value
+                        target->params[param_idx] = right_hap[0]->params[param_idx];
+                        if (param_idx == P_SCALEBITS)
+                            target->scale_bits = right_hap[0]->scale_bits;
+                        target->valid_params |= 1 << param_idx;
+                    }
                 }
                 return 1;
             },
@@ -824,6 +828,18 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     assign_value:
         if (param == P_NUMBER)
             goto n_p_number;
+        if (n->num_children ==1 ) {
+            // we are using 'param name number' as a value, ie just create a hap with only that in it.
+            hap_span_t new_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hapid);
+            for (hap_t *new_hap = new_haps.s; new_hap < new_haps.e; new_hap++) {
+                if (new_hap->valid_params & (1<<P_NUMBER)) {
+                    new_hap->params[param] = new_hap->params[P_NUMBER];
+                    new_hap->valid_params = (new_hap->valid_params & ~(1<<P_NUMBER)) | (1 << param);
+                }
+            }
+            break;
+        }
+        else
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_value_func, param);
         break;
     case N_OP_FITN:

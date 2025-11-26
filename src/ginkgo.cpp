@@ -1457,6 +1457,12 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
     G->mx = mx;
     G->my = my;
     G->mb = m0 + m1 * 2;
+    if (G->ui_alpha < 0.01f) {
+        G->old_mx = G->fbw / 2.f;
+        G->old_my = G->fbh / 2.f;
+        glfwSetCursorPos(win, G->old_mx / retina, G->old_my / retina);
+    }
+
     G->iTime = glfwGetTime();
     G->cursor_x = E->cursor_x;
     G->cursor_y = E->cursor_y;
@@ -2003,6 +2009,7 @@ int main(int argc, char **argv) {
     int primon_idx = -1;
     int secmon_idx = -1;
     bool prefetch = false;
+    G->ui_alpha_target = 1.f;
     load_settings(argc, argv, &primon_idx, &secmon_idx, &prefetch);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);

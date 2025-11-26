@@ -598,6 +598,7 @@ static int parse_expr_inner(pattern_maker_t *p) {
             p->nodes[nidx].max_value = p->nodes[nidx].min_value = cc;
             return nidx;
         }
+
         case HASH("white"):
             return make_node(p, N_COLOR, -1, -1, start_i, p->i, 0.f);
         case HASH("red"):
@@ -656,6 +657,9 @@ static int parse_expr_inner(pattern_maker_t *p) {
             int param = parse_expr_inner(p);
             return make_node(p, N_RANDI, param, -1, start_i, p->i);
         }
+        #define X(x, str, ...) case HASH(str): { int param = parse_expr(p); return make_node(p, N_##x, param, -1, start_i, p->i); break; }
+        #include "params.h"                                                                                                            \
+        
         case HASH("blend"):
         case HASH("blendnear"): {
             int param = parse_expr_inner(p);

@@ -48,8 +48,6 @@ OP(N_OP_RANGE, "range", 2, 0, 100)
 OP(N_OP_RANGE2, "range2", 2, 0, 100)
 OP(N_OP_RIBBON, "rib", 1, 1, 100)
 
-#define X(x, str, ...) OP(N_##x, str, 1, 0, 50)
-#include "params.h"
 
 OP(N_OP_NEVER, "never", 1, 0, 75)
 OP(N_OP_RARELY, "rarely", 1, 0, 75)
@@ -72,6 +70,9 @@ OP(N_OP_FITN, "fitn", 1, 0, 10)
 OP(N_OP_POW, "pow", 1, 0, 11)
 OP(N_OP_EASE, "ease", 1, 0, 11)
 OP(N_OP_SMOOTH, "smooth", 1, 0, 11)
+
+#define X(x, str, ...) OP(N_##x, str, 1, 0, 5)
+#include "params.h"
 
 
 #undef OP

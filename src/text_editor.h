@@ -665,7 +665,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     if (super)
         switch (key & 0xFFFF) {
         case GLFW_KEY_UP:
-        case GLFW_KEY_DOWN: {
+        case GLFW_KEY_DOWN: if (!shift) {
             int word_start, word_end;
             int n = stbds_arrlen(E->str);
             find_word_at_idx(E, E->cursor_idx, &word_start, &word_end);
@@ -673,7 +673,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
             int number_idx = 0;
             const char *end = E->str + word_end;
             int midinote = parse_midinote(E->str + word_start, E->str + word_end, &end, 0);
-            if (midinote >= 0) {
+            if (midinote >= 0 && end == E->str +word_end) {
                 midinote += (key & 0xffff) == GLFW_KEY_UP ? 1 : -1;
                 midinote = clamp(midinote, 0, 127);
                 const char *buf = print_midinote(midinote);
@@ -696,8 +696,8 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 push_edit_op(E, word_start, word_end, buf, 0);
                 return;
             }
-            break;
         }
+        break;
         case GLFW_KEY_MINUS:
             adjust_font_size(E, -1);
             break;

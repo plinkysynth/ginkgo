@@ -1,2 +1,0 @@
-#!/bin/bash
-atos -o '/Users/alexe/dev/ginkgo/ginkgo' -arch arm64 -l 0x102c74000 0x102d04398 0x102d047a0 0x102d71274 0x102d2ee40 0x102d2ed20 0x102d2e7e0 0x102c82908 0x102c82210 0x102d29ee4

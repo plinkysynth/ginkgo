@@ -10,15 +10,15 @@
 // sky university_workshop        
 // first sky wins
 // aperture 0.1
-// fov 0.3
-// focal_distance 33
+// fov 0.5
+// focal_distance 45
 #ifdef PATTERNS
 /vispat [1 0 0.5 0]
 #endif
 
 uniform float vispat;
 
-const float F0 = 0.05;
+const float F0 = 0.09;
 float schlickF(float cosTheta, float F0){
     float m = 1.0 - cosTheta;
     float m2 = m*m, m5 = m2*m2*m;
@@ -42,6 +42,14 @@ bool plane_intersect(vec3 ro, vec3 rd, vec4 plane_nd, inout float maxt, inout ve
     return false;
 }
 
+float map(vec3 p, vec4 r4){
+	//p.xyz+=sin(p.yzx + iTime)*0.5;
+	p.xyz+=sin(p.yzx*2.)*0.25;
+//return min(min(sdBox(p,vec3(1,1,7)), sdBox(p,vec3(7.,1.,1.))),sdBox(p,vec3(1.,7.,1.)));
+//p+=r4.xyz-0.5;
+    return length(p)-5.;
+}
+
 vec4 pixel(vec2 uv) {
     vec4 o=vec4(0.);
     vec4 r4=rnd4();
@@ -49,12 +57,12 @@ vec4 pixel(vec2 uv) {
     vec3 c=vec3(0.);
     float disparity=0.;
 
-    for (int smpl = 0; smpl<16;smpl++) {
+    vec4 photocopier=sin(iTime*vec4(0.1,0.125,0.1643,0.235));
+    for (int smpl = 0; smpl<5;smpl++) {
         float shuttert= (smpl+tofs)*(1.f/16.f)+0.5f;
         vec3 ro,rd;
         eyeray(shuttert, ro, rd);
         float thpt=1.;
-        vec4 photocopier=sin(iTime*vec4(0.1,0.125,0.1643,0.235));
         for (int bounce = 0; bounce < 6; ++bounce) {
             float tmax = 1e9;
             vec3 n=vec3(0.);
@@ -68,15 +76,15 @@ vec4 pixel(vec2 uv) {
             plane_intersect(ro,rd,vec4(0,-1,0,-8),tmax,n);
             plane_intersect(ro,rd,vec4(0,0,-1,-8),tmax,n);
 
-			bool is_sphere = false;
-            vec2 spht = sphere_intersect(ro, rd, 3.);
+			//bool is_sphere = false;
+            /*vec2 spht = sphere_intersect(ro, rd, 3.);
             if (spht.x>0. && spht.x<tmax) {
                 n=safe_normalize(ro+spht.x*rd);
                 tmax=spht.x;
                 is_sphere=true;
                 //c+=n*0.5+0.5;
                 //return o;
-            }
+            }*/
             r4=rnd4();
             // float freeflight = -log(max(r4.w, 1e-6)) * 50.1;
             // if (tmax > freeflight) {
@@ -90,14 +98,42 @@ vec4 pixel(vec2 uv) {
                 //c+=skycol(rd,0.) * thpt;
                 break;
             } else {
-                ro = ro + rd * tmax;
-                //float v = fft(square(ro.x+1.)*2.);
-                //if (ro.y>7.9 && abs(ro.z)<2.) c+=50*thpt*fft(abs(ro.x)*100.);
-                bool isspec = schlickF(-dot(n, rd), F0) > r4.z;
-                float albedo=0.8;
-                
+                // walk up to tmax
+                float tray = 0.01;
+                float prev_sdf = 0.;
+                float prev_t = 0.;
+                for (int iter = 0; iter<20 && tray < tmax; ++iter) {
+                    vec3 p = ro + rd * tray;
+                    float sdf = map(p,r4);
+                    if (sdf < 0.) {
+                        tray -= (tray-prev_t) * sdf / (sdf - prev_sdf);
+                        break;
+                    }
+                    prev_t = tray;
+                    prev_sdf = sdf;
+                    tray += max(0.2, sdf*0.5);
+                }
+                // vec2 spht = sphere_intersect(ro, rd, 3.);
+                // if (spht.x>0. && spht.x<tmax) {
+                // 	tray = spht.x;
+                //     n=safe_normalize(ro+spht.x*rd);
+                //     
+                // } else tray=tmax;
+
+                bool is_sphere = tray < tmax;
+                if (!is_sphere) tray=tmax;
+                ro = ro + rd * tray;
                 if (is_sphere) {
-                	albedo=0.2;
+                    vec2 eps = vec2(0.01, 0.);
+                    float sdf = map(ro,r4);
+                   n = safe_normalize(vec3(map(ro+eps.xyy,r4)-sdf, map(ro+eps.yxy,r4)-sdf, map(ro+eps.yyx,r4)-sdf));
+                }
+                //float v = fft(square(ro.x+1.)*2.);
+                //if (ro.y>7.9 && abs(ro.z)<2. && abs(ro.x)<2.) c+=thpt*2.;
+                bool isspec = schlickF(-dot(n, rd), F0) > r4.z;
+                float albedo=0.8;                
+                if (is_sphere) {
+                	albedo=0.1;
                 } else {
                 float band=smoothstep(0.51,0.5,abs(dot(ro,photocopier.xyz)-photocopier.w));
                 	c+=(1.+sin(vec3(0.51,0.51,0.52)*(ro.y+iTime*2.) + vec3(0,1,2)))*band*thpt;
@@ -105,11 +141,11 @@ vec4 pixel(vec2 uv) {
                 if (isspec) n=reflect(rd,n)*300.;
                 else thpt*=albedo;
                 rd = rnd_dir_cos(n, r4.xy);
-                if (bounce ==0) disparity=1./tmax;
+                if (bounce ==0) disparity=1./tray;
             }
         }
     }
-    c*=1./16.;
+    c*=1./4.;
     c*=0.75/(0.75+dot(uv,uv)); // vignette
     o = vec4(c, disparity);
     return o;

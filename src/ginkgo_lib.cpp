@@ -30,12 +30,27 @@ void update_camera_matrix(camera_state_t *cam) {
 void fps_camera(void) {
     camera_state_t *cam = &G->camera;
     if (G->ui_alpha_target < 0.5) {
-        float cam_mx = 0.5f - G->mx / G->fbw - 0.25f;
-        float cam_my = 0.5f - G->my / G->fbh;
+
+        float cam_mx = (G->mx - G->old_mx) / G->fbw;
+        float cam_my = (G->my - G->old_my) / G->fbh;
         float theta = cam_mx * TAU;
         float phi = cam_my * PI;
-        float rc = cam->focal_distance * cosf(phi);
-        cam->c_lookat = cam->c_pos + float4{cosf(theta) * rc, sinf(phi) * cam->focal_distance, sinf(theta) * rc, 0.f}; // pos
+        float ctheta = cosf(theta), stheta = sinf(theta);
+        float cphi   = cosf(phi),   sphi   = sinf(phi);
+        float4 dir = cam->c_lookat - cam->c_pos;
+        dir = float4{
+            dir.x * ctheta + dir.z * stheta,
+            dir.y,
+            -dir.x * stheta + dir.z * ctheta,
+            0.f
+        };
+        dir = float4{
+            dir.x,
+            dir.y * cphi - dir.z * sphi,
+            dir.y * sphi + dir.z * cphi,
+            0.f
+        };
+        cam->c_lookat = dir + cam->c_pos;
         const float speed = 0.1f;
         float4 v={};
         if (get_key('W')) {
@@ -58,7 +73,7 @@ void fps_camera(void) {
         }
         if (get_key('H')) {
             cam->c_lookat=float4{0,0,0,1};
-            cam->c_pos=float4{0,0,-5,1};
+            cam->c_pos=float4{0,0,-30,1};
         }
         cam->c_pos += v;
         cam->c_lookat += v;

@@ -421,6 +421,7 @@ typedef struct song_base_t {
     float mscrollx, mscrolly;
     int mb;
     int old_mb;
+    float old_mx, old_my;
     int fbw, fbh; // current framebuffer size in pixels
     float ui_alpha;
     float ui_alpha_target;

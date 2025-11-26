@@ -1451,9 +1451,11 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
     my *= retina;
     int m0 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     int m1 = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    G->old_mb = G->mb;
+    G->old_mx = G->mx;
+    G->old_my = G->my;
     G->mx = mx;
     G->my = my;
-    G->old_mb = G->mb;
     G->mb = m0 + m1 * 2;
     G->iTime = glfwGetTime();
     G->cursor_x = E->cursor_x;
@@ -2316,12 +2318,13 @@ int main(int argc, char **argv) {
             float p1x = mxhistory[(mpos - i - 1) & MOUSE_MASK];
             float p1y = myhistory[(mpos - i - 1) & MOUSE_MASK];
             float len = 50.f + sqrtf(square(p0x - p1x) + square(p0y - p1y));
-            int alpha = (int)clamp(len, 0.f, 255.f);
+            int alpha = (int)clamp(len * G->ui_alpha, 0.f, 255.f);
             // red is in the lsb. premultiplied alpha so alpha=0 == additive
             uint32_t col = (alpha << 24) | ((alpha >> 0) << 16) | ((alpha >> 0) << 8) | (alpha >> 0);
             if (i == 0)
                 col = 0;
-            add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
+            if (alpha > 0)
+                add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
         }
 
         static const uint32_t cc_cols[] = {

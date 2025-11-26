@@ -129,6 +129,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
     // stuff for shaders:
     int uniform_idx;
     shader_param_t shader_param;
+    float picked;
 
     // bfs 
     token_info_t *bfs_start_end; // source code ranges
@@ -142,6 +143,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
     int _apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when, int num_rhs=1);
     void _apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, int first_child, hap_time when, int hapid, filter_cb_t filter_cb, value_cb_t value_cb, size_t context, int num_rhs=1);
     hap_span_t _make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time when, int hapid);
+    float compute_blendnear_weights(bfs_node_t *n, float *weights);
     bool _append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid); // does random range 
     bool _append_number_hap(hap_span_t &dst, int nodeidx, int hapid, float value); 
     hap_span_t make_haps(hap_span_t dst, int tmp_size, float viz_time, hap_time when) { 

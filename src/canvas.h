@@ -152,6 +152,28 @@ void update_all_pattern_over_colors(pattern_t *patterns, EditorState *E) {
     }
 }
 
+void draw_text(float x, float y, const char *text, float size, uint32_t col = 0xffffffff) {
+    for (const char *c = text; *c; c++) {
+        add_line(x, y, x + 0.001f, y, col, size, 0.f, *c);
+        x += size * 0.5f;
+    }
+}
+
+void draw_arrow(float px, float py, float tpx, float tpy, float lw, float arrowhead) {
+    float dx = (tpx - px);
+    float dy = (tpy - py);
+    float d = sqrtf(dx * dx + dy * dy);
+    if (d) {
+        dx *= arrowhead / d;
+        dy *= arrowhead / d;
+        tpx -= dx * ((20.f + lw) / 15.f);
+        tpy -= dy * ((20.f + lw) / 15.f);
+        add_line(px, py, tpx, tpy, 0xffffffff, lw);
+        add_line(tpx, tpy, tpx - dx - dy, tpy - dy + dx, 0xffffffff, lw);
+        add_line(tpx, tpy, tpx - dx + dy, tpy - dy - dx, 0xffffffff, lw);
+    }
+}
+
 void draw_canvas(EditorState *E) {
     update_zoom_and_center(E);
     const static uint32_t cols[] = {0xffffffff, 0xff0000ee, 0xff00d0fc, 0xff00ee00, 0xfffcd000,
@@ -194,7 +216,7 @@ void draw_canvas(EditorState *E) {
         hover_idx = -1;
 
     float extrarad = 4.f / E->zoom_sm;
-    int hover_pattern_idx = -1;
+    int hover_pattern_idx = drag_pattern_idx;
     float lw = 8.f * E->zoom_sm;
     float arrowdx = 50.f * E->zoom_sm;
     float arrowhead = 15.f * E->zoom_sm;
@@ -205,20 +227,46 @@ void draw_canvas(EditorState *E) {
         float py = p->y * E->zoom_sm + E->centery_sm;
         if (cbm & (1 << 8)) {
             // x
-            add_line(px - arrowdx, py, px + arrowdx, py, 0xffffffff, lw);
-            add_line(px + arrowdx, py, px + arrowdx - arrowhead, py + arrowhead, 0xffffffff, lw);
-            add_line(px + arrowdx, py, px + arrowdx - arrowhead, py - arrowhead, 0xffffffff, lw);
-            add_line(px - arrowdx, py, px - arrowdx + arrowhead, py + arrowhead, 0xffffffff, lw);
-            add_line(px - arrowdx, py, px - arrowdx + arrowhead, py - arrowhead, 0xffffffff, lw);
+            add_line(px - arrowdx, py, px + arrowdx, py, 0xffffffff, lw * 0.25f);
+            add_line(px + arrowdx, py, px + arrowdx - arrowhead, py + arrowhead, 0xffffffff, lw * 0.25f);
+            add_line(px + arrowdx, py, px + arrowdx - arrowhead, py - arrowhead, 0xffffffff, lw * 0.25f);
+            add_line(px - arrowdx, py, px - arrowdx + arrowhead, py + arrowhead, 0xffffffff, lw * 0.25f);
+            add_line(px - arrowdx, py, px - arrowdx + arrowhead, py - arrowhead, 0xffffffff, lw * 0.25f);
         }
         if (cbm & (1 << 9)) {
             // y
-            add_line(px, py - arrowdx, px, py + arrowdx, 0xffffffff, lw);
-            add_line(px, py + arrowdx, px + arrowhead, py + arrowdx - arrowhead, 0xffffffff, lw);
-            add_line(px, py + arrowdx, px - arrowhead, py + arrowdx - arrowhead, 0xffffffff, lw);
-            add_line(px, py - arrowdx, px + arrowhead, py - arrowdx + arrowhead, 0xffffffff, lw);
-            add_line(px, py - arrowdx, px - arrowhead, py - arrowdx + arrowhead, 0xffffffff, lw);
+            add_line(px, py - arrowdx, px, py + arrowdx, 0xffffffff, lw * 0.25f);
+            add_line(px, py + arrowdx, px + arrowhead, py + arrowdx - arrowhead, 0xffffffff, lw * 0.25f);
+            add_line(px, py + arrowdx, px - arrowhead, py + arrowdx - arrowhead, 0xffffffff, lw * 0.25f);
+            add_line(px, py - arrowdx, px + arrowhead, py - arrowdx + arrowhead, 0xffffffff, lw * 0.25f);
+            add_line(px, py - arrowdx, px - arrowhead, py - arrowdx + arrowhead, 0xffffffff, lw * 0.25f);
         }
+        if (cbm & (1 << 25)) {
+            // blendnear
+            for (int j = 0; j < stbds_arrlen(p->bfs_nodes); j++) {
+                if (p->bfs_nodes[j].type == N_BLENDNEAR) {
+                    float weights[p->bfs_nodes[j].num_children];
+                    float tot_weight = p->compute_blendnear_weights(&p->bfs_nodes[j], weights);
+                    int first_child = p->bfs_nodes[j].first_child;
+                    for (int ch = 0; ch < p->bfs_nodes[j].num_children; ch++) {
+                        int pidx = (int)p->bfs_min_max_value[first_child + ch].mx;
+                        if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) {
+                            pattern_t *target_pat = &G->patterns_map[pidx];
+                            float tpx = target_pat->x * E->zoom_sm + E->centerx_sm;
+                            float tpy = target_pat->y * E->zoom_sm + E->centery_sm;
+                            draw_arrow(px, py, tpx, tpy, lw * weights[ch] / tot_weight, arrowhead);
+                            tpx += 30.f * E->zoom_sm;
+                            uint32_t col = 0xff808080;
+                            if (target_pat->picked > 0.5f) {
+                                col=0xffffffff;
+                            }
+                            draw_text(tpx, tpy, target_pat->key, 30.f * E->zoom_sm,  col);
+                        } // target pattern
+                    } // child loop
+                } // blendnear node
+            } // node loop
+        }
+
         if (cbm & (1 << 24)) {
             // near
             for (int j = 0; j < stbds_arrlen(p->bfs_nodes); j++) {
@@ -230,18 +278,9 @@ void draw_canvas(EditorState *E) {
                         float tpy = target_pat->y * E->zoom_sm + E->centery_sm;
                         float nearness = p->get_near_output(target_pat);
                         if (nearness > 0.f) {
-                            float dx = (tpx - px);
-                            float dy = (tpy - py);
-                            float d = sqrtf(dx * dx + dy * dy);
-                            if (d) {
-                                dx *= arrowhead / d;
-                                dy *= arrowhead / d;
-                                tpx -= dx * ((20.f + lw) / 15.f);
-                                tpy -= dy * ((20.f + lw) / 15.f);
-                                add_line(px, py, tpx, tpy, 0xffffffff, lw * nearness);
-                                add_line(tpx, tpy, tpx - dx - dy, tpy - dy + dx, 0xffffffff, lw * nearness);
-                                add_line(tpx, tpy, tpx - dx + dy, tpy - dy - dx, 0xffffffff, lw * nearness);
-                            }
+                            draw_arrow(px, py, tpx, tpy, lw * nearness, arrowhead);
+                            tpx += 30.f * E->zoom_sm;
+                            draw_text(tpx, tpy, target_pat->key, 30.f * E->zoom_sm, 0xff808080);
                         }
                     }
                 }
@@ -267,18 +306,26 @@ void draw_canvas(EditorState *E) {
         }
         add_line(px, py, px, py, 0xff000000, (21.f) * E->zoom_sm * 2.f); // outline
         if (!cbm) {
-            add_line(px, py, px, py, 0xff808080, (20.f) * E->zoom_sm * 2.f);
-            continue;
-        }
-        int numcbm = popcount(cbm);
-        for (int j = 0; j < numcbm; j++) {
-            int ci = ctz(cbm);
-            float rad = sqrtf((numcbm - j) / float(numcbm)) * 20.f * E->zoom_sm;
-            add_line(px, py, px, py, cols[ci], rad * 2.f);
-            cbm &= ~(1 << ci);
+            // no colors, draw a gray circle
+            uint32_t grey_col = 0xff808080;
+            if (!(p->colbitmask & 0x0fffffff)) { // bit 28-31 are the arrow head targets.
+                // its only the *target* of an arrow head, so make it unfilled.
+                add_line(px, py, px, py, grey_col, (20.f) * E->zoom_sm * 2.f, -2.f); 
+            } else {
+                add_line(px, py, px, py, grey_col, (20.f) * E->zoom_sm * 2.f);
+            }
+        } else {
+            int numcbm = popcount(cbm);
+            for (int j = 0; j < numcbm; j++) {
+                int ci = ctz(cbm);
+                float rad = sqrtf((numcbm - j) / float(numcbm)) * 20.f * E->zoom_sm;
+                add_line(px, py, px, py, cols[ci], rad * 2.f);
+                cbm &= ~(1 << ci);
+            }
         }
     }
 
+    // draw bounding box.
     add_line(0.f * E->zoom_sm + E->centerx_sm, 0.f * E->zoom_sm + E->centery_sm, 1920.f * E->zoom_sm + E->centerx_sm,
              0.f * E->zoom_sm + E->centery_sm, 0xffffffff, 1.f);
     add_line(1920.f * E->zoom_sm + E->centerx_sm, 0.f * E->zoom_sm + E->centery_sm, 1920.f * E->zoom_sm + E->centerx_sm,
@@ -292,13 +339,10 @@ void draw_canvas(EditorState *E) {
         pattern_t *p = &G->patterns_map[hover_pattern_idx];
         float tx = (p->x + 30.f) * E->zoom_sm + E->centerx_sm;
         float ty = p->y * E->zoom_sm + E->centery_sm;
-        for (const char *c = p->key; *c; c++) {
-            add_line(tx, ty, tx + 0.001f, ty, 0xffffffff, 30.f * E->zoom_sm, 0.f, *c);
-            tx += 30.f * 0.5f * E->zoom_sm;
-        }
+        draw_text(tx, ty, p->key, 30.f * E->zoom_sm);
     }
 
-    if (hover_idx == -1) {
+    if (hover_idx == -1 && hover_pattern_idx == -1) {
         add_line(G->mx, G->my, G->mx, G->my, 0xffffffff, inner_rad * 2.f, -1.f); // brush mouse cursor
         add_line(G->mx, G->my, G->mx, G->my, 0x80808080, outer_rad * 2.f, -1.f); // brush mouse cursor
     }

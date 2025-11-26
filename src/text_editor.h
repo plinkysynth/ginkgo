@@ -70,8 +70,8 @@ enum {
 enum {
     TAB_SHADER = 0,
     TAB_AUDIO = 1,
-    TAB_SAMPLES = 2,
-    TAB_CANVAS = 3,
+    TAB_CANVAS = 2,
+    TAB_SAMPLES = 3,
     TAB_LAST
 };
 
@@ -225,6 +225,8 @@ int looks_like_slider_comment(const char *str, int n, int idx,
     if (idx >= n)
         return 0;
     int i = idx;
+    if (i>0 && str[i]=='/' && str[i-1]=='*')
+        i--;
     while (i >= 0 && i < n && str[i] != '/' && str[i] != '\n')
         i--;
     // ok it must be of the form /*digits-----digits*/

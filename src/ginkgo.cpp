@@ -842,8 +842,10 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
 extern EditorState tabs[TAB_LAST];
 EditorState tabs[TAB_LAST] = {{.fname = NULL, .editor_type = TAB_SHADER},
                               {.fname = NULL, .editor_type = TAB_AUDIO},
+                              {.editor_type = TAB_CANVAS},
                               {.editor_type = TAB_SAMPLES},
-                              {.editor_type = TAB_CANVAS}};
+ 
+                            };
 EditorState *curE = tabs;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 static float retina = 1.0f;
@@ -871,9 +873,21 @@ int update_pattern_color_bitmask(pattern_t *patterns, pattern_t *root, pattern_t
             int pidx = (int)p->bfs_min_max_value[j].mx;
             if (pidx >= 0 && pidx < stbds_shlen(patterns)) {
                 pattern_t *target_pat = &patterns[pidx];
-                target_pat->colbitmask |= 1<<25; // target of a near... to make the node appear in the canvas.
+                target_pat->colbitmask |= 1<<28; // target of a near... to make the node appear in the canvas.
             }
         }
+        if (p->bfs_nodes[j].type == N_BLENDNEAR) {
+            mask |= 1<<25;
+            int first_child = p->bfs_nodes[j].first_child;
+            for (int ch = 0; ch < p->bfs_nodes[j].num_children; ch++) {
+                int pidx = (int)p->bfs_min_max_value[first_child + ch].mx;
+                if (pidx >= 0 && pidx < stbds_shlen(patterns)) {
+                    pattern_t *target_pat = &patterns[pidx];
+                    target_pat->colbitmask |= 1<<29; // target of a blendnear... to make the node appear in the canvas.
+                }
+            }
+        }
+
         /* TODO: add upper bits and _color words to allow for nested colors via call. 
         if (p->bfs_nodes[j].type == N_CALL && depth < 4) {
             int patidx = (int)p->bfs_min_max_value[j].mx;

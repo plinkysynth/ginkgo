@@ -353,6 +353,44 @@ int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time w
     return 1;
 }
 
+
+float pattern_t::compute_blendnear_weights(bfs_node_t *n, float *weights) {
+    float tot_weight = 0.f;
+    for (int i = 0; i < n->num_children; i++) {
+        // use the second closest to any other pattern to scale the distances to this node.
+        float closest=1e9, second_closest=1e9;
+        int pidx = (int)bfs_min_max_value[n->first_child + i].mx;
+        if (pidx<0 || pidx>=stbds_shlen(G->patterns_map)) {
+            weights[i] = 0.f;
+        } else {
+            pattern_t *pati = &G->patterns_map[pidx];
+            for (int j=0; j<n->num_children; j++) if (j!=i) {
+                int pidx = (int)bfs_min_max_value[n->first_child + j].mx;
+                if (pidx<0 || pidx>=stbds_shlen(G->patterns_map)) {
+                    continue;
+                }
+                pattern_t *patj = &G->patterns_map[pidx];
+                float dsq = square(pati->x - patj->x) + square(pati->y - patj->y);
+                if (dsq < closest) {
+                    //second_closest = closest;
+                    closest = dsq;
+                } 
+                // else if (dsq < second_closest) {
+                //     second_closest = dsq;
+                // }
+            }
+            // if (second_closest == 1e9) second_closest = closest;
+            // if (!second_closest) second_closest = 1.f;
+            if (!closest) closest = 1.f;
+            float dsq = (square(pati->x - x) + square(pati->y - y)) / closest;
+            weights[i] = expf(-dsq*3.f); // smoothstep(1.f, 0.f, dsq);
+            if (weights[i] < 0.01f) weights[i] = 0.f;
+            tot_weight += weights[i];
+        }
+    }
+    return tot_weight;
+}
+
 hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time when, int hapid) {
     if (nodeidx < 0 || !bfs_nodes)
         return {};
@@ -600,16 +638,18 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         bool is_blendnear = n->type == N_BLENDNEAR;
         int num_weights = (is_blendnear) ? n->num_children : (n->num_children + 1)/2;
         if (!num_weights) break;
-        int need_zero_weight = n->num_children & 1;
         float weights[num_weights];
+        // if the number of children is odd, we 'need a zero weight' meaning that we compute that as 1-totweight automatically
+        int need_zero_weight = n->num_children & 1;
         float tot_weight = 0.f;
         if (is_blendnear) {
-            // todo
+            tot_weight = compute_blendnear_weights(n, weights);
         } else {
-            for (int i = need_zero_weight; i < n->num_children; i += 2) {
+            for (int i = need_zero_weight; i < num_weights; i++) {
+                int childidx = i*2-need_zero_weight;
                 hap_t tmp_mem[tmp_size];
                 hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
-                hap_span_t hs = _make_haps(tmp, tmp_size, viz_time, n->first_child + i, when, hash2_pcg(hapid, n->first_child + i));
+                hap_span_t hs = _make_haps(tmp, tmp_size, viz_time, n->first_child + childidx, when, hash2_pcg(hapid, n->first_child + childidx));
                 weights[i] = 0.f;
                 for (hap_t *h = hs.s; h < hs.e; h++) 
                     weights[i] = max(weights[i], h->get_param(P_NUMBER, weights[i]));
@@ -620,14 +660,20 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 tot_weight += weights[0];
             }
         }
-        int step = is_blendnear ? 1 : 2;
         hap_t tmp_mem[tmp_size * num_weights];
         hap_span_t tmp[num_weights];
         int hash = 0;
         bool has_sound_or_note = false;
-        for (int i = need_zero_weight ? 0 : 1; i < n->num_children; i += step) {
+        int max_poly = 0;
+        for (int i = 0; i < num_weights; ++i) {
+            if (weights[i] <= 0.) {
+                tmp[i] = {NULL, NULL};
+                continue;
+            }
+            int childidx = (is_blendnear) ? i : (i*2+ !need_zero_weight);
             tmp[i] = {tmp_mem + i * tmp_size, tmp_mem + (i + 1) * tmp_size};
-            tmp[i] = _make_haps(tmp[i], tmp_size, viz_time, n->first_child + i, when, hash2_pcg(hapid, n->first_child + i));
+            tmp[i] = _make_haps(tmp[i], tmp_size, viz_time, n->first_child + childidx, when, hash2_pcg(hapid, n->first_child + childidx));
+            max_poly = max(max_poly, (int)(tmp[i].e - tmp[i].s));
             // if it contains sound or note, update the hash with that hap
             // then select between them
             for (hap_t *hap = tmp[i].s; hap < tmp[i].e; hap++) {
@@ -639,17 +685,72 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         if (has_sound_or_note) {
             // pick an index from 0 to numweights based on the cdf of weights
-            float pick = (tot_weight * 0x1000000) / (hash & 0xffffff);
-            for (int i = 0; i < num_weights; i++) {
-                if (pick < weights[i] || i == num_weights-1) {
-                    break;
+            float pick = ((hash & 0xffffff)*tot_weight) / 0x1000000;
+            int i;
+            for (i = 0; i < num_weights; i++) {
+                bool picked = pick < weights[i] || i == num_weights-1;
+                if (is_blendnear) {
+                    int pidx = (int)bfs_min_max_value[n->first_child + i].mx;
+                    if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) G->patterns_map[pidx].picked = picked;
                 }
+                if (picked) break;
                 pick -= weights[i];
+            }
+            if (is_blendnear) 
+            for (int j= i+1; j< num_weights; j++) {
+                int pidx = (int)bfs_min_max_value[n->first_child + j].mx;
+                if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) G->patterns_map[pidx].picked = 0.f;
+            }
+            hap_span_t src = tmp[i];
+            for (hap_t *src_hap = src.s; src_hap < src.e; src_hap++) {
+                if (dst.s >= dst.e)
+                        break;
+                hap_t *target = dst.s++;
+                *target = *src_hap;
             }
         } else {
             // blend all the haps together according to the weights
-            if (tot_weight > 0.f) tot_weight = 1.f / tot_weight;
-            for (int i = 0; i < num_weights; i++) {
+            float tot_weights[max_poly][P_LAST];
+            if (dst.s + max_poly > dst.e)
+                max_poly = (int)(dst.e - dst.s);
+            hap_span_t out = {dst.s, dst.s + max_poly};
+            dst.s+=max_poly;
+            for (int i=0; i< max_poly; ++i) out.s[i].valid_params = 0;
+            for (int i =0; i < num_weights; ++i) {
+                if (is_blendnear) {
+                    int pidx = (int)bfs_min_max_value[n->first_child + i].mx;
+                    if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) G->patterns_map[pidx].picked = weights[i];
+                }
+                if (tmp[i].empty()) continue;
+                hap_t *src_hap = tmp[i].s;                
+                for (int j = 0; j<max_poly; ++j) {
+                    int valid = src_hap->valid_params;
+                    while (valid) {
+                        int bit = __builtin_ctz(valid);
+                        valid &= ~(1 << bit);
+                        float v = src_hap->params[bit];
+                        if (!out.s[j].has_param(bit)) {
+                            tot_weights[j][bit] = 0.f;
+                            out.s[j].params[bit] = 0.f;
+                            out.s[j].valid_params |= 1 << bit;
+                        }
+                        out.s[j].params[bit] += v * weights[i];
+                        tot_weights[j][bit] += weights[i];
+                    } // loop over valid src params
+                    src_hap++;
+                    if (src_hap == tmp[i].e) src_hap=tmp[i].s;
+                } // loop over output haps
+            } // loop over weights
+            // normalize:
+            for (int j = 0; j<max_poly; ++j) {
+                int valid = out.s[j].valid_params;
+                while (valid) {
+                    int bit = __builtin_ctz(valid);
+                    valid &= ~(1 << bit);
+                    float tw = tot_weights[j][bit];
+                    if (tw > 0.f)
+                        out.s[j].params[bit] /= tw;
+                }
             }
         }
         break;

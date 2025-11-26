@@ -125,7 +125,8 @@ static inline float clamp(float a, float min, float max) { return a < min ? min 
 static inline float square(float x) { return x * x; }
 static inline float frac(float x) { return x - floorf(x); }
 static inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
-
+static inline float smoothstep(float x) { if (x<0.f) return 0.f; if (x>1.f) return 1.f; return x * x * (3.f - 2.f * x); }
+static inline float smoothstep(float a, float b, float x) { return smoothstep((x-a)/(b-a)); }
 static inline stereo lerp(stereo a, stereo b, float t) { return a+(b-a)*t; }
 
 static inline float pow2(float x) { return x * x; }

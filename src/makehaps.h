@@ -943,9 +943,6 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         else
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_value_func, param);
         break;
-    case N_OP_FITN:
-        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_fit_func, 0);
-        break;
 
     case N_OP_CLIP:
         _apply_unary_op(

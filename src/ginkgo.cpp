@@ -1456,8 +1456,10 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     if (rename("editor.tmp", E->fname) == 0) {
                         set_status_bar(C_OK, "saved");
                         init_remapping(E);
-                        if (E->editor_type <= TAB_AUDIO)
+                        if (E->editor_type <= TAB_AUDIO) {
                             parse_named_patterns_in_source();
+                            try_to_compile_audio(&E->last_compile_log);
+                        }
                     } else {
                         f = 0;
                     }

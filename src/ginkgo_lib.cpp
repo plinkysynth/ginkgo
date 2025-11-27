@@ -661,7 +661,9 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 release_k = env_k(release);
             } else {
                 // no release specified...
-                if (w && w->num_frames > 0 && h->get_param(P_LOOPS, 0.f) >= h->get_param(P_LOOPE, 0.f)) {
+                if (!G->playing) {
+                    release_k = 0.005f; // stop immediately if not playing.
+                } else if (w && w->num_frames > 0 && h->get_param(P_LOOPS, 0.f) >= h->get_param(P_LOOPE, 0.f)) {
                     release_k = 0.f; // it's a one shot sample so let it play out. nb this is now a _k value, not a time.
                 } else {
                     release_k = 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.

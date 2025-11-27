@@ -171,7 +171,7 @@ static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' 
 static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<' || c == '#'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
-static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end, float maxval = -1.f) {
+static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end, float maxval = -1e9f, float minval=-1e9f) {
     int i = stbds_arrlen(p->nodes);
     Node n = (Node){.type = (uint8_t)node_type,
                     .start = start,
@@ -181,8 +181,10 @@ static int make_node(pattern_maker_t *p, int node_type, int first_child, int nex
                     .next_sib = next_sib,
                     .total_length = 0,
                     .num_children = 0};
-    if (maxval != -1.f)
+    if (maxval != -1e9f)
         n.max_value = maxval;
+    if (minval != -1e9f)
+        n.min_value = minval;
     stbds_arrput(p->nodes, n);
     return i;
 }
@@ -241,7 +243,7 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
     return make_node(p, group_type, first_child, -1, start, p->i);
 }
 
-static int parse_leaf(pattern_maker_t *p);
+static int parse_leaf(pattern_maker_t *p, bool *is_range=NULL);
 static int parse_number(const char *s, const char *e, const char **end, float *number);
 
 static int parse_group(pattern_maker_t *p, char open, char close, int node_type, bool allow_comma = true) {
@@ -474,12 +476,13 @@ static inline EValueType parse_number_or_note_or_sound(const char *s, const char
     return VT_SOUND;
 }
 
-static inline EValueType parse_value(const char *s, const char *e, float *minval, float *maxval) {
+static inline EValueType parse_value(const char *s, const char *e, float *minval, float *maxval, bool *is_range) {
     if (s == e)
         return VT_NONE;
     const char *dash = s + 1;
     while (dash < e && *dash != '-')
         dash++;
+    if (is_range) *is_range=dash != e;
     EValueType type1 = parse_number_or_note_or_sound(s, dash, minval, maxval);
     if (type1 == VT_NONE)
         return VT_NONE;
@@ -538,12 +541,12 @@ static int parse_curve(pattern_maker_t *p) {
     return node;
 }
 
-static int parse_leaf(pattern_maker_t *p) {
+static int parse_leaf(pattern_maker_t *p, bool *is_range) {
     int start = p->i;
     skiptoendoftoken(p);
     // split the string into parts separated by _; valid parts can be a number, a note, or a sound.
     float minval, maxval;
-    EValueType type = parse_value(p->s + start, p->s + p->i, &minval, &maxval);
+    EValueType type = parse_value(p->s + start, p->s + p->i, &minval, &maxval, is_range);
     if (type == VT_NONE) {
         error(p, "expected value");
         return -1;
@@ -769,6 +772,8 @@ static int parse_op(pattern_maker_t *p, int left_node, int node_type, int num_pa
             p, left_node); // euclid node is different - it has a closing ) and comma separated args. because, idk. history.
     }
     int prev_node = left_node;
+    float maxval = -1e9f;
+    float minval = -1e9f;
     for (int i = 0; i < num_params + optional_right; i++) {
         bool optional = i >= num_params;
         if (!optional)
@@ -778,11 +783,28 @@ static int parse_op(pattern_maker_t *p, int left_node, int node_type, int num_pa
             if (!isleaf(ch) && !isopening(ch))
                 break;
         }
-        int right_node = parse_expr(p, caller_precedence);
+        int right_node;
+        if (node_type == N_OP_ELONGATE) {
+            // elongate must be a simple number after it.
+            bool is_range = false;
+            right_node = parse_leaf(p, &is_range);
+            if (right_node < 0 || p->nodes[right_node].type != N_LEAF) {
+                error(p, "expected a number after elongate");
+                break;
+            }
+            maxval = p->nodes[right_node].max_value;
+            if (is_range)
+                minval = p->nodes[right_node].min_value; // for elongate, we use a notation @from-length . its a bit odd but most ergonomic for it to be length, not end.
+            else
+                minval = -1.f;
+            right_node = -1;
+        } else {
+            right_node = parse_expr(p, caller_precedence);
+        }
         p->nodes[prev_node].next_sib = right_node;
         prev_node = right_node;
     }
-    int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i);
+    int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i, maxval, minval);
     return parent_node;
 }
 
@@ -875,15 +897,23 @@ static void update_lengths(pattern_maker_t *p, int node) {
     int num_children = 0;
     if (n->first_child < 0)
         total_length = 1.f;
+    float force_length = 0.f;
     for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
         ++num_children;
         update_lengths(p, i);
         if (i != n->first_child)
             max_value = max(max_value, p->nodes[i].max_value);
         total_length += get_length(p, i);
+        if (p->nodes[i].type == N_OP_ELONGATE && p->nodes[i].min_value >= 0.f) {
+            // the child is an elongate node with a specified start time. 
+            // we will choose to make the total length be the end of the cycle where this one starts.
+            force_length = max(force_length, floorf(p->nodes[i].min_value)+1.f);
+        }
     }
     if (n->type == N_GRID) {
         total_length = n->max_value; // i claim the total length of my kids is in fact just my own grid size. :)
+    } else if (force_length > 0.f) {
+        total_length = force_length;
     }
     n->total_length = total_length;
     n->num_children = num_children;

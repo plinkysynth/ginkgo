@@ -989,9 +989,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         if (kids_total_length <= 0.f || n->first_child < 0)
             break;
         hap_time child_when = when * speed_scale;
-        int loopidx = floor(when / kids_total_length);
+        int loopidx = floor(child_when / kids_total_length);
         hap_time from = loopidx * kids_total_length;
         hap_time loop_from = from;
+        hap_time original_loop_from = loop_from;
         int childidx = 0;
         float lines_per_cycle = 1.f;
         if (n->type == N_GRID) {
@@ -1000,9 +1001,17 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             if (lines_per_cycle < 1.f)
                 break;
         }
-        while (from <= child_when) {
+        hap_time finish_at = child_when;
+        while (from <= finish_at) {
             int childnode = n->first_child + childidx;
             hap_time child_length = get_length(childnode);
+            if (bfs_nodes[childnode].type == N_OP_ELONGATE) {
+                float minval = bfs_min_max_value[childnode].mn;
+                if (minval >= 0.f) {
+                    from = loop_from + minval;
+                    finish_at = original_loop_from + kids_total_length; // once you have an elongate that's out of order, you need to loop to the end of the parent's cycle.
+                }
+            }
             hap_time to = from + child_length;
             hap_time next_from = to;
             if (n->type == N_GRID) {
@@ -1019,9 +1028,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 if (from > child_when)
                     break;
             }
+            
             if (to <= from)
                 break;
-            if (to > child_when) {
+            if (to > child_when && from <= child_when) {
                 // we shift time so that the child feels like it's just looping on its own
                 hap_time child_from = loopidx * child_length;
                 hap_time child_to = (loopidx + 1) * child_length;

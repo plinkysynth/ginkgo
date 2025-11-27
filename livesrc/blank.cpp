@@ -1,7 +1,7 @@
 
 #ifdef PATTERNS
 
-/pattern [bd sd]
+/pattern [bd@0-1 sd@1-1]
 
 /bpm 140
 

@@ -744,7 +744,7 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
     
     void main() {
         // adjust for aspect ratio
-        vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
+        vec2 user_uv = (v_uv-1) * uARadjust + 1;
         vec3 rendercol= texture(uFP, user_uv).rgb;
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
         rendercol += bloomcol ;//* 0.3;

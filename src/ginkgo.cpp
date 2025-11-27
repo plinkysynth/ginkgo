@@ -1448,7 +1448,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     set_status_bar(C_OK, "saved canvas");
                 else
                     set_status_bar(C_ERR, "failed to save canvas");
-            } else if (E->editor_type != TAB_SHADER || try_to_compile_shader(E) != 0) {
+            } else {
                 FILE *f = fopen("editor.tmp", "w");
                 if (f) {
                     fwrite(E->str, 1, stbds_arrlen(E->str), f);
@@ -1456,9 +1456,18 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     if (rename("editor.tmp", E->fname) == 0) {
                         set_status_bar(C_OK, "saved");
                         init_remapping(E);
+                        if (E->editor_type == TAB_SHADER) {
+                            try_to_compile_shader(E);
+                        }
                         if (E->editor_type <= TAB_AUDIO) {
                             parse_named_patterns_in_source();
-                            try_to_compile_audio(&E->last_compile_log);
+                            bool need_c_recompile = E->editor_type == TAB_AUDIO;
+                            if (E->editor_type == TAB_SHADER) {
+                                need_c_recompile = spanstr(E->str, E->str + stbds_arrlen(E->str), "#ifdef C") != NULL;
+                            }
+                            if (need_c_recompile) {
+                                try_to_compile_audio(&E->last_compile_log);
+                            }
                         }
                     } else {
                         f = 0;

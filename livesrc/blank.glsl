@@ -29,12 +29,8 @@ For more information, see docs/docs.md
 // tex assets/font_brutalita.png
 
 
+
 vec4 pixel(vec2 uv) {
     return vec4(0.01,0.02,0.03,1.);
 }
 
-#ifdef C 
-void update_frame(void) {
-    //printf("hello from update frame\n");
-}
-#endif

@@ -163,7 +163,8 @@ void skiptoendoftoken(pattern_maker_t *p) {
             break;
         p->i++;
     }
-    if (p->i == start && p->i<p->n) p->i++;
+    if (p->i == start && p->i < p->n)
+        p->i++;
 }
 
 static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' || c == '>' || c == '#'; }
@@ -180,7 +181,7 @@ static int make_node(pattern_maker_t *p, int node_type, int first_child, int nex
                     .next_sib = next_sib,
                     .total_length = 0,
                     .num_children = 0};
-    if (maxval !=-1.f) 
+    if (maxval != -1.f)
         n.max_value = maxval;
     stbds_arrput(p->nodes, n);
     return i;
@@ -195,13 +196,14 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
     int prev_sibling = -1;
     int prev_i = -1;
     while (1) {
-        if (p->i == prev_i) break; // belt and braces to prevent infinite loops
-        prev_i = p->i; 
+        if (p->i == prev_i)
+            break; // belt and braces to prevent infinite loops
+        prev_i = p->i;
         skipws(p);
         char c = peek(p);
         if (c <= 0 || c == close)
             break;
-        if (c=='$') {
+        if (c == '$') {
             // $ is just used to bail to the lowest precedence. we skip it in lists.
             consume(p, '$');
             skipws(p);
@@ -227,9 +229,8 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
         skipws(p);
         if (list_delimeter > 0 && !consume(p, list_delimeter))
             break;
-        if (!allow_comma && (peek(p) == ',' || peek(p) == '}')) 
+        if (!allow_comma && (peek(p) == ',' || peek(p) == '}'))
             break;
-
     }
     if (first_child < 0)
         return -1;
@@ -275,7 +276,8 @@ static int parse_poly(pattern_maker_t *p) {
         else
             p->nodes[prev_sib].next_sib = group_node;
         prev_sib = group_node;
-        if (!consume(p, ',')) break;
+        if (!consume(p, ','))
+            break;
     }
     if (!consume(p, '}')) {
         error(p, "expected closing bracket");
@@ -405,13 +407,33 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
     const char *check = s;
     if (*check == '-')
         check++;
-    if (check >= e || (!isdigit(*check) && *check != '.'))
+    if (check >= e || (!isxdigit(*check) && *check != '.' && *check != 'x')) {
         return 0;
+    }
     char buf[e - s + 1];
     memcpy(buf, s, e - s);
     buf[e - s] = '\0';
-    char *endptr = (char *)e;
-    double d = strtod(buf, &endptr);
+    char *endptr = 0;
+    double d = 0;
+    char *bufe = buf + (e - s);
+    char *x = strchr(buf, 'x');
+    if (!x) {
+        d = strtod(buf, &endptr);
+    } else {
+        // maybe we're a ginkgo hex number :)
+        *x = 0;
+        d = strtol(buf, &endptr, 16);
+        *x = 'x';
+        if (endptr < bufe && *endptr == 'x') {
+            const char *fracstart = endptr + 1;
+            double fracd = strtol(fracstart, &endptr, 16);
+            int numdigits = endptr - fracstart;
+            if (numdigits > 0) {
+                fracd /= pow(16., numdigits);
+                d += (d < 0) ? -fracd : fracd;
+            }
+        }
+    }
     if (end)
         *end = s + (endptr - buf);
     else if (endptr != buf + (e - s))
@@ -657,9 +679,14 @@ static int parse_expr_inner(pattern_maker_t *p) {
             int param = parse_expr_inner(p);
             return make_node(p, N_RANDI, param, -1, start_i, p->i);
         }
-        #define X(x, str, ...) case HASH(str): { int param = parse_expr(p); return make_node(p, N_##x, param, -1, start_i, p->i); break; }
-        #include "params.h"                                                                                                            \
-        
+#define X(x, str, ...)                                                                                                             \
+    case HASH(str): {                                                                                                              \
+        int param = parse_expr(p);                                                                                                 \
+        return make_node(p, N_##x, param, -1, start_i, p->i);                                                                      \
+        break;                                                                                                                     \
+    }
+#include "params.h"
+
         case HASH("blend"):
         case HASH("blendnear"): {
             int param = parse_expr_inner(p);
@@ -668,15 +695,15 @@ static int parse_expr_inner(pattern_maker_t *p) {
                 return -1;
             }
             Node *n = &p->nodes[param];
-            if (n->type!=N_POLY && n->type!=N_FASTCAT && n->type!=N_CAT) {
+            if (n->type != N_POLY && n->type != N_FASTCAT && n->type != N_CAT) {
                 error(p, "expected a list after blend");
                 return -1;
             }
             bool is_blendnear = name_hash == HASH("blendnear");
             int num_kids = 0;
-            for (int i = n->first_child; i>=0; i=p->nodes[i].next_sib) {
+            for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
                 Node *kid = &p->nodes[i];
-                if (is_blendnear && kid->type!=N_CALL) {
+                if (is_blendnear && kid->type != N_CALL) {
                     error(p, "the list for blendnear must all be /pattern names");
                     return -1;
                 }
@@ -687,12 +714,11 @@ static int parse_expr_inner(pattern_maker_t *p) {
 
         case HASH("near"): {
             int param = parse_call(p);
-            if (param <0) {
+            if (param < 0) {
                 error(p, "expected pattern name after near");
                 return -1;
             }
-            return make_node(p, N_NEAR, -1, -1, start_i, p->i, p->nodes[param].max_value);        
-        
+            return make_node(p, N_NEAR, -1, -1, start_i, p->i, p->nodes[param].max_value);
         }
         default:
             p->i = start_i;
@@ -805,9 +831,9 @@ static int parse_expr(pattern_maker_t *p, int caller_precedence) {
 #define NODE(x, ...)
 #define OP(op_type, srcname, numparams, optional_right, precedence)                                                                \
     case HASH(srcname):                                                                                                            \
-        if (precedence <= caller_precedence)                                                                                        \
+        if (precedence <= caller_precedence)                                                                                       \
             break;                                                                                                                 \
-        op_node = parse_op(p, node, op_type, numparams, optional_right, precedence);                                              \
+        op_node = parse_op(p, node, op_type, numparams, optional_right, precedence);                                               \
         break;
 #include "node_types.h"
             }
@@ -864,7 +890,8 @@ static void update_lengths(pattern_maker_t *p, int node) {
     // leaf nodes dont want to overwrite their max value with the max of their children (real data is there!)
     // poly nodes use it as a hack for the % figure.
     // single child elongate nodes use it as a count to elongate by.
-    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID && n->type != N_NEAR && n->type != N_COLOR) {
+    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID && n->type != N_NEAR &&
+        n->type != N_COLOR) {
         n->max_value = max_value;
     }
 }
@@ -895,9 +922,9 @@ void test_minipat(void) {
     // const char *s = "c < > d"; // test empty group
     // const char *s = "c gain <sin * 0.8>"; // test grid
     // const char *s = "[a b c] * [2 1]"; // test rest in second half
-    //const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
-    //const char *s = "bd,bd,\n";
-    //const char *s = "{a b c, d e}%4";
+    // const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
+    // const char *s = "bd,bd,\n";
+    // const char *s = "{a b c, d e}%4";
     const char *s = "blendnear [/foo /bar]";
     // const char *s= "break_amen/4 : c2";
 
@@ -985,7 +1012,7 @@ int count_lines(const char *s, const char *e) {
     return count;
 }
 
-error_msg_t * parse_named_patterns_in_source(const char *s, const char *real_e, error_msg_t *error_msgs) {
+error_msg_t *parse_named_patterns_in_source(const char *s, const char *real_e, error_msg_t *error_msgs) {
     const char *code_start = s;
     while (s < real_e) {
         s = spanstr(s, real_e, "#ifdef PATTERNS");

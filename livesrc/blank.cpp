@@ -1,7 +1,7 @@
 
 #ifdef PATTERNS
 
-/pattern microlive:5 / 10
+/pattern [bd sd]
 
 /bpm 140
 

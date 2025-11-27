@@ -850,6 +850,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             n->type, 2);
         break;
     }
+    case N_OP_MASK:
+        _apply_unary_op(
+            dst, tmp_size, viz_time, nodeidx, when, hapid, [](hap_t *left_hap, hap_t *right_hap, int new_hap_id, hap_time when) { 
+                if (!right_hap || !right_hap->has_param(P_NUMBER))
+                    return 0;
+                float v = right_hap->params[P_NUMBER];
+                return (v > 0.f) ? 1 : 0;
+            },
+            nullptr, 0);
+        break;
     case N_OP_MUL:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,

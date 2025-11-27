@@ -39,8 +39,13 @@ pattern_t pattern_maker_t::make_pattern(const char *key, int index_to_add_to_sta
 
                 continue;
             }
-            q[i--].k = n->first_child; // replace this node with its only child
-            continue;
+            if (nodes[n->first_child].type == N_OP_ELONGATE && nodes[n->first_child].min_value >= 0.f) {
+                // its a cat or fastcat with just an elongate; we cant drop the wrapper..
+            } else {
+                // drop the wrapper.
+                q[i--].k = n->first_child; // replace this node with its only child
+                continue;
+            }
         }
         int bfs_parent = q[i].v;
         int my_bfs_idx = stbds_arrlen(p.bfs_nodes);

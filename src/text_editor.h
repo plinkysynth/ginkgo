@@ -2154,8 +2154,13 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     E->mouse_click_original_char = *ch;
                 if (E->mouse_clicked_chart && E->mouse_click_original_char != ' ' && E->mouse_click_original_char_x == mx)
                     *ch = ' ';
-                else
+                else {
+                    if (*ch == ' ' && mx != E->mouse_click_original_char_x && E->mouse_click_original_char != ' ') {
+                        E->str[cursor_in_curve_start_idx + E->mouse_click_original_char_x] = ' ';
+                        E->mouse_click_original_char_x = mx;
+                    }
                     *ch = btoa_tab[(int)value];
+                }
                 E->cursor_idx = cursor_in_curve_start_idx + mx;
                 E->select_idx = E->cursor_idx;
             }

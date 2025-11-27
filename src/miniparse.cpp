@@ -238,7 +238,15 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
         return -1;
     if (p->nodes[first_child].next_sib < 0) {
         // its a single node...
+        if (group_type == N_CAT || group_type == N_FASTCAT) {
+            if (p->nodes[first_child].type == N_OP_ELONGATE && p->nodes[first_child].min_value >= 0.f) {
+                // its a time-placed node inside a [] or <>. we want to preserve the group node.
+                return make_node(p, group_type, first_child, -1, start, p->i);
+            }
+        }
+        // we can drop the wrapper - especially as we recurse thru RANDOM and PARALLEL to get precedence right.
         return first_child;
+        
     }
     return make_node(p, group_type, first_child, -1, start, p->i);
 }
@@ -897,23 +905,26 @@ static void update_lengths(pattern_maker_t *p, int node) {
     int num_children = 0;
     if (n->first_child < 0)
         total_length = 1.f;
-    float force_length = 0.f;
+    float from = 0.f;
     for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
         ++num_children;
         update_lengths(p, i);
         if (i != n->first_child)
             max_value = max(max_value, p->nodes[i].max_value);
-        total_length += get_length(p, i);
+        float to = from + get_length(p, i);
         if (p->nodes[i].type == N_OP_ELONGATE && p->nodes[i].min_value >= 0.f) {
             // the child is an elongate node with a specified start time. 
             // we will choose to make the total length be the end of the cycle where this one starts.
-            force_length = max(force_length, floorf(p->nodes[i].min_value)+1.f);
+            from = p->nodes[i].min_value;
+            to = from + p->nodes[i].max_value - 1.f/16.f; // allow for a little bit of overhang in the end of the note.
+            from = floorf(from)+1.f;
+            to = floorf(to)+1.f;
         }
+        total_length = max(total_length, to);
+        from = to;
     }
     if (n->type == N_GRID) {
         total_length = n->max_value; // i claim the total length of my kids is in fact just my own grid size. :)
-    } else if (force_length > 0.f) {
-        total_length = force_length;
     }
     n->total_length = total_length;
     n->num_children = num_children;
@@ -955,8 +966,10 @@ void test_minipat(void) {
     // const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
     // const char *s = "bd,bd,\n";
     // const char *s = "{a b c, d e}%4";
-    const char *s = "blendnear [/foo /bar]";
-    // const char *s= "break_amen/4 : c2";
+    //const char *s = "blendnear [/foo /bar]";
+    const char *s = "<c^'C  q   A  i D'>@1-2";
+    
+    //const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";

@@ -1,7 +1,10 @@
 
 #ifdef PATTERNS
 
-/pattern [bd@0-1 sd@1-1]
+
+
+
+/pattern <c^'C  q   A  i D'>@1-2
 
 /bpm 140
 

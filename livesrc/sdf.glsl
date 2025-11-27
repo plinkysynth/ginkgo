@@ -15,7 +15,6 @@
 #ifdef PATTERNS
 /vispat [1 0 0.5 0]
 #endif
-
 uniform float vispat;
 
 const float F0 = 0.09;
@@ -150,3 +149,4 @@ vec4 pixel(vec2 uv) {
     o = vec4(c, disparity);
     return o;
 }
+

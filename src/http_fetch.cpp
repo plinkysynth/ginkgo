@@ -106,6 +106,10 @@ static int fetch_to_cache_core(
         snprintf(out_path, out_cap, "%s", url + 7);
         return 1;
     }
+    if (!strstr(url,"://")) {
+        snprintf(out_path, out_cap, "%s", url);
+        return 1;
+    }
 
     char name[1024];
     const char *cache_root = "webcache";
@@ -225,6 +229,8 @@ static const char *fetch_to_cache_sync(const char *url, int prefer_offline) {
     static char out_path[1024];
     if (strncmp(url, "file://", 7) == 0)
         return url + 7; // preserve old behaviour
+    if (!strstr(url,"://"))
+        return url;
     if (!fetch_to_cache_core(NULL, url, prefer_offline, out_path, sizeof out_path))
         return NULL;
     return out_path;

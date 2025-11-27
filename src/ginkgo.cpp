@@ -44,11 +44,10 @@
 #include "mac_touch_input.h"
 
 #ifndef __APPLE__
-RawPen *mac_pen_get(void) { return NULL; }  // returns pointer to pen if valid, NULL if no pen
-int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh) { return 0; }  // returns number of touches
-void mac_touch_init(void *cocoa_window) {}          // pass NSWindow* from GLFW
+RawPen *mac_pen_get(void) { return NULL; } // returns pointer to pen if valid, NULL if no pen
+int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh) { return 0; } // returns number of touches
+void mac_touch_init(void *cocoa_window) {}                                          // pass NSWindow* from GLFW
 #endif
-
 
 #define RESW 1920
 #define RESH 1080
@@ -429,6 +428,7 @@ uniform int status_bar_size;
 uniform sampler2D uBloom;
 uniform vec2 uARadjust;
 uniform sampler2D uSky;
+uniform sampler2D uTex;
 uniform samplerBuffer uSpheres;
 uniform mat4 c_cam2world;
 uniform mat4 c_cam2world_old;
@@ -840,12 +840,13 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
 // clang-format on
 
 extern EditorState tabs[TAB_LAST];
-EditorState tabs[TAB_LAST] = {{.fname = NULL, .editor_type = TAB_SHADER},
-                              {.fname = NULL, .editor_type = TAB_AUDIO},
-                              {.editor_type = TAB_CANVAS},
-                              {.editor_type = TAB_SAMPLES},
- 
-                            };
+EditorState tabs[TAB_LAST] = {
+    {.fname = NULL, .editor_type = TAB_SHADER},
+    {.fname = NULL, .editor_type = TAB_AUDIO},
+    {.editor_type = TAB_CANVAS},
+    {.editor_type = TAB_SAMPLES},
+
+};
 EditorState *curE = tabs;
 size_t textBytes = (size_t)(TMW * TMH * 4);
 static float retina = 1.0f;
@@ -856,6 +857,7 @@ GLuint stroke_prog = 0;
 GLuint pbos[3];
 int pbo_index = 0;
 GLuint texFont = 0, texText = 0;
+int skytex = 0, textex = 0;
 
 void set_tab(EditorState *newE) {
     G->ui_alpha_target = (G->ui_alpha_target > 0.5 && curE == newE) ? 0.f : 1.f;
@@ -869,26 +871,26 @@ int update_pattern_color_bitmask(pattern_t *patterns, pattern_t *root, pattern_t
             mask |= 1 << (int)p->bfs_min_max_value[j].mx;
         }
         if (p->bfs_nodes[j].type == N_NEAR) {
-            mask |= 1<<24;
+            mask |= 1 << 24;
             int pidx = (int)p->bfs_min_max_value[j].mx;
             if (pidx >= 0 && pidx < stbds_shlen(patterns)) {
                 pattern_t *target_pat = &patterns[pidx];
-                target_pat->colbitmask |= 1<<28; // target of a near... to make the node appear in the canvas.
+                target_pat->colbitmask |= 1 << 28; // target of a near... to make the node appear in the canvas.
             }
         }
         if (p->bfs_nodes[j].type == N_BLENDNEAR) {
-            mask |= 1<<25;
+            mask |= 1 << 25;
             int first_child = p->bfs_nodes[j].first_child;
             for (int ch = 0; ch < p->bfs_nodes[j].num_children; ch++) {
                 int pidx = (int)p->bfs_min_max_value[first_child + ch].mx;
                 if (pidx >= 0 && pidx < stbds_shlen(patterns)) {
                     pattern_t *target_pat = &patterns[pidx];
-                    target_pat->colbitmask |= 1<<29; // target of a blendnear... to make the node appear in the canvas.
+                    target_pat->colbitmask |= 1 << 29; // target of a blendnear... to make the node appear in the canvas.
                 }
             }
         }
 
-        /* TODO: add upper bits and _color words to allow for nested colors via call. 
+        /* TODO: add upper bits and _color words to allow for nested colors via call.
         if (p->bfs_nodes[j].type == N_CALL && depth < 4) {
             int patidx = (int)p->bfs_min_max_value[j].mx;
             if (patidx >= 0 && patidx < stbds_shlen(patterns)) {
@@ -937,7 +939,7 @@ void parse_named_patterns_in_source(void) {
     }
     update_pattern_color_bitmasks(new_pattern_map_during_parse);
     update_pattern_uniforms(new_pattern_map_during_parse, G->patterns_map);
-    void update_all_pattern_over_colors(pattern_t *patterns, EditorState *E);
+    void update_all_pattern_over_colors(pattern_t * patterns, EditorState * E);
     update_all_pattern_over_colors(new_pattern_map_during_parse, &tabs[TAB_CANVAS]);
     // TODO - let the old pattern table leak because concurrency etc
     G->patterns_map = new_pattern_map_during_parse;
@@ -1123,6 +1125,111 @@ static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
     return s;
 }
 
+static bool try_to_compile_audio(char **errorlog) {
+    if (errorlog) {
+        stbds_arrfree(*errorlog);
+        *errorlog = NULL;
+    }
+    char cmd[1024];
+    int version = g_version + 1;
+#ifdef __WINDOWS__
+    mkdir("build");
+#else
+    mkdir("build", 0755);
+#endif
+#if USING_ASAN
+#define SANITIZE_OPTIONS "-fsanitize=address"
+#else
+#define SANITIZE_OPTIONS ""
+#endif
+    FILE *f = fopen("build/stub.cpp", "w");
+    if (!f)
+        return false;
+    fprintf(f,
+            "#include \"ginkgo.h\"\n"
+            "%.*s\n"
+            "#include \"ginkgo_post.h\"\n",
+            (int)stbds_arrlen(tabs[TAB_AUDIO].str), tabs[TAB_AUDIO].str);
+    // add c portions of shader too!
+    const char *code_start = tabs[TAB_SHADER].str;
+    const char *s = code_start;
+    const char *real_e = code_start + stbds_arrlen(code_start);
+    while (s < real_e) {
+        s = spanstr(s, real_e, "#ifdef C");
+        if (!s)
+            break;
+        s += 8;
+        if (s >= real_e || !isspace(*s))
+            break;
+        const char *e = spanstr(s, real_e, "#endif");
+        if (!e)
+            break;
+        fprintf(f, "\n%.*s\n", (int)(e - s), s);
+        s = e + 6;
+    }
+    fclose(f);
+    snprintf(cmd, sizeof(cmd),
+             "clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " build/stub.cpp"
+             " -o build/dsp.%d." BUILD_LIB_EXT " 2>&1",
+             version);
+    printf("[%s]\n", cmd);
+    int64_t t0 = get_time_us();
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        fprintf(stderr, "popen %s failed: %s\n", cmd, strerror(errno));
+        return false;
+    }
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), fp)) {
+        fprintf(stderr, "%s", buf);
+        int n = strlen(buf);
+        char *errbuf = stbds_arraddnptr(*errorlog, n);
+        memcpy(errbuf, buf, n);
+    }
+    stbds_arrput(*errorlog, 0);
+    int rc = pclose(fp);
+    int64_t t1 = get_time_us();
+    if (rc != 0)
+        return false;
+// this block unloads the old dll after forcing a null dsp pointer. causes a long click
+// but stops asan from crashing
+#if USING_ASAN
+    atomic_store_explicit(&g_dsp_req, 0, memory_order_release);
+    while (atomic_load_explicit(&g_dsp_used, memory_order_acquire) != 0) {
+        usleep(1000);
+    }
+    dlclose(g_handle);
+    g_handle = NULL;
+#endif
+    snprintf(cmd, sizeof(cmd), "build/dsp.%d." BUILD_LIB_EXT, version);
+    void *h = dlopen(cmd, RTLD_NOW | RTLD_LOCAL);
+    if (!h) {
+        fprintf(stderr, "dlopen %s failed: %s\n", cmd, dlerror());
+        return false;
+    }
+    g_frame_update_func = (frame_update_func_t)dlsym(h, "frame_update_func");
+    dsp_fn_t fn = (dsp_fn_t)dlsym(h, "dsp");
+    if (!fn) {
+        fprintf(stderr, "dlsym failed: %s\n", dlerror());
+        dlclose(h);
+        return false;
+    }
+    //////////////////////////////////
+    // SUCCESS!
+    atomic_store_explicit(&g_dsp_req, fn, memory_order_release);
+    while (atomic_load_explicit(&g_dsp_used, memory_order_acquire) != fn) {
+        usleep(1000);
+    }
+    if (g_handle)
+        dlclose(g_handle);
+    g_handle = h;
+    g_version = version;
+    fprintf(stderr, "compile %s succeeded in %.3fms\n", cmd, (t1 - t0) / 1000.0);
+    snprintf(cmd, sizeof(cmd), "build/dsp.%d." BUILD_LIB_EXT, version - 1);
+    unlink(cmd);
+    return true;
+}
+
 GLuint try_to_compile_shader(EditorState *E) {
     if (E->editor_type != TAB_SHADER) {
         return 0;
@@ -1174,8 +1281,8 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     int ww = primon ? vm->width : 1920 / 2;
     int wh = primon ? vm->height : 1200 / 2;
     if (vm && (ww > vm->width || wh > vm->height)) {
-        ww /=2;
-        wh /=2;
+        ww /= 2;
+        wh /= 2;
     }
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -1198,7 +1305,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     glfwGetWindowContentScale(win, &retina, NULL);
     // printf("retina: %f\n", retina);
     glfwMakeContextCurrent(win);
-    if (!gladLoadGL()) 
+    if (!gladLoadGL())
         die("Failed to load OpenGL");
 
     glfwSwapInterval(secmon ? 0 : 1); // let the secondary monitor determine the swap interval
@@ -1236,13 +1343,13 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
 static uint32_t last_mods = 0;
 
 static void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) {
-    // printf("key: %d\n", key);
-    #ifdef __WINDOWS__
+// printf("key: %d\n", key);
+#ifdef __WINDOWS__
     if (mods & GLFW_MOD_CONTROL) {
         mods &= ~GLFW_MOD_CONTROL;
         mods |= GLFW_MOD_SUPER;
     }
-    #endif
+#endif
     last_mods = mods;
     EditorState *E = curE;
     if (action != GLFW_PRESS && action != GLFW_REPEAT)
@@ -1335,14 +1442,13 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         }
         if (key == GLFW_KEY_S) {
             bool compiled = true;
-            if (E->editor_type== TAB_CANVAS) {
-                bool save_canvas(EditorState *E);
+            if (E->editor_type == TAB_CANVAS) {
+                bool save_canvas(EditorState * E);
                 if (save_canvas(E))
                     set_status_bar(C_OK, "saved canvas");
                 else
-                    set_status_bar(C_ERR,"failed to save canvas");
-            }
-            else if (E->editor_type != TAB_SHADER || try_to_compile_shader(E) != 0) {
+                    set_status_bar(C_ERR, "failed to save canvas");
+            } else if (E->editor_type != TAB_SHADER || try_to_compile_shader(E) != 0) {
                 FILE *f = fopen("editor.tmp", "w");
                 if (f) {
                     fwrite(E->str, 1, stbds_arrlen(E->str), f);
@@ -1729,8 +1835,9 @@ void update_camera(GLFWwindow *win) {
     camera_state_t *cam = &G->camera;
     memcpy(cam->c_cam2world_old, cam->c_cam2world, sizeof(cam->c_cam2world));
     update_camera_matrix(cam);
-    if (!cam->fov) cam->fov = 0.4f;
-    //cam->focal_distance = length(cam->c_lookat - cam->c_pos);
+    if (!cam->fov)
+        cam->fov = 0.4f;
+    // cam->focal_distance = length(cam->c_lookat - cam->c_pos);
     _win = win;
     if (g_frame_update_func)
         g_frame_update_func(glfw_get_key, G);
@@ -1783,15 +1890,56 @@ static void render_bloom_upsample(GLuint bloom_pass, GLuint *fbo, GLuint *texFPR
     glDisable(GL_BLEND);
 }
 
-GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mode = GL_CLAMP_TO_EDGE) {
+struct texture_t {
+    const char *key;
+    const char *url;
+    int texture;
+} *textures = NULL;
+
+bool skies_loaded = false;
+
+GLuint load_texture(const char *key, int filter_mode = GL_LINEAR, int wrap_mode = GL_CLAMP_TO_EDGE) {
+    if (!skies_loaded) {
+        skies_loaded = true;
+        char *json = load_file("assets/skies.json");
+        sj_Reader r = sj_reader(json, stbds_arrlen(json));
+        sj_Value outer_obj = sj_read(&r);
+        sj_Value key, val;
+        while (sj_iter_object(&r, outer_obj, &key, &val)) {
+            if (val.type == SJ_STRING) {
+                const char *k = stbstring_from_span(key.start, key.end, 0);
+                const char *v = stbstring_from_span(val.start, val.end, 0);
+                texture_t s = {k, v, -1};
+                stbds_shputs(textures, s);
+            }
+        }
+        printf("loaded list of skies\n");
+    }
+    texture_t *tex = stbds_shgetp_null(textures, key);
+    if (!tex) {
+        char *k = stbstring_from_span(key);
+        texture_t t = {k, k, -1};
+        stbds_shputs(textures, t);
+        tex = stbds_shgetp_null(textures, key);
+    }
+    if (tex->texture >= 0)
+        return tex->texture;
+    const char *fname = fetch_to_cache(tex->url, 1);
+    if (!fname) {
+        fprintf(stderr, "failed to fetch texture %s\n", tex->url);
+        tex->texture = 0;
+        return 0;
+    }
     int w, h, n;
     void *img = NULL;
     int hdr = stbi_is_hdr(fname);
     if (hdr) {
-
         img = stbi_loadf(fname, &w, &h, &n, 4);
-        if (!img)
-            die("failed to load hdr texture", fname);
+        if (!img) {
+            fprintf(stderr, "failed to load hdr texture %s\n", fname);
+            tex->texture = 0;
+            return 0;
+        }
         float *fimg = (float *)img;
 #define MAX_FLOAT16 65504.f
         for (int i = 0; i < w * h * 4; i++) {
@@ -1800,10 +1948,13 @@ GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mod
         }
     } else {
         img = stbi_load(fname, &w, &h, &n, 4);
-        if (!img)
-            die("failed to load texture", fname);
+        if (!img) {
+            fprintf(stderr, "failed to load ldr texture %s\n", fname);
+            tex->texture = 0;
+            return 0;
+        }
     }
-    GLuint tex = gl_create_texture(filter_mode, wrap_mode);
+    GLuint texi = gl_create_texture(filter_mode, wrap_mode);
     glTexImage2D(GL_TEXTURE_2D, 0, hdr ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, img);
     if (hdr) {
         int nummips = 6;
@@ -1855,44 +2006,12 @@ GLuint load_texture(const char *fname, int filter_mode = GL_LINEAR, int wrap_mod
         free(dstmipmem[1]);
     }
     stbi_image_free(img);
-
     check_gl("load texture");
     glBindTexture(GL_TEXTURE_2D, 0);
-    return tex;
+    tex->texture = texi;
+    return texi;
 }
 
-struct sky_t {
-    char *key;
-    const char *value;
-    int texture;
-} *skies = NULL;
-
-int get_sky(const char *key) {
-    if (!skies) {
-        char *json = load_file("assets/skies.json");
-        sj_Reader r = sj_reader(json, stbds_arrlen(json));
-        sj_Value outer_obj = sj_read(&r);
-        sj_Value key, val;
-        while (sj_iter_object(&r, outer_obj, &key, &val)) {
-            if (val.type == SJ_STRING) {
-                const char *k = stbstring_from_span(key.start, key.end, 0);
-                const char *v = stbstring_from_span(val.start, val.end, 0);
-                stbds_shput(skies, k, v);
-            }
-        }
-        printf("loaded list of %d skies\n", (int)stbds_shlen(skies));
-    }
-    sky_t *sky = stbds_shgetp(skies, key);
-    if (sky->texture)
-        return sky->texture;
-    const char *url = sky->value;
-    if (!url)
-        return 0;
-    const char *fname = fetch_to_cache(url, 1);
-    if (!fname)
-        return 0;
-    return sky->texture = load_texture(fname);
-}
 
 // typedef struct sphere_t {
 //     float4 pos_rad;
@@ -1992,9 +2111,7 @@ GLuint compile_fs_with_user_prefix(const char *fs_suffix) {
 
 shader_param_t param_cc[8];
 
-void error_callback(int error, const char *description) {
-    fprintf(stderr, "GLFW error %d: %s\n", error, description);
-}
+void error_callback(int error, const char *description) { fprintf(stderr, "GLFW error %d: %s\n", error, description); }
 
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
@@ -2068,7 +2185,9 @@ int main(int argc, char **argv) {
     load_file_into_editor(&tabs[TAB_AUDIO]);
     try_to_compile_shader(&tabs[TAB_SHADER]);
     parse_named_patterns_in_source();
-    bool load_canvas(EditorState *E);
+    // audio needs to be compiled after dsp is running
+    parse_error_log(&tabs[TAB_AUDIO]);
+    bool load_canvas(EditorState * E);
     load_canvas(&tabs[TAB_CANVAS]);
 
     texFont = load_texture("assets/font_sdf.png");
@@ -2127,6 +2246,8 @@ int main(int argc, char **argv) {
     ma_device dev;
     init_audio_midi(&dev);
 
+    try_to_compile_audio(&tabs[TAB_AUDIO].last_compile_log);
+
     double start_time = glfwGetTime();
     double prev_frame_time = 0.;
     while (!glfwWindowShouldClose(win)) {
@@ -2148,6 +2269,7 @@ int main(int argc, char **argv) {
         const char *s = tabs[TAB_SHADER].str;
         const char *e = tabs[TAB_SHADER].str + stbds_arrlen(tabs[TAB_SHADER].str);
         const char *sky_name = strstr(s, "// sky ");
+        const char *tex_name = strstr(s, "// tex ");
         const char *want_taa_str = strstr(s, "// taa");
         if (want_taa_str && want_taa_str[6] == ' ' && want_taa_str[7] == '0')
             want_taa_str = NULL;
@@ -2162,7 +2284,6 @@ int main(int argc, char **argv) {
         if (fov_str)
             G->camera.fov = atof_default(fov_str + 7, G->camera.fov);
         stbds_arrpop(tabs[TAB_SHADER].str);
-        static uint32_t skytex = 0;
         if (sky_name) {
             s = sky_name + 6;
             while (s < e && *s != '\n' && isspace(*s))
@@ -2172,9 +2293,19 @@ int main(int argc, char **argv) {
                 ++s;
             sky_name = temp_cstring_from_span(spans, s);
             if (sky_name) {
-                int newtex = get_sky(sky_name);
-                if (newtex)
-                    skytex = newtex;
+               skytex = load_texture(sky_name);
+            }
+        }
+        if (tex_name) {
+            s = tex_name + 6;
+            while (s < e && *s != '\n' && isspace(*s))
+                ++s;
+            const char *spans = s;
+            while (s < e && *s != '\n' && !isspace(*s))
+                ++s;
+            tex_name = temp_cstring_from_span(spans, s);
+            if (tex_name) {
+                textex = load_texture(tex_name);
             }
         }
 
@@ -2257,7 +2388,8 @@ int main(int argc, char **argv) {
             bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
             bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
             bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
-            bind_texture_to_slot(user_pass, 3, "uSky", skytex, GL_LINEAR);
+            bind_texture_to_slot(user_pass, 3, "uSky", (skytex<0)?0:skytex, GL_LINEAR);
+            bind_texture_to_slot(user_pass, 4, "uTex", (textex<0)?0:textex, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 4, "uPaperDiff", paper_diff, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 5, "uPaperDisp", paper_disp, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 6, "uPaperNorm", paper_norm, GL_LINEAR);
@@ -2316,7 +2448,7 @@ int main(int argc, char **argv) {
         curE->prev_cursor_y += (f_cursor_y - curE->prev_cursor_y) * CURSOR_SMOOTH_FACTOR;
 
         draw_fullscreen_pass(0, G->fbw, G->fbh, vao);
-        unbind_textures_from_slots(4);
+        unbind_textures_from_slots(5);
 
         //////////////////////////////
 
@@ -2419,6 +2551,7 @@ int main(int argc, char **argv) {
         }
         iFrame++;
 
+        /*
         // poll for changes in the audio file
         static time_t last = 0;
         struct stat st;
@@ -2427,6 +2560,7 @@ int main(int argc, char **argv) {
             try_to_compile_audio(tabs[TAB_AUDIO].fname, &tabs[TAB_AUDIO].last_compile_log);
             parse_error_log(&tabs[TAB_AUDIO]);
         }
+            */
 
         double t = G->t;
         int bar = (int)t;

@@ -1099,6 +1099,7 @@ void set_status_bar(uint32_t color, const char *msg, ...) {
 void parse_error_log(EditorState *E) {
     hmfree(E->error_msgs);
     E->error_msgs = NULL;
+    if (!E->last_compile_log) return;
     int fnamelen = strlen(E->fname);
     for (const char *c = E->last_compile_log; *c; c++) {
         int col = 0, line = 0;

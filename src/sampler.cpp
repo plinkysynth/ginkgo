@@ -82,8 +82,8 @@ void load_wave_now(wave_t *wave) {
     #endif
 }
 
-int parse_strudel_alias_json(const char *json_url) {
-    const char *json_fname = fetch_to_cache(json_url, 1);
+int parse_strudel_alias_json(const char *json_url, bool prefer_offline) {
+    const char *json_fname = fetch_to_cache(json_url, prefer_offline);
     sj_Reader r = read_json_file(json_fname);
     int old_num_sounds = num_sounds();
     for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
@@ -131,22 +131,34 @@ static inline const char *escape_url(char *dstbuf, const char *s, const char *e)
     return dstbuf;
 }
 
-int parse_strudel_json(const char *json_url, const char *sound_prefix) {
+int parse_strudel_json(const char *json_url, bool prefer_offline, const char *sound_prefix = NULL) {
+
+    char pathbuf[512];
+    if (strncmp(json_url, "github:", 7) == 0) {
+        // example raw url: https://raw.githubusercontent.com/sonidosingapura/blu-mar-ten/main/Breaks/strudel.json
+        int slash_count = 0;
+        for (const char *p = json_url+7; *p; p++) {
+            if (*p == '/')
+                ++slash_count;
+        }
+        if (slash_count == 1) {
+            snprintf(pathbuf, sizeof(pathbuf), "https://raw.githubusercontent.com/%s/main/strudel.json", json_url+7);
+        } else {
+            snprintf(pathbuf, sizeof(pathbuf), "https://raw.githubusercontent.com/%s/strudel.json", json_url+7);
+        }
+        json_url = pathbuf;
+    }
+
     int prefix_len = sound_prefix ? strlen(sound_prefix) : 0;
-    const char *json_fname = fetch_to_cache(json_url, 1);
+    const char *json_fname = fetch_to_cache(json_url, prefer_offline);
     sj_Reader r = read_json_file(json_fname);
     int old_num_sounds = num_sounds();
     int wav_count = 0, skip_count = 0;
     sj_Value base = {};
     for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
-        if (outer.val.type == SJ_STRING) {
-            if (iter_key_is(&outer, "_base")) {
-                // printf("base is %.*s\n", (int)(soundval.end-soundval.start), soundval.start);
-                base = outer.val;
-            } else {
-                printf("json warning: unexpected object type: %.*s %d\n", (int)(outer.key.end - outer.key.start), outer.val.start,
-                       outer.val.type);
-            }
+        if (iter_key_is(&outer, "_base")) {
+            // printf("base is %.*s\n", (int)(soundval.end-soundval.start), soundval.start);
+            base = outer.val;
         } else {
             int sound_name_len = (outer.key.end - outer.key.start) + prefix_len;
             char sound_name[sound_name_len + 1];
@@ -154,6 +166,7 @@ int parse_strudel_json(const char *json_url, const char *sound_prefix) {
             memcpy(sound_name + prefix_len, outer.key.start, outer.key.end - outer.key.start);
             sound_name[sound_name_len] = 0;
             Sound *sound = get_sound_init_only(sound_name);
+            int old_wave_count = stbds_arrlen(sound->wave_indices);
             for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
                 char *url = NULL;
                 int numbase = base.end - base.start;
@@ -195,6 +208,10 @@ int parse_strudel_json(const char *json_url, const char *sound_prefix) {
             }
             // log the number of waves in this sound
             // printf("%s -> %d waves\n", sound_name, (int)stbds_arrlen(sound->waves));
+            if (old_wave_count && old_wave_count != stbds_arrlen(sound->wave_indices)) {
+                printf("\tsound " COLOR_CYAN "%s" COLOR_RESET " already had " COLOR_GREEN "%d" COLOR_RESET " waves; now it has " COLOR_GREEN "%d" COLOR_RESET "\n", sound_name, old_wave_count, (int)stbds_arrlen(sound->wave_indices));
+            }
+
         }
     }
     printf(COLOR_YELLOW "%s" COLOR_RESET ", %d new sounds, added " COLOR_GREEN "%d" COLOR_RESET " waves\n", trimurl(json_url),
@@ -283,25 +300,41 @@ int init_sampler(bool eager) {
         register_osc("supersaw", sample_supersaw);
     }
 
+    bool prefer_offline = !eager;
+    parse_strudel_json("github:mot4i/loom/main/a_damn_fine_cup_of_coffee", prefer_offline);
 
 #define DS "https://raw.githubusercontent.com/felixroos/dough-samples/main/"
 #define TS "https://raw.githubusercontent.com/todepond/samples/main/"
     // bd seems to be in here...
-    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/uzu-drumkit/refs/heads/main/strudel.json", NULL);
-    parse_strudel_json("https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json", NULL); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
+    parse_strudel_json("github:tidalcycles/uzu-drumkit", prefer_offline, NULL);
+    parse_strudel_json("github:tidalcycles/Dirt-Samples/master", prefer_offline, NULL); // 0e6d60a72c916a2ec5161d02afae40ccd6ea7a91
     // parse_strudel_json(DS "Dirt-Samples/strudel.json");
-    parse_strudel_json(DS "tidal-drum-machines.json", NULL);
-    parse_strudel_json(DS "piano.json", NULL);
+    parse_strudel_json(DS "tidal-drum-machines.json", prefer_offline, NULL);
+    parse_strudel_json(DS "piano.json", prefer_offline, NULL);
     // parse_strudel_json(DS "Dirt-Samples.json");
-    parse_strudel_json(DS "EmuSP12.json", NULL);
+    parse_strudel_json(DS "EmuSP12.json", prefer_offline, "emusp12_");
     // parse_strudel_json(DS "uzu-drumkit.json"); 404 not found?
-    parse_strudel_json(DS "vcsl.json", NULL);
-    parse_strudel_json(DS "mridangam.json", NULL);
-    parse_strudel_json("https://raw.githubusercontent.com/yaxu/clean-breaks/main/strudel.json", "break_");
-    parse_strudel_json("https://raw.githubusercontent.com/switchangel/breaks/main/strudel.json", "switchangel_");
-    parse_strudel_json("https://raw.githubusercontent.com/switchangel/pad/main/strudel.json", "switchangel_");
-    parse_strudel_json("file://samples/junglejungle/strudel.json", NULL);
-    parse_strudel_alias_json(TS "tidal-drum-machines-alias.json");
+    parse_strudel_json(DS "vcsl.json", prefer_offline, NULL);
+    parse_strudel_json(DS "mridangam.json", prefer_offline, NULL);
+    parse_strudel_json("github:yaxu/clean-breaks", prefer_offline, "break_");
+    parse_strudel_json("github:switchangel/breaks", prefer_offline, "switchangel_");
+    parse_strudel_json("github:switchangel/pad", prefer_offline, "switchangel_");
+
+    parse_strudel_json("https://samples.grbt.com.au/strudel.json", prefer_offline);
+    parse_strudel_json("github:sonidosingapura/blu-mar-ten/main/Breaks", prefer_offline);
+    parse_strudel_json("github:sonidosingapura/blu-mar-ten/main/Riffs_Arps_Hits", prefer_offline);
+    parse_strudel_json("github:sonidosingapura/blu-mar-ten/main/FX", prefer_offline);
+    parse_strudel_json("github:sonidosingapura/blu-mar-ten/main/Pads", prefer_offline);
+    parse_strudel_json("github:sonidosingapura/blu-mar-ten/main/Vocals", prefer_offline);
+    parse_strudel_json("github:sonidosingapura/blu-mar-ten/main/Bass", prefer_offline);
+    parse_strudel_json("github:yaxu/spicule", prefer_offline);
+    parse_strudel_json("github:mot4i/garden", prefer_offline);
+
+    parse_strudel_json("github:plinkysynth/ginkgo_samples/main/microlive", prefer_offline);
+
+
+    //parse_strudel_json("file://samples/junglejungle/strudel.json", NULL);
+    parse_strudel_alias_json(TS "tidal-drum-machines-alias.json", prefer_offline);
     printf(COLOR_YELLOW "%d" COLOR_RESET " sounds registered, " COLOR_GREEN "%d" COLOR_RESET " waves.\n", num_sounds(),
            num_waves());
     dump_all_sounds("allsounds.json");

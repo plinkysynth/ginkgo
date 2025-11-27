@@ -37,6 +37,11 @@ static inline bool iter_next(sj_iter_t *iter) {
     } else if (iter->outer.type == SJ_ARRAY) {
         return sj_iter_array(iter->r, iter->outer, &iter->val);
     } else {
+        if (iter->val.start==NULL) {
+            // yield a straight value once.
+            iter->val = iter->outer;
+            return true;
+        }
         return false;
     }
 }

@@ -70,7 +70,7 @@ OP(N_OP_POW, "pow", 1, 0, 11)
 OP(N_OP_EASE, "ease", 1, 0, 11)
 OP(N_OP_SMOOTH, "smooth", 1, 0, 11)
 
-#define X(x, str, ...) OP(N_##x, str, 1, 0, 5)
+#define X(x, str, ...) OP(N_##x, str, 1, 0, 5000)
 #include "params.h"
 
 

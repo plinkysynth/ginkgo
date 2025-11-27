@@ -1,7 +1,7 @@
 
 #ifdef PATTERNS
 
-/pattern break_riffin / 2 fit
+/pattern microlive:5 / 10
 
 /bpm 140
 

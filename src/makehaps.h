@@ -206,9 +206,10 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
     }
 }
 
-int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,
-                             filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when, int num_rhs, int rolling_rhs) {
-    hap_time structure_t0 = when; //structure_hap->t0;
+int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, int structure_hap_idx, hap_t *structure_hap,
+                             int value_node_idx, filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when,
+                             int num_rhs, bool use_rolling_rhs) {
+    hap_time structure_t0 = when; // structure_hap->t0;
     // structure_t0 = (t0+t1)*0.5;
     hap_t tmp_mem[tmp_size * num_rhs];
     int new_hap_id = hash2_pcg(structure_hap->hapid, value_node_idx + (int)(structure_t0 /* * 1000.f */));
@@ -226,9 +227,10 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
     int num_value_haps = value_haps[0].e - value_haps[0].s;
     if (num_value_haps == 0)
         num_value_haps = 1;
-    int roll = rolling_rhs >= 0 ? rolling_rhs : 0;
-    if (rolling_rhs >= 0) {
+    int roll = 0;
+    if (use_rolling_rhs) {
         num_value_haps = 1;
+        roll = structure_hap_idx;
     }
     for (int value_hap_idx = 0; value_hap_idx < num_value_haps; value_hap_idx++) {
         hap_t *value_hap_i[num_rhs];
@@ -239,11 +241,11 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
             else
                 value_hap_i[i] = value_haps[i].s + ((value_hap_idx + roll) % n);
         }
-        hap_t *right_hap = value_hap_i[0]; 
+        hap_t *right_hap = value_hap_i[0];
         if (right_hap && !right_hap->valid_params)
             continue;
         int new_hapid = hash2_pcg(structure_hapid, right_hap ? right_hap->hapid : 0);
-        int num_copies = filter_cb ? filter_cb(structure_hap, right_hap, new_hapid, when) : 1;
+        int num_copies = filter_cb ? filter_cb(structure_hap_idx, structure_hap, right_hap, new_hapid, when) : 1;
         for (int i = 0; i < num_copies; i++) {
             hap_t *target = structure_hap;
             if (!target->valid_params)
@@ -256,7 +258,7 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
                 target->hapid = new_hapid;
             }
             if (value_cb) {
-                if (!value_cb(target, value_hap_i, context + i, when)) {
+                if (!value_cb(structure_hap_idx, target, value_hap_i, context + i, when)) {
                     // cancel this copy!
                     count--;
                     if (count > 0)
@@ -277,12 +279,11 @@ void pattern_t::_apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, i
         return;
     int right_child = (n->num_children > 1) ? n->first_child + 1 : -1;
     hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(parent_hapid, n->first_child));
-    int rolling_rhs = use_rolling_rhs ? 0 : -1;
+    int left_hap_idx = 0;
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-        _apply_values(dst, tmp_size, viz_time, left_hap, right_child, filter_cb, value_cb, context, when, num_rhs, rolling_rhs);
-        if (use_rolling_rhs) {
-            rolling_rhs++;
-        }
+        _apply_values(dst, tmp_size, viz_time, left_hap_idx, left_hap, right_child, filter_cb, value_cb, context, when, num_rhs,
+                      use_rolling_rhs);
+        left_hap_idx++;
     }
 }
 
@@ -316,16 +317,16 @@ static inline int scale_index_to_note(int scalebits, int root, int index) {
     if (!scalebits)
         return root;
     int num_notes_in_scale = __builtin_popcount(scalebits);
-    int octave = index / num_notes_in_scale;
+    int octave = (index>0) ? index / num_notes_in_scale : (index - num_notes_in_scale + 1) / num_notes_in_scale;
     int note = root + octave * 12;
-    index %= num_notes_in_scale;
-    while (index)
+    index -= octave * num_notes_in_scale;
+    while (index>0)
         scalebits &= (scalebits - 1), index--;
     note += __builtin_ctz(scalebits);
     return note;
 }
 
-int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
+int apply_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
     if (!right_hap[0] || param_idx >= P_LAST)
         return 1;
     int src_idx = param_idx;
@@ -334,12 +335,16 @@ int apply_value_func(hap_t *target, hap_t **right_hap, size_t param_idx, hap_tim
             return 1;
         src_idx = P_NUMBER;
     }
-    target->params[param_idx] = right_hap[0]->params[src_idx];
-    target->valid_params |= 1 << param_idx;
+    if (param_idx == P_GAIN && target->has_param(P_GAIN))
+        target->params[P_GAIN] *= right_hap[0]->params[src_idx];
+    else {
+        target->params[param_idx] = right_hap[0]->params[src_idx];
+        target->valid_params |= 1 << param_idx;
+    }
     return 1;
 }
 
-int apply_fit_func(hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_time when) {
+int apply_fit_func(int left_hap_idx, hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_time when) {
     if (!right_hap || param_idx >= P_LAST)
         return 1;
     if (!right_hap[0]->has_param(P_NUMBER))
@@ -359,7 +364,7 @@ int apply_fit_func(hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_tim
     return 1;
 }
 
-int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time when) { // param_idx 1=sub
+int add_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_t negative, hap_time when) { // param_idx 1=sub
     if (!right_hap || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
         return 1;
     int param_idx = __builtin_ctz(target->valid_params);
@@ -368,38 +373,40 @@ int add_value_func(hap_t *target, hap_t **right_hap, size_t negative, hap_time w
     return 1;
 }
 
-
 float pattern_t::compute_blendnear_weights(bfs_node_t *n, float *weights) {
     float tot_weight = 0.f;
     for (int i = 0; i < n->num_children; i++) {
         // use the second closest to any other pattern to scale the distances to this node.
-        float closest=1e9, second_closest=1e9;
+        float closest = 1e9, second_closest = 1e9;
         int pidx = (int)bfs_min_max_value[n->first_child + i].mx;
-        if (pidx<0 || pidx>=stbds_shlen(G->patterns_map)) {
+        if (pidx < 0 || pidx >= stbds_shlen(G->patterns_map)) {
             weights[i] = 0.f;
         } else {
             pattern_t *pati = &G->patterns_map[pidx];
-            for (int j=0; j<n->num_children; j++) if (j!=i) {
-                int pidx = (int)bfs_min_max_value[n->first_child + j].mx;
-                if (pidx<0 || pidx>=stbds_shlen(G->patterns_map)) {
-                    continue;
+            for (int j = 0; j < n->num_children; j++)
+                if (j != i) {
+                    int pidx = (int)bfs_min_max_value[n->first_child + j].mx;
+                    if (pidx < 0 || pidx >= stbds_shlen(G->patterns_map)) {
+                        continue;
+                    }
+                    pattern_t *patj = &G->patterns_map[pidx];
+                    float dsq = square(pati->x - patj->x) + square(pati->y - patj->y);
+                    if (dsq < closest) {
+                        // second_closest = closest;
+                        closest = dsq;
+                    }
+                    // else if (dsq < second_closest) {
+                    //     second_closest = dsq;
+                    // }
                 }
-                pattern_t *patj = &G->patterns_map[pidx];
-                float dsq = square(pati->x - patj->x) + square(pati->y - patj->y);
-                if (dsq < closest) {
-                    //second_closest = closest;
-                    closest = dsq;
-                } 
-                // else if (dsq < second_closest) {
-                //     second_closest = dsq;
-                // }
-            }
             // if (second_closest == 1e9) second_closest = closest;
             // if (!second_closest) second_closest = 1.f;
-            if (!closest) closest = 1.f;
+            if (!closest)
+                closest = 1.f;
             float dsq = (square(pati->x - x) + square(pati->y - y)) / closest;
-            weights[i] = expf(-dsq*3.f); // smoothstep(1.f, 0.f, dsq);
-            if (weights[i] < 0.01f) weights[i] = 0.f;
+            weights[i] = expf(-dsq * 3.f); // smoothstep(1.f, 0.f, dsq);
+            if (weights[i] < 0.01f)
+                weights[i] = 0.f;
             tot_weight += weights[i];
         }
     }
@@ -433,16 +440,18 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         appended = _append_number_hap(dst, nodeidx, hapid, frac(when));
         break;
     case N_DOWN:
-        appended = _append_number_hap(dst, nodeidx, hapid, 1.f-frac(when));
+        appended = _append_number_hap(dst, nodeidx, hapid, 1.f - frac(when));
         break;
     case N_UPDOWN: {
-        float f= frac(when);
-        appended = _append_number_hap(dst, nodeidx, hapid, (f<0.5f) ? f*2.f : 2.f-f*2.f);
-        break;}
+        float f = frac(when);
+        appended = _append_number_hap(dst, nodeidx, hapid, (f < 0.5f) ? f * 2.f : 2.f - f * 2.f);
+        break;
+    }
     case N_DOWNUP: {
-        float f= frac(when);
-        appended = _append_number_hap(dst, nodeidx, hapid, (f<0.5f) ? 1.f-f*2.f : f*2.f-1.f);
-        break;}
+        float f = frac(when);
+        appended = _append_number_hap(dst, nodeidx, hapid, (f < 0.5f) ? 1.f - f * 2.f : f * 2.f - 1.f);
+        break;
+    }
     case N_NEAR: {
         int pidx = (int)bfs_min_max_value[nodeidx].mx;
         if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) {
@@ -469,17 +478,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         appended = _append_number_hap(dst, nodeidx, hapid, cosf(when * PI * 2));
         break;
     case N_RAND:
-        appended =
-            _append_number_hap(dst, nodeidx, hapid, (pcg_mix(hash2_pcg(hapid, (int)floor(when) )) & 0xffff) / 65536.f);
+        appended = _append_number_hap(dst, nodeidx, hapid, (pcg_mix(hash2_pcg(hapid, (int)floor(when))) & 0xffff) / 65536.f);
         break;
     case N_RAND2:
-        appended = _append_number_hap(dst, nodeidx, hapid,
-                                      (pcg_mix(hash2_pcg(hapid, (int)floor(when) )) & 0xffff) / 32768.f - 1.f);
+        appended = _append_number_hap(dst, nodeidx, hapid, (pcg_mix(hash2_pcg(hapid, (int)floor(when))) & 0xffff) / 32768.f - 1.f);
         break;
     case N_CC: {
-        int cc = (int)(bfs_min_max_value[nodeidx].mx)&15;
+        int cc = (int)(bfs_min_max_value[nodeidx].mx) & 15;
         appended = _append_number_hap(dst, nodeidx, hapid, G->midi_cc[16 + cc] / 127.f);
-        break; }
+        break;
+    }
     case N_RANDI: {
         hap_t tmp_mem[tmp_size];
         hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
@@ -499,12 +507,12 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         int ncurve = stbds_arrlen(curvedata);
         int idx0 = clamp((int)bfs_min_max_value[nodeidx].mn, 0, ncurve);
         int idx1 = clamp((int)bfs_min_max_value[nodeidx].mx, 0, ncurve);
-        int nidx = idx1-idx0;
+        int nidx = idx1 - idx0;
         bfs_start_end[nodeidx].local_time_of_eval = frac(when);
-        if (nidx>0) {
+        if (nidx > 0) {
             float t = frac(when) * nidx;
             int it = (int)floorf(t);
-            int it2 = (it+1) % nidx;
+            int it2 = (it + 1) % nidx;
             float v = lerp(curvedata[it + idx0], curvedata[it2 + idx0], t - it);
             appended = _append_number_hap(dst, nodeidx, hapid, v);
         }
@@ -512,7 +520,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
     case N_LEAF: {
         float f = floor(when);
-        appended = _append_leaf_hap(dst, nodeidx, f, f+1.f, hash2_pcg(hapid, (int)when));
+        appended = _append_leaf_hap(dst, nodeidx, f, f + 1.f, hash2_pcg(hapid, (int)when));
         break;
     }
     case N_POLY:
@@ -555,16 +563,15 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         if (n->num_children == 1) {
             if (n->type == N_OP_ELONGATE && bfs_min_max_value[nodeidx].mx != 0.f) {
                 hap_time speed_scale = 1.0 / bfs_min_max_value[nodeidx].mx;
-                hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale,
-                                                  hash2_pcg(hapid, n->first_child));
+                hap_span_t left_haps =
+                    _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale, hash2_pcg(hapid, n->first_child));
                 _filter_haps(left_haps, speed_scale, 0., when);
             }
             break;
         }
         hap_t tmp_mem[tmp_size];
         hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
-        hap_span_t right_haps =
-            _make_haps(tmp, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
+        hap_span_t right_haps = _make_haps(tmp, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
             float num = right_hap->get_param(P_NUMBER, 0.f);
             hap_time speed_scale = 1.;
@@ -586,8 +593,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             }
             if (speed_scale <= 0.f)
                 continue;
-            hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale, hapid); // this used to include right hapid, but it means rand inside a *4 with offset for smooth broke... 
-//                                              hash2_pcg(hapid, right_hap->hapid));
+            hap_span_t left_haps = _make_haps(
+                dst, tmp_size, viz_time, n->first_child, when * speed_scale,
+                hapid); // this used to include right hapid, but it means rand inside a *4 with offset for smooth broke...
+                        //                                              hash2_pcg(hapid, right_hap->hapid));
             _filter_haps(left_haps, speed_scale, tofs, when);
         }
         break;
@@ -603,56 +612,63 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
 
     // special case for N_P_NUMBER
     n_p_number:
-    //case N_P_NUMBER: 
-    { // take structure from the left; value(s) from the right. copy as needed
-        if (n->num_children < 2)
-            break;
-        // the : operator is quite flexible for applying scales to notes or numbers.
-        _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, when, nodeidx, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
-                if (!right_hap[0] || !right_hap[0]->valid_params)
-                    return 0;
-                int right_params = right_hap[0]->valid_params;
-                while (right_params) {
-                    int param_idx = __builtin_ctz(right_params);
-                    right_params &= ~(1 << param_idx);
-                    if (param_idx == P_NUMBER && target->has_param(P_SCALEBITS) && !target->has_param(P_NOTE)) {
-                        // apply a number to a scale -> index scale into a note
-                        target->params[P_NOTE] =
-                            scale_index_to_note(target->scale_bits, target->params[P_SCALEBITS], (int)right_hap[0]->params[P_NUMBER]);
-                        target->valid_params |= 1 << P_NOTE;
-                    } else if (param_idx == P_SCALEBITS && target->has_param(P_NUMBER) && !target->has_param(P_NOTE)) {
-                        // apply a scale to a number -> index scale into a note
-                        target->params[P_NOTE] = scale_index_to_note(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
-                                                                    (int)target->params[P_NUMBER]);
-                        target->valid_params |= (1 << P_NOTE) | (1 << P_SCALEBITS);
-                        target->valid_params &= ~(1 << P_NUMBER);
-                        target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
-                        target->scale_bits = right_hap[0]->scale_bits;
-                    } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
-                        // apply a scale to a note -> quantize to scale
-                        target->params[P_NOTE] = quantize_note_to_scale(right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS],
-                                                                        (int)target->params[P_NOTE]);
-                        target->valid_params |= (1 << P_SCALEBITS);
-                        target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
-                        target->scale_bits = right_hap[0]->scale_bits;
-                    } else { // just copy the value
-                        target->params[param_idx] = right_hap[0]->params[param_idx];
-                        if (param_idx == P_SCALEBITS)
+        // case N_P_NUMBER:
+        { // take structure from the left; value(s) from the right. copy as needed
+            if (n->num_children < 2)
+                break;
+            // the : operator is quite flexible for applying scales to notes or numbers.
+            _apply_unary_op(
+                dst, tmp_size, viz_time, nodeidx, when, nodeidx, nullptr,
+                [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
+                    if (!right_hap[0] || !right_hap[0]->valid_params)
+                        return 0;
+                    int right_params = right_hap[0]->valid_params;
+                    while (right_params) {
+                        int param_idx = __builtin_ctz(right_params);
+                        right_params &= ~(1 << param_idx);
+                        if (param_idx == P_NUMBER && target->has_param(P_SCALEBITS) && !target->has_param(P_NOTE)) {
+                            // apply a number to a scale -> index scale into a note
+                            // we use the fact that params[P_SCALEBITS] will be the root,
+                            // and scale_bits will be the chord.
+                            target->params[P_NOTE] = scale_index_to_note(target->scale_bits, target->params[P_SCALEBITS],
+                                                                         (int)right_hap[0]->params[P_NUMBER]);
+                            target->valid_params |= 1 << P_NOTE;
+                        } else if (param_idx == P_SCALEBITS && target->has_param(P_NUMBER) && !target->has_param(P_NOTE)) {
+                            // apply a scale to a number -> index scale into a note
+                            target->params[P_NOTE] = scale_index_to_note(
+                                right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NUMBER]);
+                            target->valid_params |= (1 << P_NOTE) | (1 << P_SCALEBITS);
+                            target->valid_params &= ~(1 << P_NUMBER);
+                            target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
                             target->scale_bits = right_hap[0]->scale_bits;
-                        target->valid_params |= 1 << param_idx;
+                        } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
+                            // apply a scale to a note -> quantize to scale
+                            target->params[P_NOTE] = quantize_note_to_scale(
+                                right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NOTE]);
+                            target->valid_params |= (1 << P_SCALEBITS);
+                            target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
+                            target->scale_bits = right_hap[0]->scale_bits;
+                        } else { // just copy the value
+                            if (param_idx == P_GAIN && target->has_param(P_GAIN))
+                                target->params[P_GAIN] *= right_hap[0]->params[P_GAIN];
+                            else 
+                                target->params[param_idx] = right_hap[0]->params[param_idx];
+                            if (param_idx == P_SCALEBITS)
+                                target->scale_bits = right_hap[0]->scale_bits;
+                            target->valid_params |= 1 << param_idx;
+                        }
                     }
-                }
-                return 1;
-            },
-            P_NUMBER);
-        break;
-    }
-    case N_BLEND: case N_BLENDNEAR: {
+                    return 1;
+                },
+                P_NUMBER);
+            break;
+        }
+    case N_BLEND:
+    case N_BLENDNEAR: {
         bool is_blendnear = n->type == N_BLENDNEAR;
-        int num_weights = (is_blendnear) ? n->num_children : (n->num_children + 1)/2;
-        if (!num_weights) break;
+        int num_weights = (is_blendnear) ? n->num_children : (n->num_children + 1) / 2;
+        if (!num_weights)
+            break;
         float weights[num_weights];
         // if the number of children is odd, we 'need a zero weight' meaning that we compute that as 1-totweight automatically
         int need_zero_weight = n->num_children & 1;
@@ -661,12 +677,13 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             tot_weight = compute_blendnear_weights(n, weights);
         } else {
             for (int i = need_zero_weight; i < num_weights; i++) {
-                int childidx = i*2-need_zero_weight;
+                int childidx = i * 2 - need_zero_weight;
                 hap_t tmp_mem[tmp_size];
                 hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
-                hap_span_t hs = _make_haps(tmp, tmp_size, viz_time, n->first_child + childidx, when, hash2_pcg(hapid, n->first_child + childidx));
+                hap_span_t hs = _make_haps(tmp, tmp_size, viz_time, n->first_child + childidx, when,
+                                           hash2_pcg(hapid, n->first_child + childidx));
                 weights[i] = 0.f;
-                for (hap_t *h = hs.s; h < hs.e; h++) 
+                for (hap_t *h = hs.s; h < hs.e; h++)
                     weights[i] = max(weights[i], h->get_param(P_NUMBER, weights[i]));
                 tot_weight += weights[i];
             }
@@ -685,9 +702,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 tmp[i] = {NULL, NULL};
                 continue;
             }
-            int childidx = (is_blendnear) ? i : (i*2+ !need_zero_weight);
+            int childidx = (is_blendnear) ? i : (i * 2 + !need_zero_weight);
             tmp[i] = {tmp_mem + i * tmp_size, tmp_mem + (i + 1) * tmp_size};
-            tmp[i] = _make_haps(tmp[i], tmp_size, viz_time, n->first_child + childidx, when, hash2_pcg(hapid, n->first_child + childidx));
+            tmp[i] = _make_haps(tmp[i], tmp_size, viz_time, n->first_child + childidx, when,
+                                hash2_pcg(hapid, n->first_child + childidx));
             max_poly = max(max_poly, (int)(tmp[i].e - tmp[i].s));
             // if it contains sound or note, update the hash with that hap
             // then select between them
@@ -700,26 +718,29 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         if (has_sound_or_note) {
             // pick an index from 0 to numweights based on the cdf of weights
-            float pick = ((hash & 0xffffff)*tot_weight) / 0x1000000;
+            float pick = ((hash & 0xffffff) * tot_weight) / 0x1000000;
             int i;
             for (i = 0; i < num_weights; i++) {
-                bool picked = pick < weights[i] || i == num_weights-1;
+                bool picked = pick < weights[i] || i == num_weights - 1;
                 if (is_blendnear) {
                     int pidx = (int)bfs_min_max_value[n->first_child + i].mx;
-                    if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) G->patterns_map[pidx].picked = picked;
+                    if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map))
+                        G->patterns_map[pidx].picked = picked;
                 }
-                if (picked) break;
+                if (picked)
+                    break;
                 pick -= weights[i];
             }
-            if (is_blendnear) 
-            for (int j= i+1; j< num_weights; j++) {
-                int pidx = (int)bfs_min_max_value[n->first_child + j].mx;
-                if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) G->patterns_map[pidx].picked = 0.f;
-            }
+            if (is_blendnear)
+                for (int j = i + 1; j < num_weights; j++) {
+                    int pidx = (int)bfs_min_max_value[n->first_child + j].mx;
+                    if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map))
+                        G->patterns_map[pidx].picked = 0.f;
+                }
             hap_span_t src = tmp[i];
             for (hap_t *src_hap = src.s; src_hap < src.e; src_hap++) {
                 if (dst.s >= dst.e)
-                        break;
+                    break;
                 hap_t *target = dst.s++;
                 *target = *src_hap;
             }
@@ -729,16 +750,19 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             if (dst.s + max_poly > dst.e)
                 max_poly = (int)(dst.e - dst.s);
             hap_span_t out = {dst.s, dst.s + max_poly};
-            dst.s+=max_poly;
-            for (int i=0; i< max_poly; ++i) out.s[i].valid_params = 0;
-            for (int i =0; i < num_weights; ++i) {
+            dst.s += max_poly;
+            for (int i = 0; i < max_poly; ++i)
+                out.s[i].valid_params = 0;
+            for (int i = 0; i < num_weights; ++i) {
                 if (is_blendnear) {
                     int pidx = (int)bfs_min_max_value[n->first_child + i].mx;
-                    if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map)) G->patterns_map[pidx].picked = weights[i];
+                    if (pidx >= 0 && pidx < stbds_shlen(G->patterns_map))
+                        G->patterns_map[pidx].picked = weights[i];
                 }
-                if (tmp[i].empty()) continue;
-                hap_t *src_hap = tmp[i].s;                
-                for (int j = 0; j<max_poly; ++j) {
+                if (tmp[i].empty())
+                    continue;
+                hap_t *src_hap = tmp[i].s;
+                for (int j = 0; j < max_poly; ++j) {
                     int valid = src_hap->valid_params;
                     while (valid) {
                         int bit = __builtin_ctz(valid);
@@ -753,11 +777,12 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                         tot_weights[j][bit] += weights[i];
                     } // loop over valid src params
                     src_hap++;
-                    if (src_hap == tmp[i].e) src_hap=tmp[i].s;
+                    if (src_hap == tmp[i].e)
+                        src_hap = tmp[i].s;
                 } // loop over output haps
             } // loop over weights
             // normalize:
-            for (int j = 0; j<max_poly; ++j) {
+            for (int j = 0; j < max_poly; ++j) {
                 int valid = out.s[j].valid_params;
                 while (valid) {
                     int bit = __builtin_ctz(valid);
@@ -795,38 +820,44 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
         */
     case N_OP_RIBBON: {
-        hap_t tmp_mem[tmp_size*2];
+        hap_t tmp_mem[tmp_size * 2];
         hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
         hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
         hap_span_t cycle = _make_haps(tmp0, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
-        hap_span_t num_cycles = _make_haps(tmp1, tmp_size, viz_time, (n->num_children > 2) ? n->first_child + 2 : -1, when, hash2_pcg(hapid, n->first_child + 2));
+        hap_span_t num_cycles = _make_haps(tmp1, tmp_size, viz_time, (n->num_children > 2) ? n->first_child + 2 : -1, when,
+                                           hash2_pcg(hapid, n->first_child + 2));
         for (hap_t *cycle_hap = cycle.s; cycle_hap < cycle.e; cycle_hap++) {
             float num_cycles_value = num_cycles.empty() ? 1.f : num_cycles.s->get_param(P_NUMBER, 1.f);
             if (num_cycles_value > 0.f) {
                 hap_time child_when = fmodf(when, num_cycles_value) + cycle_hap->get_param(P_NUMBER, 0.f);
-                hap_span_t child_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, child_when, hash2_pcg(hapid, n->first_child));
+                hap_span_t child_haps =
+                    _make_haps(dst, tmp_size, viz_time, n->first_child, child_when, hash2_pcg(hapid, n->first_child));
                 for (hap_t *child_hap = child_haps.s; child_hap < child_haps.e; child_hap++) {
-                    child_hap->t0 += (when-child_when);
-                    child_hap->t1 += (when-child_when);
+                    child_hap->t0 += (when - child_when);
+                    child_hap->t1 += (when - child_when);
                 }
             }
         }
-        break; }
+        break;
+    }
     case N_OP_EASE:
     case N_OP_SMOOTH: {
         // eval at when and when+1, then blend between them.
-        hap_t tmp_mem[tmp_size*2];
+        hap_t tmp_mem[tmp_size * 2];
         hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
         hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
         bool is_ease = n->type == N_OP_EASE;
-        hap_time t = is_ease ? when : (when-0.5);
+        hap_time t = is_ease ? when : (when - 0.5);
         hap_span_t out = _make_haps(dst, tmp_size, viz_time, n->first_child, t, hapid);
         hap_span_t blendwith = _make_haps(tmp0, tmp_size, viz_time, n->first_child, t + 1., hapid);
-        hap_span_t power = _make_haps(tmp1, tmp_size, viz_time, (n->num_children > 1) ?  n->first_child + 1 : -1, when, hash2_pcg(hapid, n->first_child + 1));
-        float power_value = power.empty() ? 1.f : expf((is_ease ? -1.f : 1.f) *power.s->get_param(P_NUMBER, 0.f));
-        t=frac(t);
-        if (is_ease) t = powf(t, power_value); else {
-            t = 0.5f * ((t<0.5f) ? powf(t*2.f, power_value) : 2.f-powf((2.f-t*2.f), power_value));
+        hap_span_t power = _make_haps(tmp1, tmp_size, viz_time, (n->num_children > 1) ? n->first_child + 1 : -1, when,
+                                      hash2_pcg(hapid, n->first_child + 1));
+        float power_value = power.empty() ? 1.f : expf((is_ease ? -1.f : 1.f) * power.s->get_param(P_NUMBER, 0.f));
+        t = frac(t);
+        if (is_ease)
+            t = powf(t, power_value);
+        else {
+            t = 0.5f * ((t < 0.5f) ? powf(t * 2.f, power_value) : 2.f - powf((2.f - t * 2.f), power_value));
         }
         const hap_t *srchap = blendwith.s;
         for (hap_t *out_hap = out.s; out_hap < out.e; out_hap++) {
@@ -849,7 +880,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_RANGE: {
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+            [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !right_hap[1] || !right_hap[1]->has_param(P_NUMBER) ||
                     !target->valid_params)
                     return 1;
@@ -865,9 +896,39 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             n->type, 2);
         break;
     }
+    case N_OP_ARP: {
+        hap_t tmp_mem[tmp_size*2];
+        hap_span_t tmp0 = {tmp_mem, tmp_mem + 1 * tmp_size};
+        hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
+        hap_span_t left_haps = _make_haps(tmp0, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
+        hap_span_t right_haps = _make_haps(tmp1, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
+        // we loop over the right haps, and pick out a left hap from each one 
+        int num_left_haps = left_haps.e - left_haps.s;
+        if (num_left_haps <= 0) break;
+        for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++) {
+            if (dst.s >= dst.e) break;
+            if (!right_hap->has_param(P_NUMBER))
+                continue;
+            int step = (int)right_hap->params[P_NUMBER];
+            int octave = (step>0) ? step / num_left_haps : (step - num_left_haps + 1) / num_left_haps;
+            int wrappedstep = step - octave * num_left_haps;
+            if (wrappedstep >= 0 && wrappedstep < num_left_haps) {
+                *dst.s = left_haps.s[wrappedstep];
+                dst.s->hapid = hash2_pcg(dst.s->hapid, step);
+                if (dst.s->has_param(P_NOTE)) {
+                    dst.s->params[P_NOTE] += octave * 12;
+                } else if (dst.s->has_param(P_SCALEBITS)) {
+                    dst.s->params[P_NOTE] = scale_index_to_note(dst.s->scale_bits, dst.s->params[P_SCALEBITS], step);
+                    dst.s->valid_params |= 1 << P_NOTE;
+                }
+                dst.s++;
+            }
+        }
+        break; }
     case N_OP_MASK:
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, when, hapid, [](hap_t *left_hap, hap_t *right_hap, int new_hap_id, hap_time when) { 
+            dst, tmp_size, viz_time, nodeidx, when, hapid,
+            [](int left_hap_idx, hap_t *left_hap, hap_t *right_hap, int new_hap_id, hap_time when) {
                 if (!right_hap || !right_hap->has_param(P_NUMBER))
                     return 0;
                 float v = right_hap->params[P_NUMBER];
@@ -878,7 +939,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_MUL:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+            [](int left_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER))
                     return 1;
                 int param_idx = __builtin_ctz(target->valid_params);
@@ -891,7 +952,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_POW:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+            [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER))
                     return 1;
                 int param_idx = __builtin_ctz(target->valid_params);
@@ -904,7 +965,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_ROUND:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+            [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 int param_idx = __builtin_ctz(target->valid_params);
                 target->params[param_idx] = roundf(target->params[param_idx]);
                 return 1;
@@ -914,7 +975,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_FLOOR:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+            [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 int param_idx = __builtin_ctz(target->valid_params);
                 target->params[param_idx] = floorf(target->params[param_idx]);
                 return 1;
@@ -924,7 +985,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_DIV:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
+            [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
                     return 1;
                 int param_idx = __builtin_ctz(target->valid_params);
@@ -941,38 +1002,40 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, add_value_func, 1);
         break;
     case N_LAMBDA:
-    break;
+        break;
     case N_OP_NEVER:
         break;
     case N_OP_SOMETIMES:
     case N_OP_RARELY:
     case N_OP_OFTEN:
     case N_OP_ALWAYS:
-    break;
-    #define X(x, str, ...) case N_##x: param = x; goto assign_value;
-    #include "params.h"
+        break;
+#define X(x, str, ...)                                                                                                             \
+    case N_##x:                                                                                                                    \
+        param = x;                                                                                                                 \
+        goto assign_value;
+#include "params.h"
     assign_value:
         if (param == P_NUMBER)
             goto n_p_number;
-        if (n->num_children ==1 ) {
+        if (n->num_children == 1) {
             // we are using 'param name number' as a value, ie just create a hap with only that in it.
             hap_span_t new_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hapid);
             for (hap_t *new_hap = new_haps.s; new_hap < new_haps.e; new_hap++) {
-                if (new_hap->valid_params & (1<<P_NUMBER)) {
+                if (new_hap->valid_params & (1 << P_NUMBER)) {
                     new_hap->params[param] = new_hap->params[P_NUMBER];
-                    new_hap->valid_params = (new_hap->valid_params & ~(1<<P_NUMBER)) | (1 << param);
+                    new_hap->valid_params = (new_hap->valid_params & ~(1 << P_NUMBER)) | (1 << param);
                 }
             }
             break;
-        }
-        else
-        _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_value_func, param);
+        } else
+            _apply_unary_op(dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr, apply_value_func, param);
         break;
 
     case N_OP_CLIP:
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
-            [](hap_t *target, hap_t **right_hap, size_t context, hap_time when) {
+            [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) {
                 float value = right_hap[0] ? right_hap[0]->get_param(P_NUMBER, 0.5f) : 0.5f;
                 if (value <= 0.f)
                     target->valid_params = 0;
@@ -984,8 +1047,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     case N_OP_DEGRADE: {
         _apply_unary_op(
-            dst, tmp_size, viz_time, nodeidx, when, hapid, 
-            [](hap_t *target, hap_t *right_hap, int new_hapid, hap_time when) {
+            dst, tmp_size, viz_time, nodeidx, when, hapid,
+            [](int target_hap_idx, hap_t *target, hap_t *right_hap, int new_hapid, hap_time when) {
                 float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
                 if (value >= 1.f)
                     return 0;
@@ -1024,7 +1087,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 float minval = bfs_min_max_value[childnode].mn;
                 if (minval >= 0.f) {
                     from = loop_from + minval;
-                    finish_at = original_loop_from + kids_total_length; // once you have an elongate that's out of order, you need to loop to the end of the parent's cycle.
+                    finish_at = original_loop_from + kids_total_length; // once you have an elongate that's out of order, you need
+                                                                        // to loop to the end of the parent's cycle.
                 }
             }
             hap_time to = from + child_length;
@@ -1043,7 +1107,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 if (from > child_when)
                     break;
             }
-            
+
             if (to <= from)
                 break;
             if (to > child_when && from <= child_when) {
@@ -1055,9 +1119,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 // but we also clip it to the extent of this part of the cat (from-to)
                 // in that way, large query ranges dont return multiple copies of the children
                 // but also, small query ranges propagate down the callstack to keep things fast.
-                hap_span_t newhaps =
-                    _make_haps(dst, tmp_size, viz_time, childnode, child_when - tofs,
-                               hash2_pcg(hapid, childidx + loopidx * n->num_children));
+                hap_span_t newhaps = _make_haps(dst, tmp_size, viz_time, childnode, child_when - tofs,
+                                                hash2_pcg(hapid, childidx + loopidx * n->num_children));
                 for (hap_t *src_hap = newhaps.s; src_hap < newhaps.e; src_hap++) {
                     if (src_hap->t1 > to - tofs)
                         src_hap->t1 = to - tofs;
@@ -1078,22 +1141,26 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
-    case N_OP_ADSR: 
-    case N_OP_ADSR2:
-    {
+    case N_OP_ADSR:
+    case N_OP_ADSR2: {
         if (n->num_children < 2)
             break;
-        hap_span_t left_haps =
-            _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
-            bool is_adsr2 = n->type == N_OP_ADSR2;
+        hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
+        bool is_adsr2 = n->type == N_OP_ADSR2;
+        int left_hap_idx = 0;
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-            _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 1, nullptr, apply_value_func, is_adsr2 ? P_ATT2 : P_ATT, when);
+            _apply_values(dst, tmp_size, viz_time, left_hap_idx, left_hap, n->first_child + 1, nullptr, apply_value_func,
+                          is_adsr2 ? P_ATT2 : P_ATT, when);
             if (n->num_children > 2)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 2, nullptr, apply_value_func, is_adsr2 ? P_DEC2 : P_DEC, when);
+                _apply_values(dst, tmp_size, viz_time, left_hap_idx, left_hap, n->first_child + 2, nullptr, apply_value_func,
+                              is_adsr2 ? P_DEC2 : P_DEC, when);
             if (n->num_children > 3)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 3, nullptr, apply_value_func, is_adsr2 ? P_SUS2 : P_SUS, when);
+                _apply_values(dst, tmp_size, viz_time, left_hap_idx, left_hap, n->first_child + 3, nullptr, apply_value_func,
+                              is_adsr2 ? P_SUS2 : P_SUS, when);
             if (n->num_children > 4)
-                _apply_values(dst, tmp_size, viz_time, left_hap, n->first_child + 4, nullptr, apply_value_func, is_adsr2 ? P_REL2 : P_REL, when);
+                _apply_values(dst, tmp_size, viz_time, left_hap_idx, left_hap, n->first_child + 4, nullptr, apply_value_func,
+                              is_adsr2 ? P_REL2 : P_REL, when);
+            left_hap_idx++;
         }
         break;
     }
@@ -1106,8 +1173,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         hap_span_t tmp1 = {tmp_mem + 1 * tmp_size, tmp_mem + 2 * tmp_size};
         hap_span_t tmp2 = {tmp_mem + 2 * tmp_size, tmp_mem + 3 * tmp_size};
         hap_span_t tmp3 = {tmp_mem + 3 * tmp_size, tmp_mem + 4 * tmp_size};
-        hap_span_t left_haps =
-            _make_haps(tmp0, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
+        hap_span_t left_haps = _make_haps(tmp0, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
         hap_span_t setsteps_haps =
             _make_haps(tmp1, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
         hap_span_t numsteps_haps =

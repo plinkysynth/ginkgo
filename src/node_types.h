@@ -70,8 +70,9 @@ OP(N_OP_POW, "pow", 1, 0, 11)
 OP(N_OP_EASE, "ease", 1, 0, 11)
 OP(N_OP_SMOOTH, "smooth", 1, 0, 11)
 OP(N_OP_MASK, "mask", 1, 0, 9)
+OP(N_OP_ARP, "arp", 1, 0, 9)
 
-#define X(x, str, ...) OP(N_##x, str, 1, 0, 5000)
+#define X(x, str, def, precedence, ...) OP(N_##x, str, 1, 0, precedence)
 #include "params.h"
 
 

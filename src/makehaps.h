@@ -207,7 +207,7 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
 }
 
 int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_t *structure_hap, int value_node_idx,
-                             filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when, int num_rhs) {
+                             filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when, int num_rhs, int rolling_rhs) {
     hap_time structure_t0 = when; //structure_hap->t0;
     // structure_t0 = (t0+t1)*0.5;
     hap_t tmp_mem[tmp_size * num_rhs];
@@ -221,9 +221,15 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
     int structure_hapid = structure_hap->hapid;
     // COMMENT: we just take the structure from the left, but also only loop over the first parameter's haps,
     // and just take the later params 'modulo first param count'. which is wrong but simple.
+    // NEW: if rolling_rhs is >=0, we ALSO do that for the first parameter, ie we dont do an outerproduct,
+    // but rather we cycle over that value too.
     int num_value_haps = value_haps[0].e - value_haps[0].s;
     if (num_value_haps == 0)
         num_value_haps = 1;
+    int roll = rolling_rhs >= 0 ? rolling_rhs : 0;
+    if (rolling_rhs >= 0) {
+        num_value_haps = 1;
+    }
     for (int value_hap_idx = 0; value_hap_idx < num_value_haps; value_hap_idx++) {
         hap_t *value_hap_i[num_rhs];
         for (int i = 0; i < num_rhs; i++) {
@@ -231,9 +237,9 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
             if (!n)
                 value_hap_i[i] = nullptr;
             else
-                value_hap_i[i] = value_haps[i].s + (value_hap_idx % n);
+                value_hap_i[i] = value_haps[i].s + ((value_hap_idx + roll) % n);
         }
-        hap_t *right_hap = value_hap_i[0]; // TODO: more than 1
+        hap_t *right_hap = value_hap_i[0]; 
         if (right_hap && !right_hap->valid_params)
             continue;
         int new_hapid = hash2_pcg(structure_hapid, right_hap ? right_hap->hapid : 0);
@@ -265,14 +271,18 @@ int pattern_t::_apply_values(hap_span_t &dst, int tmp_size, float viz_time, hap_
 }
 
 void pattern_t::_apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, int parent_idx, hap_time when, int parent_hapid,
-                                filter_cb_t filter_cb, value_cb_t value_cb, size_t context, int num_rhs) {
+                                filter_cb_t filter_cb, value_cb_t value_cb, size_t context, int num_rhs, bool use_rolling_rhs) {
     bfs_node_t *n = bfs_nodes + parent_idx;
     if (n->num_children < 1)
         return;
     int right_child = (n->num_children > 1) ? n->first_child + 1 : -1;
     hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(parent_hapid, n->first_child));
+    int rolling_rhs = use_rolling_rhs ? 0 : -1;
     for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
-        _apply_values(dst, tmp_size, viz_time, left_hap, right_child, filter_cb, value_cb, context, when, num_rhs);
+        _apply_values(dst, tmp_size, viz_time, left_hap, right_child, filter_cb, value_cb, context, when, num_rhs, rolling_rhs);
+        if (use_rolling_rhs) {
+            rolling_rhs++;
+        }
     }
 }
 
@@ -863,7 +873,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 float v = right_hap->params[P_NUMBER];
                 return (v > 0.f) ? 1 : 0;
             },
-            nullptr, 0);
+            nullptr, 0, 1, true);
         break;
     case N_OP_MUL:
         _apply_unary_op(

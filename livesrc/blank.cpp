@@ -5,7 +5,7 @@
 
 
 ///pattern <[c,e,g]*8 [a2,c,e]*8 [f,a,c4]*8> arp [0 4 6 4 5 4 7 <- 2>] sus 0 dec 0.3-0.9 
-/pattern emaj arp 0
+/pattern < [c a f e]@2 >
 
 /bpm 140
 

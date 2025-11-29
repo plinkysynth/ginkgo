@@ -900,7 +900,7 @@ static void update_lengths(pattern_maker_t *p, int node) {
     if (node < 0)
         return;
     Node *n = &p->nodes[node];
-    float max_value = 0.f;
+    //float max_value = 0.f;
     float total_length = 0.f;
     int num_children = 0;
     if (n->first_child < 0)
@@ -909,8 +909,8 @@ static void update_lengths(pattern_maker_t *p, int node) {
     for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
         ++num_children;
         update_lengths(p, i);
-        if (i != n->first_child)
-            max_value = max(max_value, p->nodes[i].max_value);
+        // if (i != n->first_child)
+        //     max_value = max(max_value, p->nodes[i].max_value);
         float to = from + get_length(p, i);
         if (p->nodes[i].type == N_OP_ELONGATE && p->nodes[i].min_value >= 0.f) {
             // the child is an elongate node with a specified start time. 
@@ -931,10 +931,11 @@ static void update_lengths(pattern_maker_t *p, int node) {
     // leaf nodes dont want to overwrite their max value with the max of their children (real data is there!)
     // poly nodes use it as a hack for the % figure.
     // single child elongate nodes use it as a count to elongate by.
-    if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID && n->type != N_NEAR &&
-        n->type != N_COLOR) {
-        n->max_value = max_value;
-    }
+    // ACTUALLY you know what, i dont think anyone is using this any more. let's let nodes control max_value how they like.
+    // if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID && n->type != N_NEAR &&
+    //     n->type != N_COLOR) {
+    //     n->max_value = max_value;
+    // }
 }
 
 pattern_t parse_pattern(pattern_maker_t *p, int index_to_add_to_start_end) {

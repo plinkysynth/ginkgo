@@ -38,6 +38,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
         tmh = 256 - 8;
     if (!E->embeddings) {
         sj_Reader r = read_json_file("assets/umap_sounds.json");
+        int idx = 0;
         for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
             sample_embedding_t t = {.key = iter_key_as_stbstring(&outer)};
             sj_iter_t inner = iter_start(&r, &outer.val);
@@ -62,6 +63,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             t.sound_idx = -1;
             t.sound_number = 0;
             stbds_shputs(E->embeddings, t);
+            idx++;
         }
         printf("loaded %d embeddings\n", (int)stbds_shlen(E->embeddings));
         // find mapping from sounds back to embeddings

@@ -150,7 +150,7 @@ typedef struct line_t {
     uint32_t col;
 } line_t;
 
-#define MAX_LINES (1 << 20)
+#define MAX_LINES (1 << 21)
 uint32_t line_count = 0;
 line_t lines[MAX_LINES];
 

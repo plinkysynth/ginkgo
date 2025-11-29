@@ -71,7 +71,6 @@ void load_wave_now(wave_t *wave) {
     if (wave->frames || wave->download_in_progress>=2)
         return; // already loaded
     wave->download_in_progress = 2;
-    wave->sample_func = sample_wave;
     #define ASYNC_WAVE_LOADING 
     #ifdef ASYNC_WAVE_LOADING
     const char *fname = fetch_to_cache(wave->key, 1 , wave_loaded, wave);

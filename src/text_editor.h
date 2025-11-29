@@ -923,7 +923,8 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 if (E->find_mode) {
                     jump_to_found_text(E, shift, key);
                 } else {
-                    E->autocomplete_show_after = G->iTime + 1.f; // after typing, we can immediately show autocomplete.
+                    float delay = (E->autocomplete_show_after <= G->iTime) ? 0.f : 1.f;
+                    E->autocomplete_show_after = G->iTime + delay; // after typing, we can immediately show autocomplete.
                     // delete the selection; insert the character
                     int ls = (key == '\n') ? count_leading_spaces(E, find_start_of_line(E, E->cursor_idx)) : 0;
                     char buf[ls + 2];

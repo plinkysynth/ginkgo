@@ -588,10 +588,13 @@ typedef struct voice_state_t {
 
 
 static inline stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
-    if (!w || !w->frames) {if (at_end) *at_end = true; return {0.f, 0.f};}
-    if (v->in_use <= EInUse::ALLOCATED) 
+    if (v->in_use < EInUse::IN_USE) {
+        //printf("RETRIG\n");
         v->phase = 0.f;
-    double pos = v->phase;
+    }
+    if (!w) {if (at_end) *at_end = true; return {0.f, 0.f};}
+    if (!w->frames || w->download_in_progress) {if (at_end) *at_end = !w->download_in_progress; return {0.f, 0.f};}
+    double pos = v->phase * w->sample_rate / SAMPLE_RATE;
     float fromt = h->get_param(P_FROM, 0.f);
     float tot = h->get_param(P_TO, 1.f);
     float loops = h->get_param(P_LOOPS, 0.f);
@@ -603,7 +606,7 @@ static inline stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at
         loops *= nsamps;
         loope *= nsamps;
         pos = fmodf(pos - loops, loope - loops) + loops;
-        v->phase = pos;
+        v->phase = pos * SAMPLE_RATE / w->sample_rate;
     } else if (pos >= nsamps) {
         if (at_end) *at_end = true;
         return {0.f, 0.f};

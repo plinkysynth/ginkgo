@@ -34,7 +34,6 @@ bool decode_file_to_f32(const char *path, wave_t *out) {
         free(pcm);
         return false;
     }
-    out->sample_func = sample_wave;
     out->num_frames = num_frames;
     out->sample_rate = cfg.sampleRate;
     out->channels = cfg.channels;
@@ -54,7 +53,6 @@ static void wave_loaded(const char *url, const char *fname, void *userdata) {
     }
     if (!wave->frames) {
         fprintf(stderr, "warning: wave %s failed to load. replacing with silence\n", wave->key);
-        wave->sample_func = sample_wave;
         wave->num_frames = 1;
         wave->sample_rate = 48000;
         wave->channels = 1;
@@ -70,10 +68,11 @@ static void wave_loaded(const char *url, const char *fname, void *userdata) {
 }
 
 void load_wave_now(wave_t *wave) {
-    if (wave->frames || wave->download_in_progress)
+    if (wave->frames || wave->download_in_progress>=2)
         return; // already loaded
-    wave->download_in_progress = 1;
-    #define ASYNC_WAVE_LOADING 1
+    wave->download_in_progress = 2;
+    wave->sample_func = sample_wave;
+    #define ASYNC_WAVE_LOADING 
     #ifdef ASYNC_WAVE_LOADING
     const char *fname = fetch_to_cache(wave->key, 1 , wave_loaded, wave);
     #else
@@ -360,7 +359,7 @@ void pump_wave_load_requests_main_thread(void) {
         int n = stbds_hmlen(G->load_requests);
         int i;
         for (i = 0; i < n; i++)
-            if (!G->load_requests[i].key->download_in_progress)
+            if (G->load_requests[i].key->download_in_progress<2)
                 break;
         wave_t *req = (i < n) ? G->load_requests[i].key : nullptr;
         spin_unlock(&G->load_request_cs);

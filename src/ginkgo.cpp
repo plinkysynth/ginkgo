@@ -50,11 +50,26 @@ void mac_touch_init(void *cocoa_window) {}                                      
 #endif
 
 char cache_path[1024]; // where we put web downloads
-char settings_path[1024]; // where we put settings.json
 char settings_fname[1024]; // the actual settings.json filename
 char livesrc_path[1024]; // user documents
 char build_path[1024]; // where we put the temp build files
 
+GLFWwindow *win;
+
+
+#ifdef __APPLE__
+const char *pick_filename(const char *init_name, const char *title) {
+    glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwPollEvents();            // let the OS process it
+    const char *res= mac_pick_file(glfwGetCocoaWindow(win), init_name);
+    glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+    return res;
+}
+#else
+const char *pick_filename(const char *init_name, const char *title) { // TODO
+    return NULL;
+}
+#endif
 
 #define RESW 1920
 #define RESH 1080
@@ -655,6 +670,7 @@ const char *kFS_taa = SHADER(
     uniform float fov;
     uniform mat4 c_cam2world;
     uniform mat4 c_cam2world_old;
+    uniform float taa_amount;
     
     void main() {
         vec2 fov2 = vec2(fov * 16./9., fov);
@@ -663,23 +679,16 @@ const char *kFS_taa = SHADER(
         float depth = 1.f / newcol_depth.w;
         vec3 mincol = newcol_depth.xyz;
         vec3 maxcol = newcol_depth.xyz;
-        //vec3 avgcol = newcol_depth.xyz;
+        vec3 avgcol = newcol_depth.xyz;
         vec3 c;
-        c=texelFetch(uFP, pixel + ivec2(-1, 1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
-        c=texelFetch(uFP, pixel + ivec2( 0, 1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
-        c=texelFetch(uFP, pixel + ivec2( 1, 1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
-        c=texelFetch(uFP, pixel + ivec2(-1, 0), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
-        c=texelFetch(uFP, pixel + ivec2( 1, 0), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
-        c=texelFetch(uFP, pixel + ivec2(-1,-1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
-        c=texelFetch(uFP, pixel + ivec2( 0,-1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
-        c=texelFetch(uFP, pixel + ivec2( 1,-1), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); //avgcol += c;
+        for (int xx=-2;xx<=2;xx++) {
+            for (int yy=-2;yy<=2;yy++) { 
+                if (xx==0 && yy==0) continue;
+                c=texelFetch(uFP, pixel + ivec2(xx, yy), 0).xyz; mincol = min(mincol, c); maxcol = max(maxcol, c); avgcol += c;
+            }
+        }
+        avgcol *= 1.f/(5.f*5.f);
         vec3 o = newcol_depth.xyz;
-        // o=o*o;
-        // mincol=mincol*mincol;
-        // maxcol=maxcol*maxcol;
-        
-        //avgcol *= 1.f/9.f;
-        // reproject old frame
         vec2 uv = (v_uv - 0.5) * fov2;
         // todo - why do we need these normalizes, the matrix should be orthonormal!
         vec3 rd_new = normalize(normalize(c_cam2world[2].xyz) + uv.x * normalize(c_cam2world[0].xyz) + uv.y * normalize(c_cam2world[1].xyz));
@@ -688,16 +697,25 @@ const char *kFS_taa = SHADER(
         float ww = 1. / dot(hit, (c_cam2world_old[2].xyz));
         float uu = ww * dot(hit, (c_cam2world_old[0].xyz)) / fov2.x + 0.5;
         float vv = ww * dot(hit, (c_cam2world_old[1].xyz)) / fov2.y + 0.5;    
+        vec3 history;
         if (uu<=0. || vv<=0. || uu>=1. || vv>=1. || ww<=0. || isnan(ww)) 
         {
             // no history.
+            history = avgcol;
         } else {
-            vec3 history = texture(uFP_prev, vec2(uu,vv)).xyz;
-            float believe_history = 0.95f;
-            history = max(history, mincol);
-            history = min(history, maxcol);
-            o = mix(o, history, believe_history);
+            history = texture(uFP_prev, vec2(uu,vv)).xyz;
+            bool clamped = false;
+            if (history.x < mincol.x) { history.x = mincol.x; clamped = true; }
+            if (history.y < mincol.y) { history.y = mincol.y; clamped = true; }
+            if (history.z < mincol.z) { history.z = mincol.z; clamped = true; }
+            if (history.x > maxcol.x) { history.x = maxcol.x; clamped = true; }
+            if (history.y > maxcol.y) { history.y = maxcol.y; clamped = true; }
+            if (history.z > maxcol.z) { history.z = maxcol.z; clamped = true; }
+            if (clamped) {
+                history = mix(history, avgcol, 0.5f);
+            }
         }
+        o = mix(o, history, taa_amount);
         //o.xyz = o.xyz / (1.0-min(0.99f,dot(o.xyz,vec3(0.01)))); // re-expand
         o_color = vec4(o, 1.f);
     }
@@ -751,7 +769,7 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
     
     void main() {
         // adjust for aspect ratio
-        vec2 user_uv = (v_uv-1) * uARadjust + 1;
+        vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
         vec3 rendercol= texture(uFP, user_uv).rgb;
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
         rendercol += bloomcol ;//* 0.3;
@@ -1293,11 +1311,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     const GLFWvidmode *vm = primon ? glfwGetVideoMode(primon) : NULL;
     int ww = primon ? vm->width : 1920 / 2;
     int wh = primon ? vm->height : 1200 / 2;
-    if (vm && (ww > vm->width || wh > vm->height)) {
-        ww /= 2;
-        wh /= 2;
-    }
-
+    
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -1308,14 +1322,27 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_FALSE);
     if (primon) {
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     }
 
     char winname[1024];
     snprintf(winname, sizeof(winname), "ginkgo | %s | %s", filename(tabs[TAB_SHADER].fname), filename(tabs[TAB_AUDIO].fname));
-    GLFWwindow *win = glfwCreateWindow(ww, wh, winname, primon, NULL);
+    bool use_borderless = true;
+    win = glfwCreateWindow(ww, wh, winname, use_borderless ? NULL : primon, NULL);
     if (!win)
         die("glfwCreateWindow failed");
     glfwGetWindowContentScale(win, &retina, NULL);
+    if (primon && use_borderless) {
+        #ifdef __APPLE__
+        // kiosk mode covers the menu bar
+        void mac_enable_kiosk(void *cocoa_win);
+        mac_enable_kiosk(glfwGetCocoaWindow(win));
+        #endif
+        int x=0,y=0;
+        glfwGetMonitorPos(primon, &x, &y);
+        glfwSetWindowPos(win, x, y);
+    }
     // printf("retina: %f\n", retina);
     glfwMakeContextCurrent(win);
     if (!gladLoadGL())
@@ -1334,11 +1361,22 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
 #endif
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
         glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_FALSE);
         const GLFWvidmode *vm = glfwGetVideoMode(secmon);
         int ww = vm->width;                                              // 1920
         int wh = vm->height;                                             // 1080
-        winFS = glfwCreateWindow(ww, wh, "Ginkgo Visuals", secmon, win); // 'share' = win
+        winFS = glfwCreateWindow(ww, wh, "Ginkgo Visuals", use_borderless ? NULL : secmon, win); // 'share' = win
+        if (secmon && use_borderless) {
+            #ifdef __APPLE__
+            // kiosk mode covers the menu bar
+            void mac_enable_kiosk(void *cocoa_win);
+            mac_enable_kiosk(glfwGetCocoaWindow(winFS));
+            #endif
+            int x=0,y=0;
+            glfwGetMonitorPos(secmon, &x, &y);
+            glfwSetWindowPos(winFS, x, y);
+        }
         glfwMakeContextCurrent(winFS);
         glfwSwapInterval(1);
         glGenVertexArrays(1, &vaoFS);
@@ -1370,6 +1408,9 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
     if (mods == 0) {
         if (key >= GLFW_KEY_F1 && key < GLFW_KEY_F1 + TAB_LAST) {
             set_tab(&tabs[key - GLFW_KEY_F1]);
+        }
+        if (key == GLFW_KEY_F11) {
+            int i=1;
         }
         if (key == GLFW_KEY_F12) {
             // tap tempo
@@ -1444,12 +1485,46 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
         if (key == GLFW_KEY_COMMA || key == GLFW_KEY_PERIOD) {
             if (G->playing) {
                 G->playing = false;
-                G->t_q32 &= ~((1 << 30) - 1);
+                G->t_q32 &= ~(0xffffffffull);
             } else {
                 if (G->t_q32 & (0xffffffffull)) {
                     G->t_q32 &= ~(0xffffffffull);
                 } else {
                     G->t_q32 = 0;
+                }
+            }
+        }
+        if (key == GLFW_KEY_O || key == GLFW_KEY_L) {
+            const char *fname = pick_filename(E->fname, "pick a file to open");
+            if (fname) {
+                fname = stbstring_from_span(fname, NULL, 0);
+                if (strstr(fname, ".glsl")) {
+                    EditorState *E = &tabs[TAB_SHADER];
+                    stbds_arrfree(E->fname);
+                    E->fname = fname;
+                    load_file_into_editor(E);
+                    parse_named_patterns_in_source();
+                    try_to_compile_shader(E);
+                    try_to_compile_audio(&tabs[TAB_AUDIO].last_compile_log);
+                    curE=E;
+                    G->ui_alpha_target = 1.f;
+                } else if (strstr(fname, ".cpp")) {
+                    EditorState *E = &tabs[TAB_AUDIO];
+                    stbds_arrfree(E->fname);
+                    E->fname = fname;
+                    load_file_into_editor(E);
+                    parse_named_patterns_in_source();
+                    try_to_compile_audio(&E->last_compile_log);
+                    curE=E;
+                    G->ui_alpha_target = 1.f;
+                } else if (strstr(fname, ".canvas")) {
+                    EditorState *E = &tabs[TAB_CANVAS];
+                    stbds_arrfree(E->fname);
+                    E->fname = fname;
+                    bool load_canvas(EditorState * E);
+                    load_canvas(E);
+                    curE=E;
+                    G->ui_alpha_target = 1.f;
                 }
             }
         }
@@ -1601,10 +1676,10 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
     G->mx = mx;
     G->my = my;
     G->mb = m0 + m1 * 2;
-    if (G->ui_alpha < 0.01f) {
-        G->old_mx = G->fbw / 2.f;
-        G->old_my = G->fbh / 2.f;
-        glfwSetCursorPos(win, G->old_mx / retina, G->old_my / retina);
+    if (G->ui_alpha_target < 0.01f) {
+        glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    } else {
+        glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
     }
 
     G->iTime = glfwGetTime();
@@ -1871,7 +1946,7 @@ void update_camera(GLFWwindow *win) {
     }
 }
 
-static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int num_fprts, uint32_t iFrame, GLuint vao) {
+static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int num_fprts, uint32_t iFrame, GLuint vao, float taa_amount) {
     glUseProgram(taa_pass);
     bind_texture_to_slot(taa_pass, 0, "uFP", texFPRT[2], GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1882,6 +1957,7 @@ static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int n
     uniformMatrix4fv(taa_pass, "c_cam2world", 1, GL_FALSE, (float *)G->camera.c_cam2world);
     uniformMatrix4fv(taa_pass, "c_cam2world_old", 1, GL_FALSE, (float *)G->camera.c_cam2world_old);
     uniform1f(taa_pass, "fov", G->camera.fov);
+    uniform1f(taa_pass, "taa_amount", taa_amount);
     draw_fullscreen_pass(fbo[iFrame % 2], RESW, RESH, vao);
 }
 
@@ -1953,6 +2029,14 @@ GLuint load_texture(const char *key, int filter_mode = GL_LINEAR, int wrap_mode 
         fprintf(stderr, "failed to fetch texture %s\n", tex->url);
         tex->texture = 0;
         return 0;
+    }
+    // Check if the file exists before proceeding
+    struct stat st;
+    char full_path[1024];
+    if (stat(fname, &st) != 0) {
+        // try prepending the user's documents path
+        snprintf(full_path, sizeof(full_path), "%s/%s", livesrc_path, fname);
+        fname = full_path;
     }
     int w, h, n;
     void *img = NULL;
@@ -2190,6 +2274,15 @@ int main(int argc, char **argv) {
     void install_crash_handler(void);
     // install_crash_handler();
 
+    char original_dir[1024];
+    getcwd(original_dir, sizeof(original_dir));
+    // if theres a livesrc/ in the current folder, use that.
+    bool use_current_dir_for_user_files = false;
+    struct stat st;
+    if (stat("livesrc", &st) == 0 && S_ISDIR(st.st_mode)) {
+        printf(COLOR_YELLOW "using current directory for user files\n" COLOR_RESET);
+        use_current_dir_for_user_files = true;
+    }
     chdir_to_bundle_resources();
     // set up settings and cache folder
     const char *home = getenv("HOME");
@@ -2200,13 +2293,17 @@ int main(int argc, char **argv) {
     snprintf(cache_path,sizeof(cache_path), "%s/.cache/ginkgo", home);
 #endif
     snprintf(build_path,sizeof(build_path),"%s/build", cache_path);
-    snprintf(settings_path,sizeof(settings_path),"%s/ginkgo", home);
-    // we dont use ~/Documents on mac because it triggeres a request to access that folder.
-    snprintf(livesrc_path,sizeof(livesrc_path),"%s/ginkgo", home);
-    snprintf(settings_fname, sizeof(settings_fname), "%s/settings.json", settings_path);
+    if (use_current_dir_for_user_files) {
+        snprintf(settings_fname,sizeof(settings_fname),"%s/settings.json", original_dir) ;
+        snprintf(livesrc_path,sizeof(livesrc_path),"%s/livesrc", original_dir);
+    } else {
+        // we dont use ~/Documents on mac because it triggeres a request to access that folder.
+        snprintf(settings_fname,sizeof(settings_fname),"%s/ginkgo/settings.json", home);
+        snprintf(livesrc_path,sizeof(livesrc_path),"%s/ginkgo", home);
+    }
     mkdir_p(cache_path, true);
     mkdir_p(build_path, true);
-    mkdir_p(settings_path, true);
+    mkdir_p(settings_fname, false);
     mkdir_p(livesrc_path, true);
     ensure_livesrc_file_exists("blank.glsl");
     ensure_livesrc_file_exists("blank.cpp");
@@ -2215,8 +2312,8 @@ int main(int argc, char **argv) {
     printf("using the following paths:\n");
     printf("  cache_path: " COLOR_CYAN "%s" COLOR_RESET "\n", cache_path);
     printf("  build_path: " COLOR_CYAN "%s" COLOR_RESET "\n", build_path);
-    printf("  settings_path: " COLOR_CYAN "%s" COLOR_RESET "\n", settings_path);
     printf("  livesrc_path: " COLOR_CYAN "%s" COLOR_RESET "\n", livesrc_path);
+    printf("  settings_fname: " COLOR_CYAN "%s" COLOR_RESET "\n", settings_fname);
     
 
 
@@ -2372,9 +2469,12 @@ int main(int argc, char **argv) {
         const char *sky_name = strstr(s, "// sky ");
         const char *tex_name = strstr(s, "// tex ");
         const char *want_taa_str = strstr(s, "// taa");
-        if (want_taa_str && want_taa_str[6] == ' ' && want_taa_str[7] == '0')
-            want_taa_str = NULL;
-        bool want_taa = (want_taa_str != NULL) && (curE != &tabs[TAB_CANVAS]);
+        float taa_amount = 0.95f;
+        
+        if (want_taa_str && want_taa_str[6] == ' ' && isdigit(want_taa_str[7]))
+            taa_amount = strtof(want_taa_str + 7, NULL);
+
+        bool want_taa = (want_taa_str != NULL) && taa_amount > 0.f && (curE != &tabs[TAB_CANVAS]);
         const char *aperture_str = strstr(s, "// aperture ");
         if (aperture_str)
             G->camera.aperture = atof_default(aperture_str + 11, G->camera.aperture);
@@ -2512,7 +2612,7 @@ int main(int argc, char **argv) {
             glBindTexture(GL_TEXTURE_BUFFER, 0);
         }
         if (want_taa)
-            render_taa_pass(taa_pass, fbo, texFPRT, NUM_FPRTS, iFrame, vao);
+            render_taa_pass(taa_pass, fbo, texFPRT, NUM_FPRTS, iFrame, vao, taa_amount);
         render_bloom_downsample(bloom_pass, fbo, texFPRT, iFrame, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
         render_bloom_upsample(bloom_pass, fbo, texFPRT, NUM_BLOOM_MIPS, NUM_FPRTS, vao);
 

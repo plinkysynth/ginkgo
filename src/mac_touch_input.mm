@@ -175,3 +175,71 @@ RawPen *mac_pen_get(void) {
         return 0;
     return &g_pen;
 }
+
+void mac_enable_kiosk(void *cocoa_win)
+{
+    NSWindow *nswin =
+        (__bridge NSWindow *)cocoa_win;
+
+    NSApplicationPresentationOptions opts =
+        NSApplicationPresentationHideDock |
+        NSApplicationPresentationHideMenuBar;
+        // NSApplicationPresentationDisableAppleMenu |
+        // NSApplicationPresentationDisableForceQuit |
+        // NSApplicationPresentationDisableProcessSwitching;
+
+    [NSApp setPresentationOptions:opts];
+
+    //[nswin setLevel:NSMainMenuWindowLevel+1];
+    // [nswin setCollectionBehavior:
+    //     NSWindowCollectionBehaviorFullScreenNone |
+    //     NSWindowCollectionBehaviorCanJoinAllSpaces];
+}
+
+const char *mac_pick_file(void *cocoa_window, const char *initial_path)
+{
+    (void)cocoa_window; // not actually used.
+    // if (!cocoa_window) return NULL;
+    // NSWindow *parent = (__bridge NSWindow *)cocoa_window;
+    // if (!parent) return NULL;
+
+    @autoreleasepool {
+        NSOpenPanel *panel = [NSOpenPanel openPanel];
+        [panel setCanChooseFiles:YES];
+        [panel setCanChooseDirectories:NO];
+        [panel setAllowsMultipleSelection:NO];
+
+        if (initial_path && *initial_path) {
+            NSString *path = [NSString stringWithUTF8String:initial_path];
+            BOOL isDir = NO;
+            if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && isDir) {
+                [panel setDirectoryURL:[NSURL fileURLWithPath:path]];
+            } else {
+                NSString *dir  = [path stringByDeletingLastPathComponent];
+                NSString *file = [path lastPathComponent];
+                if (dir.length)
+                    [panel setDirectoryURL:[NSURL fileURLWithPath:dir]];
+                if (file.length)
+                    [panel setNameFieldStringValue:file];
+            }
+        }
+
+        // Make sure our app is frontmost so the dialog appears on top
+        [NSApp activateIgnoringOtherApps:YES];
+
+        NSModalResponse result = [panel runModal];  // synchronous, no deprecation
+
+        if (result == NSModalResponseOK) {
+            NSURL *url = panel.URL;
+            if (!url) return NULL;
+            const char *fsrep = [[url path] fileSystemRepresentation];
+            if (!fsrep) return NULL;
+            static char path_buf[4096];
+            strncpy(path_buf, fsrep, sizeof(path_buf) - 1);
+            path_buf[sizeof(path_buf) - 1] = 0;
+            return path_buf;
+        }
+    }
+    return NULL;
+}
+

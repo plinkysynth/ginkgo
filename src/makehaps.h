@@ -344,25 +344,6 @@ int apply_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_
     return 1;
 }
 
-int apply_fit_func(int left_hap_idx, hap_t *left_hap, hap_t **right_hap, size_t param_idx, hap_time when) {
-    if (!right_hap || param_idx >= P_LAST)
-        return 1;
-    if (!right_hap[0]->has_param(P_NUMBER))
-        return 1;
-    float n = right_hap[0]->params[P_NUMBER];
-    if (n <= 0.f)
-        n = 1.f;
-    if (left_hap->has_param(P_SOUND) && G->dt != 0.) {
-        wave_t *w = get_wave(get_sound_by_index(left_hap->params[P_SOUND]), 0);
-        if (w->num_frames) {
-            float ratio = w->num_frames / (((left_hap->t1 - left_hap->t0) / G->dt * n) / SAMPLE_RATE * w->sample_rate);
-            float note = log2(ratio) * 12 + C3;
-            left_hap->params[P_NOTE] = note;
-            left_hap->valid_params |= 1 << P_NOTE;
-        }
-    }
-    return 1;
-}
 
 int add_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_t negative, hap_time when) { // param_idx 1=sub
     if (!right_hap || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
@@ -542,7 +523,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
             if (left_hap->has_param(P_SOUND) && G->dt != 0.) {
                 wave_t *w = get_wave(get_sound_by_index(left_hap->params[P_SOUND]), 0);
-                if (w->num_frames) {
+                if (w->num_frames && w->sample_rate) {
                     float ratio = w->num_frames / (((left_hap->t1 - left_hap->t0) / G->dt) / SAMPLE_RATE * w->sample_rate);
                     float note = log2(ratio) * 12 + C3;
                     left_hap->params[P_NOTE] = note;

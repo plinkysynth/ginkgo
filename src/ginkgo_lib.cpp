@@ -418,6 +418,8 @@ wave_t *request_wave_load(wave_t *wave) {
         return NULL;
     spin_lock(&G->load_request_cs);
     wave_request_t key = {wave};
+    wave->download_in_progress = 1;
+    wave->sample_func = sample_wave;
     stbds_hmputs(G->load_requests, key);
     spin_unlock(&G->load_request_cs);
     return NULL;
@@ -513,9 +515,14 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     bool at_end = false;
     if (w && w->sample_func) {
         au = (w->sample_func)(this, h, w, &at_end);
-        phase += dphase * (double(w->sample_rate) / SAMPLE_RATE);
+        phase += dphase;
     } else {
-        au = {};
+        if (in_use < EInUse::IN_USE) {
+            // BELT AND BRACES: retrig the sample.
+            printf("FORCED RETRIG\n");
+            phase = 0.f;
+        }
+        au = {};    
     }
     in_use = EInUse::IN_USE;
     au *= env1;
@@ -621,8 +628,10 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
         for (int i = 0; i < max_voices; ++i) {
             voice_state_t *v = &voices[i];
             hap_t *h = &v->h;
-            if (!h->valid_params)
+            if (!h->valid_params) {
+                v->in_use = EInUse::UNUSED;
                 continue;
+            }
             static int sawidx = get_sound_index("saw");
             int sound = h->get_param(P_SOUND, sawidx);
             int first_smpl = (h->t0 - from) / G->dt;
@@ -698,7 +707,14 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 float fold_actual = fold_amount * (min(1.f, 1.f - env2fold) + env2 * env2fold);
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
+                if (t < 2.f/SAMPLE_RATE) {
+                    printf("phase: %f t = %f inuse = %d\n", v->phase, t, v->in_use);
+                }
                 audio[smpl] += v->synth_sample(h, keydown, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
+                if (v->phase > t * SAMPLE_RATE * 2.f + 10000.f ) {
+                    int i=1;
+                }
+
                 curlevel += dlevel;
                 if (v->in_use != EInUse::IN_USE) {
                     printf("voice %d released - from %f to %f\n", i, from, to);
@@ -717,8 +733,8 @@ stereo prepare_preview(void) {
     if (G->preview_wave_idx_plus_one) {
         wave_t *w = &G->waves[G->preview_wave_idx_plus_one - 1];
         if (w) {
-            float pos = w->sample_rate * G->preview_wave_t;
-            G->preview_wave_t += 1.f / SAMPLE_RATE;
+            float pos = G->preview_wave_t;
+            G->preview_wave_t += 1.f;
             bool at_end = false;
             voice_state_t v = {.dphase = 1.f / SAMPLE_RATE, .phase = pos, .in_use = EInUse::IN_USE};
             hap_t h = {
@@ -727,7 +743,7 @@ stereo prepare_preview(void) {
                 .params[P_TO] = G->preview_tot,
             };
             preview = sample_wave(&v, &h, w, &at_end) * (G->preview_wave_fade * 0.33f);
-            if (pos >= w->num_frames) {
+            if (at_end) {
                 G->preview_wave_fade = 0.f;
             }
         }

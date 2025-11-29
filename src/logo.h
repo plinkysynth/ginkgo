@@ -46,7 +46,7 @@ void draw_logo(float time) {
         for (int j = 1; j <= n; j++) {
             float t = ((float)j / (float)n * (maxt-mint) + mint) / len;
             float2 p = segment_point(s, t);
-            float scale = 2.3f;
+            float scale = 2.25f * G->fbw / 1920.f;
             add_line(prev_p.x * scale, prev_p.y * scale, p.x * scale, p.y * scale, s->color | 0xff000000u, s->stroke_width * scale * width_scale);
             prev_p = p;
         }

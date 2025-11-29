@@ -22,6 +22,8 @@ typedef struct {
 RawPen *mac_pen_get(void);  // returns pointer to pen if valid, NULL if no pen
 int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh);  // returns number of touches
 void mac_touch_init(void *cocoa_window);          // pass NSWindow* from GLFW
+const char *mac_pick_file(void *cocoa_window, const char *initial_path);
+void mac_enable_kiosk(void *cocoa_win);
 
 #ifdef __cplusplus
 }

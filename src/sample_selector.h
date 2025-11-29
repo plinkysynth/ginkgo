@@ -268,7 +268,7 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
             float startx = 48.f + fromt * (G->fbw - 96.f);
             float endx = 48.f + tot * (G->fbw - 96.f);
             if (w->num_frames) {
-                float playpos_frac = fromt + (G->preview_wave_t * w->sample_rate / w->num_frames);
+                float playpos_frac = fromt + (G->preview_wave_t * w->sample_rate / SAMPLE_RATE / w->num_frames);
                 if (playpos_frac >= fromt && playpos_frac < tot) {
                     float playx = 48.f + playpos_frac * (G->fbw - 96.f);
                     add_line(playx, G->fbh - 256.f, playx, G->fbh, 0xffffffff, 4.f);

@@ -49,6 +49,13 @@ int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh) { return 0
 void mac_touch_init(void *cocoa_window) {}                                          // pass NSWindow* from GLFW
 #endif
 
+char cache_path[1024]; // where we put web downloads
+char settings_path[1024]; // where we put settings.json
+char settings_fname[1024]; // the actual settings.json filename
+char livesrc_path[1024]; // user documents
+char build_path[1024]; // where we put the temp build files
+
+
 #define RESW 1920
 #define RESH 1080
 
@@ -947,9 +954,9 @@ void parse_named_patterns_in_source(void) {
 }
 
 static void dump_settings(void) {
-    FILE *f = fopen("settings.json", "w");
+    FILE *f = fopen(settings_fname, "w");
     if (!f) {
-        fprintf(stderr, "Failed to open settings.json for writing\n");
+        fprintf(stderr, "Failed to open %s for writing\n", settings_fname);
         return;
     }
     json_printer_t jp = {f};
@@ -981,7 +988,7 @@ static void dump_settings(void) {
 
 static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_idx, bool *prefetch) {
     int cur_tab = 0;
-    const char *settings_fname = "settings.json";
+    const char *the_settings_fname = settings_fname;
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
             if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -1008,7 +1015,7 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
             }
             if (strcmp(argv[i], "--settings") == 0 || strcmp(argv[i], "-s") == 0) {
                 if (i + 1 < argc)
-                    settings_fname = argv[i + 1];
+                    the_settings_fname = argv[i + 1];
             }
             if (strcmp(argv[i], "--secmon") == 0 || strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "-v") == 0) {
                 if (i + 1 < argc)
@@ -1021,11 +1028,11 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
         else if (strstr(argv[i], ".cpp"))
             tabs[TAB_AUDIO].fname = stbstring_from_span(argv[i], NULL, 0);
         else if (strstr(argv[i], ".json"))
-            settings_fname = argv[i];
+            the_settings_fname = argv[i];
         else if (strstr(argv[i], ".canvas"))
             tabs[TAB_CANVAS].fname = stbstring_from_span(argv[i], NULL, 0);
     }
-    sj_Reader r = read_json_file(settings_fname);
+    sj_Reader r = read_json_file(the_settings_fname);
     for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
         if (iter_key_is(&outer, "camera")) {
             for (sj_iter_t inner = iter_start(outer.r, &outer.val); iter_next(&inner);) {
@@ -1080,11 +1087,11 @@ static void load_settings(int argc, char **argv, int *primon_idx, int *secmon_id
         }
     }
     if (tabs[TAB_SHADER].fname == NULL)
-        tabs[TAB_SHADER].fname = stbstring_from_span("livesrc/blank.glsl", NULL, 0);
+        tabs[TAB_SHADER].fname = stbstring_printf("%s/blank.glsl", livesrc_path);
     if (tabs[TAB_AUDIO].fname == NULL)
-        tabs[TAB_AUDIO].fname = stbstring_from_span("livesrc/blank.cpp", NULL, 0);
+        tabs[TAB_AUDIO].fname = stbstring_printf("%s/blank.cpp", livesrc_path);
     if (tabs[TAB_CANVAS].fname == NULL)
-        tabs[TAB_CANVAS].fname = stbstring_from_span("livesrc/blank.canvas", NULL, 0);
+        tabs[TAB_CANVAS].fname = stbstring_printf("%s/blank.canvas", livesrc_path);
     if (cur_tab < 0 || cur_tab >= TAB_LAST)
         cur_tab = 0;
     curE = &tabs[cur_tab];
@@ -1125,6 +1132,11 @@ static GLuint compile_shader(EditorState *E, GLenum type, const char *src) {
     return s;
 }
 
+static const char *filename(const char *path) {
+    const char *last_slash = strrchr(path, '/');
+    return last_slash ? last_slash + 1 : path;
+}
+
 static bool try_to_compile_audio(char **errorlog) {
     if (errorlog) {
         stbds_arrfree(*errorlog);
@@ -1132,19 +1144,18 @@ static bool try_to_compile_audio(char **errorlog) {
     }
     char cmd[1024];
     int version = g_version + 1;
-#ifdef __WINDOWS__
-    mkdir("build");
-#else
-    mkdir("build", 0755);
-#endif
 #if USING_ASAN
 #define SANITIZE_OPTIONS "-fsanitize=address"
 #else
 #define SANITIZE_OPTIONS ""
 #endif
-    FILE *f = fopen("build/stub.cpp", "w");
-    if (!f)
+    char stub_fname[1024];
+    snprintf(stub_fname,sizeof(stub_fname),"%s/stub.cpp", build_path);
+    FILE *f = fopen(stub_fname, "w");
+    if (!f) {
+        fprintf(stderr, "failed to open %s for writing\n", stub_fname);
         return false;
+    }
     fprintf(f,
             "#include \"ginkgo.h\"\n"
             "%.*s\n"
@@ -1169,8 +1180,10 @@ static bool try_to_compile_audio(char **errorlog) {
     }
     fclose(f);
     snprintf(cmd, sizeof(cmd),
-             "clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " build/stub.cpp"
-             " -o build/dsp.%d." BUILD_LIB_EXT " 2>&1",
+             "clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " %s"
+             " -o %s/dsp.%d." BUILD_LIB_EXT " 2>&1",
+             stub_fname,
+             build_path,
              version);
     printf("[%s]\n", cmd);
     int64_t t0 = get_time_us();
@@ -1201,7 +1214,7 @@ static bool try_to_compile_audio(char **errorlog) {
     dlclose(g_handle);
     g_handle = NULL;
 #endif
-    snprintf(cmd, sizeof(cmd), "build/dsp.%d." BUILD_LIB_EXT, version);
+    snprintf(cmd, sizeof(cmd), "%s/dsp.%d." BUILD_LIB_EXT, build_path, version);
     void *h = dlopen(cmd, RTLD_NOW | RTLD_LOCAL);
     if (!h) {
         fprintf(stderr, "dlopen %s failed: %s\n", cmd, dlerror());
@@ -1225,7 +1238,7 @@ static bool try_to_compile_audio(char **errorlog) {
     g_handle = h;
     g_version = version;
     fprintf(stderr, "compile %s succeeded in %.3fms\n", cmd, (t1 - t0) / 1000.0);
-    snprintf(cmd, sizeof(cmd), "build/dsp.%d." BUILD_LIB_EXT, version - 1);
+    snprintf(cmd, sizeof(cmd), "%s/dsp.%d." BUILD_LIB_EXT, build_path, version - 1);
     unlink(cmd);
     return true;
 }
@@ -1298,7 +1311,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     }
 
     char winname[1024];
-    snprintf(winname, sizeof(winname), "ginkgo | %s | %s", tabs[TAB_SHADER].fname, tabs[TAB_AUDIO].fname);
+    snprintf(winname, sizeof(winname), "ginkgo | %s | %s", filename(tabs[TAB_SHADER].fname), filename(tabs[TAB_AUDIO].fname));
     GLFWwindow *win = glfwCreateWindow(ww, wh, winname, primon, NULL);
     if (!win)
         die("glfwCreateWindow failed");
@@ -2124,6 +2137,51 @@ shader_param_t param_cc[8];
 
 void error_callback(int error, const char *description) { fprintf(stderr, "GLFW error %d: %s\n", error, description); }
 
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <unistd.h>
+#include <limits.h>
+
+static void chdir_to_bundle_resources(void)
+{
+    CFBundleRef bundle = CFBundleGetMainBundle();
+    if (!bundle) return;
+
+    CFURLRef resURL = CFBundleCopyResourcesDirectoryURL(bundle);
+    if (!resURL) return;
+
+    char path[PATH_MAX];
+    if (CFURLGetFileSystemRepresentation(resURL, true, (UInt8 *)path, sizeof(path))) {
+        chdir(path); // ignore failure, worst case you keep old cwd
+    }
+    CFRelease(resURL);
+}
+#else
+static void chdir_to_bundle_resources() { }
+#endif
+
+void ensure_livesrc_file_exists(const char *fname) {
+    char srcname[1024],dstname[1024];
+    snprintf(srcname,sizeof(srcname),"livesrc/%s",fname);
+    snprintf(dstname,sizeof(dstname),"%s/%s", livesrc_path, fname);
+    FILE *dst = fopen(dstname,"rb");
+    if (dst) {
+        fclose(dst);
+        return;
+    }
+    dst = fopen(dstname,"wb");
+    if (!dst) {
+        fprintf(stderr, "failed to open %s for writing\n", dstname);
+        return;
+    }
+    char *content = load_file(srcname);
+    if (content) {
+        fwrite(content,1,stbds_arrlen(content),dst);
+    }
+    stbds_arrfree(content);
+    fclose(dst);
+}
+
 int main(int argc, char **argv) {
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
 #if USING_ASAN
@@ -2131,6 +2189,38 @@ int main(int argc, char **argv) {
 #endif
     void install_crash_handler(void);
     // install_crash_handler();
+
+    chdir_to_bundle_resources();
+    // set up settings and cache folder
+    const char *home = getenv("HOME");
+    if (!home) home=".";
+#ifdef __APPLE__
+    snprintf(cache_path,sizeof(cache_path), "%s/Library/Caches/com.bluespoon.ginkgo", home);
+#else
+    snprintf(cache_path,sizeof(cache_path), "%s/.cache/ginkgo", home);
+#endif
+    snprintf(build_path,sizeof(build_path),"%s/build", cache_path);
+    snprintf(settings_path,sizeof(settings_path),"%s/ginkgo", home);
+    // we dont use ~/Documents on mac because it triggeres a request to access that folder.
+    snprintf(livesrc_path,sizeof(livesrc_path),"%s/ginkgo", home);
+    snprintf(settings_fname, sizeof(settings_fname), "%s/settings.json", settings_path);
+    mkdir_p(cache_path, true);
+    mkdir_p(build_path, true);
+    mkdir_p(settings_path, true);
+    mkdir_p(livesrc_path, true);
+    ensure_livesrc_file_exists("blank.glsl");
+    ensure_livesrc_file_exists("blank.cpp");
+    ensure_livesrc_file_exists("blank.canvas");
+
+    printf("using the following paths:\n");
+    printf("  cache_path: " COLOR_CYAN "%s" COLOR_RESET "\n", cache_path);
+    printf("  build_path: " COLOR_CYAN "%s" COLOR_RESET "\n", build_path);
+    printf("  settings_path: " COLOR_CYAN "%s" COLOR_RESET "\n", settings_path);
+    printf("  livesrc_path: " COLOR_CYAN "%s" COLOR_RESET "\n", livesrc_path);
+    
+
+
+
     glfwSetErrorCallback(error_callback);
     if (!glfwInit())
         die("glfwInit failed");

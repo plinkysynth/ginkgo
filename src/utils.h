@@ -1,7 +1,9 @@
 #pragma once
 
 char *stbstring_from_span(const char *start, const char * end = NULL, int alloc_extra= 0);
+char *stbstring_printf(const char *fmt, ...);
 char *load_file(const char *path); // returns an stb_ds
+int mkdir_p(const char *path, bool include_last_path_component);
 
 #define temp_cstring_from_span(s, e) ({ size_t n=(e)-(s); char *t=(char*)alloca(n+1); memcpy(t,s,n); t[n]=0; t; }) // stack!
 

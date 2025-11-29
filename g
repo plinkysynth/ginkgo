@@ -1,7 +1,7 @@
 #!/bin/sh
 if [ "$(uname)" = "Darwin" ]; then
-    CFG="./ginkgo_mac"
+    # open build/ginkgo.app
+    ASAN_OPTIONS=detect_odr_violation=0 build/ginkgo.app/Contents/MacOS/ginkgo "$@"
 else
-    CFG="./ginkgo_linux"
+    ASAN_OPTIONS=detect_odr_violation=0 ./ginkgo_linux "$@"
 fi
-ASAN_OPTIONS=detect_odr_violation=0 $CFG "$@"

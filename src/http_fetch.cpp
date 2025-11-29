@@ -16,6 +16,7 @@
 // #define DEBUG_FETCH 1
 
 int get_num_pending_fetch_jobs(void);
+int mkdir_p(const char *path, bool include_last_path_component);
 
 void sanitize_url_for_local_filesystem(const char *url, char *out, size_t cap) {
     size_t i = 0;
@@ -112,7 +113,8 @@ static int fetch_to_cache_core(
     }
 
     char name[1024];
-    const char *cache_root = "webcache";
+    extern char cache_path[1024];
+    const char *cache_root = cache_path;
     sanitize_url_for_local_filesystem(url, name, sizeof name);
 
     snprintf(out_path, out_cap, "%s/%s", cache_root, name);
@@ -127,19 +129,7 @@ static int fetch_to_cache_core(
         }
     }
 
-    char *p = out_path;
-    while (*p == '/') p++;
-    for (; *p; p++) {
-        if (*p == '/') {
-            *p = 0;
-#ifdef __WINDOWS__
-            mkdir(out_path);
-#else
-            mkdir(out_path, 0755);
-#endif
-            *p = '/';
-        }
-    }
+    mkdir_p(out_path, false);
 
     char etag_path[1200], tmp_path[1200];
     snprintf(etag_path, sizeof etag_path, "%s/%s.etag", cache_root, name);

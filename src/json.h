@@ -32,6 +32,8 @@ static inline sj_iter_t iter_start(sj_Reader *r, sj_Value *parent = NULL) { // p
 }
 
 static inline bool iter_next(sj_iter_t *iter) {
+    if (iter->outer.start == NULL || iter->outer.start == iter->outer.end)
+        return false;
     if (iter->outer.type == SJ_OBJECT) {
         return sj_iter_object(iter->r, iter->outer, &iter->key, &iter->val);
     } else if (iter->outer.type == SJ_ARRAY) {

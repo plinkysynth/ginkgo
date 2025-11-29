@@ -1,2 +1,2 @@
 #!/bin/sh
-clear && make debug -j
+clear && make -j

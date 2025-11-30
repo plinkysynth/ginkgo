@@ -419,7 +419,7 @@ wave_t *request_wave_load(wave_t *wave) {
     spin_lock(&G->load_request_cs);
     wave_request_t key = {wave};
     wave->download_in_progress = 1;
-    wave->sample_func = sample_wave;
+    wave->sample_func = stbds_shgetp_null(G->waves, "_wave")->sample_func;
     stbds_hmputs(G->load_requests, key);
     spin_unlock(&G->load_request_cs);
     return NULL;
@@ -540,6 +540,10 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     }
     float resonance = h->get_param(P_RESONANCE, 0.f);
     au = filter.lpf(au, cutoff_actual, saturate(1.f - resonance));
+    float hpf_cutoff = h->get_param(P_HPF, 0.f);
+    if (hpf_cutoff > 0.f) {
+        au = hpf.hpf(au, hpf_cutoff);
+    }
     if (!isfinite(au.l) || !isfinite(au.r)) {
         au = {};
         filter = {};
@@ -739,7 +743,7 @@ stereo prepare_preview(void) {
                 .params[P_FROM] = G->preview_fromt,
                 .params[P_TO] = G->preview_tot,
             };
-            preview = sample_wave(&v, &h, w, &at_end) * (G->preview_wave_fade * 0.33f);
+            preview = (stbds_shgetp(G->waves,"_wave")->sample_func)(&v, &h, w, &at_end) * (G->preview_wave_fade * 0.33f);
             if (at_end) {
                 G->preview_wave_fade = 0.f;
             }

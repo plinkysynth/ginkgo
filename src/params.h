@@ -31,5 +31,8 @@ X(P_TREM, "trem", 0.f, 5)
 X(P_TREM_FREQ, "tremf", 0.f, 5)
 X(P_GLIDE, "glide", 0.f, 5)
 X(P_STRING, "string", 0.f, 5)
+X(P_HPF, "hpf", 0, 5)
+X(P_TIMESTRETCH, "stretch", 1.f, 5)
+X(P_JITTER, "jitter", 0, 5)
 X(P_SCALEBITS, "scale", 0.f, 5)
 #undef X

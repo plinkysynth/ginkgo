@@ -474,13 +474,12 @@ enum {
 typedef struct hap_t {
     int hapid;
     int node; // index of the node that generated this hap.
-    uint32_t valid_params; // which params have been assigned for this hap.
+    uint64_t valid_params; // which params have been assigned for this hap.
     int scale_bits;
     hap_time t0, t1; 
     float params[P_LAST];
-    inline float get_param(int param, float default_value) const { return valid_params & (1 << param) ? params[param] : default_value; } 
-    //inline float get_param(int param) const { return valid_params & (1 << param) ? params[param] : param_defaults[param]; } 
-    bool has_param(int param) const { return valid_params & (1 << param); }
+    inline float get_param(int param, float default_value) const { return valid_params & (1ull << param) ? params[param] : default_value; } 
+    bool has_param(int param) const { return valid_params & (1ull << param); }
 } hap_t;
 
 typedef struct adsr_t {
@@ -576,6 +575,7 @@ typedef struct voice_state_t {
     adsr_t adsr1;
     adsr_t adsr2;
     filter_t filter;
+    filter_t hpf;
     double phase;
     double dphase;
     float vibphase;
@@ -583,57 +583,6 @@ typedef struct voice_state_t {
     EInUse in_use;
     stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w);
 } voice_state_t;
-
-
-
-
-static inline stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
-    if (v->in_use < EInUse::IN_USE) {
-        //printf("RETRIG\n");
-        v->phase = 0.f;
-    }
-    if (!w) {if (at_end) *at_end = true; return {0.f, 0.f};}
-    if (!w->frames || w->download_in_progress) {if (at_end) *at_end = !w->download_in_progress; return {0.f, 0.f};}
-    double pos = v->phase * w->sample_rate / SAMPLE_RATE;
-    float fromt = h->get_param(P_FROM, 0.f);
-    float tot = h->get_param(P_TO, 1.f);
-    float loops = h->get_param(P_LOOPS, 0.f);
-    float loope = h->get_param(P_LOOPE, 0.f);
-    int nsamps = w->num_frames * abs(tot-fromt);
-    if (nsamps<=0) {if (at_end) *at_end = true; return {0.f, 0.f};}
-    int firstsamp = w->num_frames * (min(fromt, tot));
-    if (loops < loope && pos > loops) {
-        loops *= nsamps;
-        loope *= nsamps;
-        pos = fmodf(pos - loops, loope - loops) + loops;
-        v->phase = pos * SAMPLE_RATE / w->sample_rate;
-    } else if (pos >= nsamps) {
-        if (at_end) *at_end = true;
-        return {0.f, 0.f};
-    }
-    if (fromt>tot) pos=nsamps-pos;
-    int i = (int)floorf(pos);
-    float t = pos - (float)i;
-    i+=firstsamp;
-    i %= w->num_frames;
-    if (i<0) i+=w->num_frames;
-    bool wrap = (i==w->num_frames-1);
-    if (w->channels>1) {
-        i*=w->channels;
-        stereo s0 = stereo{w->frames[i + 0], w->frames[i + 1]};
-        i=wrap ? i : i+w->channels;
-        stereo s1 = stereo{w->frames[i + 0], w->frames[i + 1]};
-        return s0 + (s1 - s0) * t;
-    } else {
-        float s0 = w->frames[i + 0];
-        i=wrap ? i : i+1;
-        float s1 = w->frames[i + 0];
-        s0 += (s1-s0)*t;
-        return stereo{s0,s0};
-    }
-}
-
-
 
 // TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.
 // but this is simple so we'll go with simple.

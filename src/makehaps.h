@@ -1,12 +1,12 @@
 // code for turning patterns (a tree of nodes) into haps (a flat list of events with times and values)
 
 void merge_hap(hap_t *dst, hap_t *src) {
-    int p = src->valid_params;
+    uint64_t p = src->valid_params;
     dst->valid_params |= p;
     while (p) {
-        int i = __builtin_ctz(p);
+        int i = __builtin_ctzll(p);
         dst->params[i] = src->params[i];
-        p &= ~(1 << i);
+        p &= ~(1ull << i);
     }
     if (src->has_param(P_SCALEBITS))
         dst->scale_bits = src->scale_bits;
@@ -190,7 +190,7 @@ bool pattern_t::_append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_
     hap->t1 = t1;
     hap->node = nodeidx;
     hap->hapid = hapid;
-    hap->valid_params = 1 << value_type;
+    hap->valid_params = 1ull << value_type;
     hap->params[value_type] = v;
     hap->scale_bits = (value_type == VT_SCALE) ? minmax.mn : 0;
     return true;
@@ -339,7 +339,7 @@ int apply_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_
         target->params[P_GAIN] *= right_hap[0]->params[src_idx];
     else {
         target->params[param_idx] = right_hap[0]->params[src_idx];
-        target->valid_params |= 1 << param_idx;
+        target->valid_params |= 1ull << param_idx;
     }
     return 1;
 }
@@ -348,7 +348,7 @@ int apply_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_
 int add_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_t negative, hap_time when) { // param_idx 1=sub
     if (!right_hap || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
         return 1;
-    int param_idx = __builtin_ctz(target->valid_params);
+    int param_idx = __builtin_ctzll(target->valid_params);
     float v = right_hap[0]->params[P_NUMBER];
     target->params[param_idx] += negative ? -v : v;
     return 1;
@@ -603,10 +603,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t param_idx, hap_time when) {
                     if (!right_hap[0] || !right_hap[0]->valid_params)
                         return 0;
-                    int right_params = right_hap[0]->valid_params;
+                    uint64_t right_params = right_hap[0]->valid_params;
                     while (right_params) {
-                        int param_idx = __builtin_ctz(right_params);
-                        right_params &= ~(1 << param_idx);
+                        int param_idx = __builtin_ctzll(right_params);
+                        right_params &= ~(1ull << param_idx);
                         if (param_idx == P_NUMBER && target->has_param(P_SCALEBITS) && !target->has_param(P_NOTE)) {
                             // apply a number to a scale -> index scale into a note
                             // we use the fact that params[P_SCALEBITS] will be the root,
@@ -618,15 +618,15 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                             // apply a scale to a number -> index scale into a note
                             target->params[P_NOTE] = scale_index_to_note(
                                 right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NUMBER]);
-                            target->valid_params |= (1 << P_NOTE) | (1 << P_SCALEBITS);
-                            target->valid_params &= ~(1 << P_NUMBER);
+                            target->valid_params |= (1 << P_NOTE) | (1ull << P_SCALEBITS);
+                            target->valid_params &= ~(1ull << P_NUMBER);
                             target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
                             target->scale_bits = right_hap[0]->scale_bits;
                         } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
                             // apply a scale to a note -> quantize to scale
                             target->params[P_NOTE] = quantize_note_to_scale(
                                 right_hap[0]->scale_bits, right_hap[0]->params[P_SCALEBITS], (int)target->params[P_NOTE]);
-                            target->valid_params |= (1 << P_SCALEBITS);
+                            target->valid_params |= (1ull << P_SCALEBITS);
                             target->params[P_SCALEBITS] = right_hap[0]->params[P_SCALEBITS];
                             target->scale_bits = right_hap[0]->scale_bits;
                         } else { // just copy the value
@@ -636,7 +636,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                                 target->params[param_idx] = right_hap[0]->params[param_idx];
                             if (param_idx == P_SCALEBITS)
                                 target->scale_bits = right_hap[0]->scale_bits;
-                            target->valid_params |= 1 << param_idx;
+                            target->valid_params |= 1ull << param_idx;
                         }
                     }
                     return 1;
@@ -744,15 +744,15 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                     continue;
                 hap_t *src_hap = tmp[i].s;
                 for (int j = 0; j < max_poly; ++j) {
-                    int valid = src_hap->valid_params;
+                    uint64_t valid = src_hap->valid_params;
                     while (valid) {
-                        int bit = __builtin_ctz(valid);
-                        valid &= ~(1 << bit);
+                        int bit = __builtin_ctzll(valid);
+                        valid &= ~(1ull << bit);
                         float v = src_hap->params[bit];
                         if (!out.s[j].has_param(bit)) {
                             tot_weights[j][bit] = 0.f;
                             out.s[j].params[bit] = 0.f;
-                            out.s[j].valid_params |= 1 << bit;
+                            out.s[j].valid_params |= 1ull << bit;
                         }
                         out.s[j].params[bit] += v * weights[i];
                         tot_weights[j][bit] += weights[i];
@@ -764,10 +764,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             } // loop over weights
             // normalize:
             for (int j = 0; j < max_poly; ++j) {
-                int valid = out.s[j].valid_params;
+                uint64_t valid = out.s[j].valid_params;
                 while (valid) {
-                    int bit = __builtin_ctz(valid);
-                    valid &= ~(1 << bit);
+                    int bit = __builtin_ctzll(valid);
+                    valid &= ~(1ull << bit);
                     float tw = tot_weights[j][bit];
                     if (tw > 0.f)
                         out.s[j].params[bit] /= tw;
@@ -847,11 +847,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 out_hap->t1 += 0.5;
             }
             if (srchap < blendwith.e) {
-                int shared_params = srchap->valid_params & out_hap->valid_params;
+                uint64_t shared_params = srchap->valid_params & out_hap->valid_params;
                 while (shared_params) {
-                    int bit = __builtin_ctz(shared_params);
+                    int bit = __builtin_ctzll(shared_params);
                     out_hap->params[bit] = out_hap->params[bit] * (1.0f - t) + srchap->params[bit] * t;
-                    shared_params &= ~(1 << bit);
+                    shared_params &= ~(1ull << bit);
                 }
             }
         }
@@ -865,7 +865,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !right_hap[1] || !right_hap[1]->has_param(P_NUMBER) ||
                     !target->valid_params)
                     return 1;
-                int param_idx = __builtin_ctz(target->valid_params);
+                int param_idx = __builtin_ctzll(target->valid_params);
                 float mn = right_hap[0]->params[P_NUMBER];
                 float mx = right_hap[1]->params[P_NUMBER];
                 float v = target->params[param_idx];
@@ -923,7 +923,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             [](int left_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER))
                     return 1;
-                int param_idx = __builtin_ctz(target->valid_params);
+                int param_idx = __builtin_ctzll(target->valid_params);
                 float v = right_hap[0]->params[P_NUMBER];
                 target->params[param_idx] *= v;
                 return 1;
@@ -936,7 +936,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER))
                     return 1;
-                int param_idx = __builtin_ctz(target->valid_params);
+                int param_idx = __builtin_ctzll(target->valid_params);
                 float v = right_hap[0]->params[P_NUMBER];
                 target->params[param_idx] = powf(target->params[param_idx], v);
                 return 1;
@@ -947,7 +947,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
             [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
-                int param_idx = __builtin_ctz(target->valid_params);
+                int param_idx = __builtin_ctzll(target->valid_params);
                 target->params[param_idx] = roundf(target->params[param_idx]);
                 return 1;
             },
@@ -957,7 +957,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         _apply_unary_op(
             dst, tmp_size, viz_time, nodeidx, when, hapid, nullptr,
             [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
-                int param_idx = __builtin_ctz(target->valid_params);
+                int param_idx = __builtin_ctzll(target->valid_params);
                 target->params[param_idx] = floorf(target->params[param_idx]);
                 return 1;
             },
@@ -969,7 +969,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             [](int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when) { // param_idx 1=sub
                 if (!right_hap[0] || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
                     return 1;
-                int param_idx = __builtin_ctz(target->valid_params);
+                int param_idx = __builtin_ctzll(target->valid_params);
                 float v = right_hap[0]->params[P_NUMBER];
                 target->params[param_idx] /= v;
                 return 1;
@@ -1005,7 +1005,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             for (hap_t *new_hap = new_haps.s; new_hap < new_haps.e; new_hap++) {
                 if (new_hap->valid_params & (1 << P_NUMBER)) {
                     new_hap->params[param] = new_hap->params[P_NUMBER];
-                    new_hap->valid_params = (new_hap->valid_params & ~(1 << P_NUMBER)) | (1 << param);
+                    new_hap->valid_params = (new_hap->valid_params & ~(1ull << P_NUMBER)) | (1ull << param);
                 }
             }
             break;
@@ -1222,7 +1222,7 @@ void pretty_print_haps(hap_span_t haps, hap_time from, hap_time to) {
         printf(COLOR_GREY "%08x(%d) " COLOR_CYAN "%5.2f" COLOR_BLUE " -> %5.2f " COLOR_RESET, hap->hapid, hap->node, hap->t0,
                hap->t1);
         for (int i = 0; i < P_LAST; i++) {
-            if (hap->valid_params & (1 << i)) {
+            if (hap->valid_params & (1ull << i)) {
                 if (i == P_SOUND) {
                     Sound *sound = get_sound_by_index((int)hap->params[i]);
                     printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");

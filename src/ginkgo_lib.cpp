@@ -130,6 +130,13 @@ stereo limiter(float state[2], stereo inp) {
 }
 
 stereo plinkyverb_t::_run_internal(stereo input) {
+    if (RARE(dshimmerfade == 0)) {
+        shimmerpos1 = 7000;
+        shimmerpos2 = 8000;
+        shimmerfade = 0;
+        dshimmerfade = 32768 / 4096;
+    }
+    
     int i = reverb_pos;
     float outl = 0, outr = 0;
     float wob = aplfo(lforate1) * k_reverb_wob;
@@ -225,13 +232,12 @@ stereo plinkyverb_t::_run_internal(stereo input) {
         //i+=8192;
 
         // Fixed point crossfade:
-        float shimo = shim.l * ((SHIMMER_FADE_LEN - 1) - shimmerfade) + shim.r * shimmerfade;
+        float shimo = shim.l * (SHIMMER_FADE_LEN - shimmerfade) + shim.r * shimmerfade;
         shimo *= 1.f / SHIMMER_FADE_LEN; // Divide by SHIMMER_FADE_LEN
 
         // Apply user-selected shimmer amount.
         // Tone down shimmer amount.
         shimo *= k_reverb_shim * 0.25f;
-
         acc += shimo;
         outl = shimo;
         outr = shimo;
@@ -515,12 +521,14 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     bool at_end = false;
     if (w && w->sample_func) {
         au = (w->sample_func)(this, h, w, &at_end);
-        phase += dphase;
     } else {
         if (in_use < EInUse::IN_USE) {
             // BELT AND BRACES: retrig the sample.
             printf("FORCED RETRIG\n");
             phase = 0.f;
+            grainheads[0] = 0.;
+            grainheads[1] = 0.;
+            grainheads[2] = 0.;
         }
         au = {};    
     }
@@ -568,6 +576,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
     if (level < 0.f)
         level = 0.f;
     level = level * level;
+
     if ((G->sampleidx % 96) == 0) {
         memset(audio, 0, sizeof(audio));
         pattern_t *p = get_pattern(pattern_name);
@@ -589,31 +598,46 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                         break;
                 }
                 if (i == max_voices) {
-                    if (h->t0 >= to || h->t0 < from)
+                    if (h->t0 >= to || h->t0 < from) {
                         continue; // only trigger voices at the right time.
+                    }
                     // ok its a new voice.
                     // find oldest one to steal
                     i = 0;
-                    double oldest_t = voices[0].h.t0;
-                    for (int j = 1; j < max_voices; ++j) {
+                    //float quietest = 1e10f;
+                    double oldest_t = 1e10;
+                    for (int j = 0; j < max_voices; ++j) {
                         if (voices[j].in_use == EInUse::UNUSED) {
                             i = j;
                             break;
                         }
-                        if (voices[j].h.t0 < oldest_t) {
-                            oldest_t = voices[j].h.t0;
+                        //float lvl = fabsf(voices[j].adsr1.state[0]);
+                        double t = voices[j].h.t0;
+                        //if (voices[j].cur_power < quietest && voices[j].h.t1 < to) {
+                        if (voices[j].h.t0 < oldest_t && voices[j].h.t1 < to) {
+                            //quietest = voices[j].cur_power;
+                            oldest_t = t;
                             i = j;
                         }
                     }
-                    voices[i].h.hapid = 0;
-                    voices[i].h.t0 = h->t0;
-                    voices[i].h.t1 = h->t1;
-                    voices[i].in_use = EInUse::ALLOCATED;
-                    voices[i].vibphase = rnd01();
-                    voices[i].tremphase = 0.f;
+                    if (voices[i].in_use != EInUse::UNUSED) {
+                        printf("voice %d stolen, %f\n", i, voices[i].adsr1.state[0]);
+                    }
                 }
             }
+            // end of voice allocation
             assert(i < max_voices);
+            if (h->t0 < to && h->t0 >= from) {
+                // trigger voices at the right time.
+                voices[i].h.valid_params = 0;
+                voices[i].h.hapid = 0;
+                voices[i].h.t0 = h->t0;
+                voices[i].h.t1 = h->t1;
+                voices[i].in_use = EInUse::ALLOCATED;
+                voices[i].vibphase = rnd01();
+                voices[i].tremphase = 0.f;
+                printf("voice %d allocated, now %d\n", i, num_in_use);
+            }
             hap_t *dst = &voices[i].h;
             if (dst->hapid != h->hapid) {
                 // hapid has changed. often that's when the voice allocation code above ran,
@@ -629,11 +653,20 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             }
             merge_hap(dst, h);
         }
+        /////////////////////
+        // ok thats it for triggering/param updating
+        // time to make noise
+        num_in_use = 0;
+
         for (int i = 0; i < max_voices; ++i) {
             voice_state_t *v = &voices[i];
+            v->cur_power *= 0.99f;
             hap_t *h = &v->h;
             if (!h->valid_params) {
                 v->in_use = EInUse::UNUSED;
+                continue;
+            }
+            if (v->in_use == EInUse::UNUSED) {
                 continue;
             }
             static int sawidx = get_sound_index("saw");
@@ -712,20 +745,18 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
                 audio[smpl] += v->synth_sample(h, keydown, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
-                if (v->phase > t * SAMPLE_RATE * 2.f + 10000.f ) {
-                    int i=1;
-                }
+                v->cur_power += fabsf(audio[smpl].l) + fabsf(audio[smpl].r);
 
                 curlevel += dlevel;
                 if (v->in_use != EInUse::IN_USE) {
-                    printf("voice %d released - from %f to %f\n", i, from, to);
+                    printf("voice %d released - from %f to %f - now %d\n", i, from, to, num_in_use);
                     h->t0 = -1e10; // mark it as 'old'.
                     break;
                 }
             } // voice sample loop
-            
+            num_in_use++;
         } // voice loop
-    } // 96 sample block loop
+    } // are we first sample of 96 sample block loop
     return audio[G->sampleidx % 96];
 }
 
@@ -737,7 +768,7 @@ stereo prepare_preview(void) {
             float pos = G->preview_wave_t;
             G->preview_wave_t += 1.f;
             bool at_end = false;
-            voice_state_t v = {.dphase = 1.f / SAMPLE_RATE, .phase = pos, .in_use = EInUse::IN_USE};
+            voice_state_t v = {.dphase = 1.f / SAMPLE_RATE, .phase = pos, .grainheads = {pos}, .in_use = EInUse::IN_USE};
             hap_t h = {
                 .valid_params = (1 << P_FROM) | (1 << P_TO),
                 .params[P_FROM] = G->preview_fromt,
@@ -751,7 +782,7 @@ stereo prepare_preview(void) {
     }
     if (G->preview_wave_fade < 1.f) {
         G->preview_wave_fade *= 0.999f;
-        if (G->preview_wave_fade < 0.0001f) {
+        if (G->preview_wave_fade < 0.001f) {
             G->preview_wave_fade = 0.f;
         }
     }

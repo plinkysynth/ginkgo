@@ -261,46 +261,92 @@ stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
     if (v->in_use < EInUse::IN_USE) {
         //printf("RETRIG\n");
         v->phase = 0.f;
+        v->grainphase = 0.f;
+        v->grainheads[0] = 0.;
+        v->grainheads[1] = 0.;
+        v->grainheads[2] = 0.;
     }
     if (!w) {if (at_end) *at_end = true; return {0.f, 0.f};}
     if (!w->frames || w->download_in_progress) {if (at_end) *at_end = !w->download_in_progress; return {0.f, 0.f};}
-    double pos = v->phase * w->sample_rate / SAMPLE_RATE;
+    float stretch = h->get_param(P_TIMESTRETCH, 1.f);
+    int numgrainheads = (stretch != 1.f) ? 3 : 1;
+    double posmul = w->sample_rate / SAMPLE_RATE;
     float fromt = h->get_param(P_FROM, 0.f);
     float tot = h->get_param(P_TO, 1.f);
     float loops = h->get_param(P_LOOPS, 0.f);
     float loope = h->get_param(P_LOOPE, 0.f);
     int nsamps = w->num_frames * abs(tot-fromt);
     if (nsamps<=0) {if (at_end) *at_end = true; return {0.f, 0.f};}
+    loops *= nsamps;
+    loope *= nsamps;
+            
     int firstsamp = w->num_frames * (min(fromt, tot));
+    int numatend = 0;
+    stereo au = {0.f, 0.f};
+    float grainphase_cos = -1.f, grainphase_sin = 0.f;
+    if (numgrainheads > 1) {
+        grainphase_cos = cosf(v->grainphase);
+        grainphase_sin = sinf(v->grainphase);
+        v->grainphase += G->dt*(16.f*TAU*2.f/3.f) / max(1e-7f, h->get_param(P_GRAIN_SIZE, 1.f));
+    }
+    for (int h = 0; h < numgrainheads; h++) {
+        float grain_level = grainphase_cos; // temporarily back this up....
+        const static float c120 =  -0.5f, s120 = SQRT3 * 0.5f;
+        // rotate the grainphase by 120 degrees
+        grainphase_cos = grainphase_cos * c120 - grainphase_sin * s120;
+        grainphase_sin = grainphase_sin * c120 + grain_level * s120;
+        // set the grain level
+        grain_level =0.33333f - grain_level * 0.33333f;
+        double pos = v->grainheads[h] * posmul;
+        v->grainheads[h] += v->dphase;
+        if (loops < loope && pos > loops) {
+            pos = fmodf(pos - loops, loope - loops) + loops;
+            v->grainheads[h] = pos / posmul;
+        } else if (pos >= nsamps) {
+            numatend++;
+            continue;
+        }
+        if (fromt>tot) pos=nsamps-pos;
+        int i = (int)floorf(pos);
+        float t = pos - (float)i;
+        i+=firstsamp;
+        i %= w->num_frames;
+        if (i<0) i+=w->num_frames;
+        bool wrap = (i==w->num_frames-1);
+        if (w->channels>1) {
+            i*=w->channels;
+            stereo s0 = stereo{w->frames[i + 0], w->frames[i + 1]};
+            i=wrap ? i : i+w->channels;
+            stereo s1 = stereo{w->frames[i + 0], w->frames[i + 1]};
+            au += (s0 + (s1 - s0) * t) * grain_level;
+        } else {
+            float s0 = w->frames[i + 0];
+            i=wrap ? i : i+1;
+            float s1 = w->frames[i + 0];
+            s0 += (s1-s0)*t;
+            s0 *= grain_level;
+            au += stereo{s0,s0};
+        }
+    }
+    if (at_end) *at_end = numatend == numgrainheads;
+    v->phase+=v->dphase * stretch;
+    double pos = v->phase * posmul;
     if (loops < loope && pos > loops) {
-        loops *= nsamps;
-        loope *= nsamps;
         pos = fmodf(pos - loops, loope - loops) + loops;
-        v->phase = pos * SAMPLE_RATE / w->sample_rate;
-    } else if (pos >= nsamps) {
-        if (at_end) *at_end = true;
-        return {0.f, 0.f};
+        v->phase = pos / posmul;
     }
-    if (fromt>tot) pos=nsamps-pos;
-    int i = (int)floorf(pos);
-    float t = pos - (float)i;
-    i+=firstsamp;
-    i %= w->num_frames;
-    if (i<0) i+=w->num_frames;
-    bool wrap = (i==w->num_frames-1);
-    if (w->channels>1) {
-        i*=w->channels;
-        stereo s0 = stereo{w->frames[i + 0], w->frames[i + 1]};
-        i=wrap ? i : i+w->channels;
-        stereo s1 = stereo{w->frames[i + 0], w->frames[i + 1]};
-        return s0 + (s1 - s0) * t;
-    } else {
-        float s0 = w->frames[i + 0];
-        i=wrap ? i : i+1;
-        float s1 = w->frames[i + 0];
-        s0 += (s1-s0)*t;
-        return stereo{s0,s0};
+
+
+    if (numgrainheads > 1) {
+        if (v->grainphase > TAU/3.f) {
+            v->grainphase -= TAU/3.f;
+            float jitter = nsamps * h->get_param(P_JITTER, 0.f);
+            v->grainheads[2] = v->grainheads[1];
+            v->grainheads[1] = v->grainheads[0];
+            v->grainheads[0] = v->phase + rnd01()*jitter;
+        }
     }
+    return au;
 }
 
 
@@ -308,7 +354,7 @@ stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
 static inline stereo sample_saw(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
     // nb we DONT retrig the phase, and let the oscillator freerun to prevent clicks.
     double phase = v->phase * P_C3;
-    //v->phase = phase / P_C3;
+    v->phase += v->dphase;
     float wavetable_number = h->get_param(P_NUMBER, 0.f);
     return mono2st(shapeo(phase, v->dphase * P_C3, wavetable_number));
 }
@@ -329,6 +375,7 @@ static inline stereo sample_supersaw(voice_state_t *v, hap_t *h, wave_t *w, bool
     float s4 = shapeo(v->phase * _F4, v->dphase * _F4, wavetable_number);
     float l = s0 * 0.5 + s1 * 0.4 + s2 * 0.6 + s3 * 0.7 + s4 * 0.3;
     float r = s0 * 0.5 + s1 * 0.6 + s2 * 0.4 + s3 * 0.3 + s4 * 0.7;
+    v->phase += v->dphase;
     return stereo{l, r};
 }
 

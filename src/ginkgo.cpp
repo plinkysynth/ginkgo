@@ -2276,6 +2276,7 @@ int main(int argc, char **argv) {
 
     char original_dir[1024];
     getcwd(original_dir, sizeof(original_dir));
+    /*
     // if theres a livesrc/ in the current folder, use that.
     bool use_current_dir_for_user_files = false;
     struct stat st;
@@ -2283,7 +2284,11 @@ int main(int argc, char **argv) {
         printf(COLOR_YELLOW "using current directory for user files\n" COLOR_RESET);
         use_current_dir_for_user_files = true;
     }
-    chdir_to_bundle_resources();
+    chdir_to_bundle_resources();*/
+
+    bool use_current_dir_for_user_files = true;
+
+
     // set up settings and cache folder
     const char *home = getenv("HOME");
     if (!home) home=".";

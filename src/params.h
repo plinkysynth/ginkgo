@@ -1,9 +1,9 @@
 // enum, shortname, default, operator precedence
 // the first 3 must be number, note, sound to match the value type enum
-X(P_NUMBER, ":",0, 5000) // a number not yet assigned a meaning :)
-X(P_NOTE, "note", C3, 5000)
-X(P_SOUND,"s", 0, 5000) // an index into the sound map
-X(P_GATE, "^", 0.75f, 5000)
+X(P_NUMBER, ":",0, 150) // a number not yet assigned a meaning :)
+X(P_NOTE, "note", C3, 150)
+X(P_SOUND,"s", 0, 150) // an index into the sound map
+X(P_GATE, "^", 0.75f, 150)
 X(P_CUTOFF, "cut", 24000.f, 5)
 X(P_RESONANCE, "res", 0, 5)
 X(P_ENV2VCF, "env2vcf", 0, 5)
@@ -33,6 +33,7 @@ X(P_GLIDE, "glide", 0.f, 5)
 X(P_STRING, "string", 0.f, 5)
 X(P_HPF, "hpf", 0, 5)
 X(P_TIMESTRETCH, "stretch", 1.f, 5)
+X(P_GRAIN_SIZE, "grain", 1, 5)
 X(P_JITTER, "jitter", 0, 5)
 X(P_SCALEBITS, "scale", 0.f, 5)
 #undef X

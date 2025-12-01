@@ -2199,10 +2199,19 @@ int code_color(EditorState *E, uint32_t *ptr) {
     return E->num_lines;
 }
 
+bool is_absolute_path(const char *path) {
+    return path[0] == '/';
+}
+
+
+extern char livesrc_path[1024];
 void load_file_into_editor(EditorState *E) {
     if (E->font_width <= 0 || E->font_height <= 0) {
         E->font_width = 12;
         E->font_height = 24;
+    }
+    if (!is_absolute_path(E->fname)) {
+        E->fname = stbstring_printf("%s/%s", livesrc_path, E->fname);
     }
     stbds_arrfree(E->str);
     stbds_arrfree(E->new_idx_to_old_idx);

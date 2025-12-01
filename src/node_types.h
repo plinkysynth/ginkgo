@@ -42,6 +42,8 @@ OP(N_OP_DEGRADE, "?", 0, 1, 200)
 OP(N_OP_TIMES, "*", 1, 0, 200)
 OP(N_OP_DIVIDE, "/", 1, 0, 200)
 
+// : ^ note s from params.h fall at 150 here.
+
 OP(N_OP_ROUND, "round", 0, 0, 100)
 OP(N_OP_FLOOR, "floor", 0, 0, 100)
 OP(N_OP_RANGE, "range", 2, 0, 100)

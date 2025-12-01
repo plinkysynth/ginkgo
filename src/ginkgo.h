@@ -352,15 +352,15 @@ struct plinkyverb_t {
     float filter_state[16];
     float reverbbuf[RVMASK+1];
     int reverb_pos;
-    int shimmerpos1 = 2000;
-    int shimmerpos2 = 1000;
-    int shimmerfade = 0;
-    int dshimmerfade = 32768 / 4096;
-    lfo_t aplfo = {1.f, 0.f};
-    lfo_t aplfo2 = {1.f, 0.f};
-    float fb1 = 0;
-    float lpf = 0.f, dc = 0.f;
-    float lpf2 = 0.f;
+    int shimmerpos1;
+    int shimmerpos2;
+    int shimmerfade;
+    int dshimmerfade;
+    lfo_t aplfo;
+    lfo_t aplfo2;
+    float fb1;
+    float lpf, dc;
+    float lpf2;
 
     stereo operator()(stereo inp);
     stereo _run_internal(stereo inp);
@@ -578,8 +578,11 @@ typedef struct voice_state_t {
     filter_t hpf;
     double phase;
     double dphase;
+    double grainheads[3];
+    float grainphase;
     float vibphase;
     float tremphase;
+    float cur_power;
     EInUse in_use;
     stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w);
 } voice_state_t;
@@ -629,25 +632,33 @@ static inline wave_t *get_wave(Sound *sound, int index, float *note= NULL) {
     int n = stbds_arrlen(sound->wave_indices);
     if (!n)
         return NULL;
-    if (note && sound->midi_notes && index==0) {
-        int inote = (int)*note;
-        int_pair_t pair = {.k = inote, .v = index};
-        int nmn = stbds_arrlen(sound->midi_notes);
-        //int insert_min = lower_bound_int_pair(sound->midi_notes, nmn, pair);
-        int from = 0;//max(0, insert_min - 1);
-        int to = nmn;//min(nmn, insert_min + 1);
-        int closest_dist = 1000;
-        int closest_note = inote;
-        for (int j = from; j < to; j++) {
-            int dist = abs(sound->midi_notes[j].k - inote);
-            if (dist < closest_dist) {
-                closest_dist = dist;
-                closest_note = sound->midi_notes[j].k;
-                index = sound->midi_notes[j].v;
+    if (note) {
+        if (sound->midi_notes && index==0) {
+            int inote = (int)*note;
+            int_pair_t pair = {.k = inote, .v = index};
+            int nmn = stbds_arrlen(sound->midi_notes);
+            //int insert_min = lower_bound_int_pair(sound->midi_notes, nmn, pair);
+            int from = 0;//max(0, insert_min - 1);
+            int to = nmn;//min(nmn, insert_min + 1);
+            int closest_dist = 1000;
+            int closest_note = inote;
+            for (int j = from; j < to; j++) {
+                int dist = abs(sound->midi_notes[j].k - inote);
+                if (dist < closest_dist) {
+                    closest_dist = dist;
+                    closest_note = sound->midi_notes[j].k;
+                    index = sound->midi_notes[j].v;
+                }
             }
-        }
-        if (closest_note < 1000) {
-            *note -= closest_note-C3;
+            if (closest_note < 1000) {
+                *note -= closest_note-C3;
+            }
+        } else {
+            // they've specified a specific wave index, but it has a base note.
+            index %= n;
+            wave_t *w = &G->waves[sound->wave_indices[index]];
+            if (w->midi_note>0)
+                *note -= w->midi_note - C3;
         }
     }
     index %= n;
@@ -919,6 +930,7 @@ typedef struct synth_t {
     const static int max_voices = 16;
     stereo audio[96];
     voice_state_t voices[max_voices]; // one voice per voice.
+    int num_in_use;
     stereo operator()(const char *pattern_name, float level=1.f, int max_voices = 16);
 } synth_t;
 

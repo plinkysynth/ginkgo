@@ -37,7 +37,7 @@ PLIST_SRC := assets/Info.plist
 PLIST_DST := $(APP_BUNDLE)/Contents/Info.plist
 
 # make the default 'all' also produce the .app bundle on macOS
-all: $(APP_BUNDLE)
+# all: $(APP_BUNDLE)
 
 else ifeq ($(UNAME_S),Linux)
 #################################### LINUX ####################################
@@ -59,8 +59,8 @@ $(error Unsupported platform)
 endif
 
 # per-config bits
-CXXFLAGS_debug  = -O0 # -fsanitize=address
-LDFLAGS_debug   = # -fsanitize=address
+CXXFLAGS_debug  = -O0 #-fsanitize=address
+LDFLAGS_debug   = #-fsanitize=address
 CXXFLAGS_release = -O3
 LDFLAGS_release  =
 

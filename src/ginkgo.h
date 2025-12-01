@@ -479,6 +479,7 @@ typedef struct hap_t {
     hap_time t0, t1; 
     float params[P_LAST];
     inline float get_param(int param, float default_value) const { return valid_params & (1ull << param) ? params[param] : default_value; } 
+    inline void set_param(int param, float value) { params[param] = value; valid_params |= 1ull << param; }
     bool has_param(int param) const { return valid_params & (1ull << param); }
 } hap_t;
 

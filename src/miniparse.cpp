@@ -749,21 +749,17 @@ static int parse_euclid(pattern_maker_t *p, int node) {
     if (euclid_node0 < 0)
         return -1;
     skipws(p);
-    if (!consume(p, ',')) {
-        error(p, "expected comma in euclid");
-        return -1;
-    }
     int euclid_node1 = parse_expr(p);
     if (euclid_node1 < 0)
         return -1;
     int euclid_node2 = -1;
     skipws(p);
-    if (consume(p, ',')) {
-        euclid_node2 = parse_expr(p);
-    }
     if (!consume(p, ')')) {
-        error(p, "expected closing bracket in euclid");
-        return -1;
+        euclid_node2 = parse_expr(p);
+        if (!consume(p, ')')) {
+            error(p, "expected closing bracket in euclid");
+            return -1;
+        }
     }
     int euclid_node = make_node(p, N_OP_EUCLID, node, -1, p->nodes[node].start, p->i);
     p->nodes[node].next_sib = euclid_node0;

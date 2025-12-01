@@ -34,6 +34,7 @@ void merge_hap(hap_t *dst, hap_t *src); // copy valid fields from src onto dst
 
 typedef struct hap_span_t {
     hap_t *s, *e;
+    inline int size() const { return (int)(e - s); }
     inline bool empty() const { return s >= e; }
     inline bool hasatleast(int i) const { return s + i < e; }
 } hap_span_t;
@@ -44,10 +45,6 @@ typedef struct bfs_node_t {
     uint16_t num_children;
     int32_t first_child; // index or -1
 } bfs_node_t;
-
-typedef int (*filter_cb_t)(int left_hap_idx, hap_t *left_hap, hap_t *right_hap, int new_hapid,
-                           hap_time when); // returns how many copies to make (0=filter...)
-typedef int (*value_cb_t)(int target_hap_idx, hap_t *target, hap_t **right_hap, size_t context, hap_time when); // return 1 if we want to keep the hap.
 
 typedef struct float_minmax_t {
     float mn, mx;
@@ -81,6 +78,9 @@ typedef struct shader_param_t {
         old_integrated_value = 0.f;
     }
 } shader_param_t;
+
+typedef void (*fn_cb_t)(int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps,
+                       int newid, size_t context, hap_time when);
 
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
@@ -144,11 +144,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
 
     float get_length(int nodeidx);
     void _filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_time tofs, hap_time when);
-    int _apply_values(hap_span_t &dst, int tmp_size, float viz_time, int structure_hap_idx, hap_t *structure_hap, int value_node_idx,
-                      filter_cb_t filter_cb, value_cb_t value_cb, size_t context, hap_time when, int num_rhs = 1,
-                      bool use_rolling_rhs = false);
-    void _apply_unary_op(hap_span_t &dst, int tmp_size, float viz_time, int first_child, hap_time when, int hapid,
-                         filter_cb_t filter_cb, value_cb_t value_cb, size_t context, int num_rhs = 1, bool use_rolling_rhs = false);
+    void _apply_fn(int nodeidx, int hapid, hap_span_t &dst, int tmp_size, float viz_time, size_t context, hap_time when, fn_cb_t fn);
     hap_span_t _make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time when, int hapid);
     float compute_blendnear_weights(bfs_node_t *n, float *weights);
     bool _append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid); // does random range

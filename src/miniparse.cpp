@@ -420,13 +420,17 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
     if (check >= e || (!isxdigit(*check) && *check != '.' && *check != 'x')) {
         return 0;
     }
-    char buf[e - s + 1];
-    memcpy(buf, s, e - s);
-    buf[e - s] = '\0';
+    const char *tentative_end = check;
+    while (tentative_end < e && (isxdigit(*tentative_end) || *tentative_end == 'x' || *tentative_end == '.'))
+        tentative_end++;
+    char buf[tentative_end - s + 1];
+    memcpy(buf, s, tentative_end - s);
+    buf[tentative_end - s] = '\0';
     char *endptr = 0;
     double d = 0;
-    char *bufe = buf + (e - s);
+    char *bufe = buf + (tentative_end - s);
     char *x = strchr(buf, 'x');
+    if (tentative_end == s+1) x=0;
     if (!x) {
         d = strtod(buf, &endptr);
     } else {
@@ -476,7 +480,7 @@ static inline EValueType parse_number_or_note_or_sound(const char *s, const char
     int sound_idx;
     if (e == s + 1 && (*s == '-' || *s == '~'))
         sound_idx = 0;
-    else if (e == s + 1 && (*s == 'X' || *s == 'x'))
+    else if (e == s + 1 && (*s == 'X' || *s == '*' || *s == '@' || *s == '#'))
         sound_idx = 1;
     else
         sound_idx = get_sound_index(temp_cstring_from_span(s, e));
@@ -836,8 +840,7 @@ static int parse_expr(pattern_maker_t *p, int caller_precedence) {
                     count++;
                 }
                 assert(count >= 2);
-                int elongate_node = make_node(p, N_OP_ELONGATE, node, -1, p->nodes[node].start, p->i);
-                p->nodes[elongate_node].max_value = count;
+                int elongate_node = make_node(p, N_OP_ELONGATE, node, -1, p->nodes[node].start, p->i, count, -1);
                 node = elongate_node;
                 break;
             }
@@ -964,8 +967,8 @@ void test_minipat(void) {
     // const char *s = "bd,bd,\n";
     // const char *s = "{a b c, d e}%4";
     //const char *s = "blendnear [/foo /bar]";
-    const char *s = "<c^'C  q   A  i D'>@1-2";
-    
+    //const char *s = "<c^'C  q   A  i D'>@1-2";
+    const char *s = "[bd _ bd@2]";
     //const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";

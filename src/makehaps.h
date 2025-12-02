@@ -206,6 +206,14 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
     }
 }
 
+void remove_invalid_haps(hap_t *from, hap_span_t &dst) {
+    while (dst.s > from && !dst.s[-1].valid_params) dst.s--;
+    for (hap_t *hap = from; hap < dst.s-1; ) {
+        if (hap->valid_params) { hap++; continue; }
+        *hap = *--dst.s;
+    }
+}
+
 void pattern_t::_apply_fn(int nodeidx, int hapid, hap_span_t &dst, int tmp_size, float viz_time, size_t context, hap_time when,
                           fn_cb_t fn) {
     if (nodeidx < 0)
@@ -240,7 +248,7 @@ void pattern_t::_apply_fn(int nodeidx, int hapid, hap_span_t &dst, int tmp_size,
     hap_spans[0].e = dst.s;
     // now run the function for each set of parameter haps
     for (int i = 0; i < maxhaps; ++i) {
-        int newid = i;
+        int newid = hapid;
         for (int j = 1; j < num_children; ++j)
             newid += haps[0] ? haps[0]->hapid : 0;
         newid = hash2_pcg(haps[0]->hapid, newid);
@@ -249,12 +257,7 @@ void pattern_t::_apply_fn(int nodeidx, int hapid, hap_span_t &dst, int tmp_size,
             if (haps[j] && ++haps[j] >= hap_spans[j].e)
                 haps[j] = hap_spans[j].s;
     }
-    // now remove any invalid haps
-    while (dst.s > hap_spans[0].s && !dst.s[-1].valid_params) dst.s--;
-    for (hap_t *hap = hap_spans[0].s; hap < dst.s-1; ) {
-        if (hap->valid_params) { hap++; continue; }
-        *hap = *--dst.s;
-    }
+    remove_invalid_haps(hap_spans[0].s, dst);
 }
 
 static inline int quantize_note_to_scale(int scalebits, int root, int note) {
@@ -882,7 +885,12 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         }
         break;
     }
-    case N_OP_MASK:
+    case N_OP_PLY:
+    case N_OP_STRUCT:
+    case N_OP_SEG:
+    case N_OP_MASK: {
+        // optimisation: if all right haps are inactive, we can just break.
+        /*
         _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
                   [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
                      size_t context, hap_time when) {
@@ -895,8 +903,44 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       float v = right_hap->params[P_NUMBER];
                       if (v <= 0.f)
                           target->valid_params = 0;
-                  });
-        break;
+                  });*/
+        hap_t tmp_mem[tmp_size];
+        hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
+        hap_span_t right_haps = _make_haps(tmp, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
+        int  num_active = 0;
+        int counts[right_haps.size()];
+        int i =0;
+        Sound *sound = get_sound("x");
+        for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++, i++) {
+            int count = right_hap->has_param(P_NUMBER) ? (int)right_hap->params[P_NUMBER] : (right_hap->valid_params & ((1<<P_NOTE) | (1<<P_SOUND))) ? 1 : 0;
+            num_active += count > 0;
+            counts[i] = count;
+            i++;
+        }
+        if (num_active <= 0)
+            break;
+        hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
+        hap_t *right_hap = right_haps.s;
+        i=0;
+        for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++, i++) {
+            int count = counts[i];
+            if (count <= 0) { left_hap->valid_params = 0; }
+            else if (n->type!=N_OP_MASK) {
+                hap_t *structure = n->type==N_OP_PLY ? left_hap : right_hap;
+                hap_time duration = structure->t1 - structure->t0;
+                if (duration > 0. && when >= structure->t0 && when < structure->t1) {
+                    duration /= count;
+                    int subsection = (when - structure->t0) / duration;
+                    left_hap->t0 = structure->t0 + subsection * duration;
+                    left_hap->t1 = left_hap->t0 + duration;
+                    left_hap->hapid = hash2_pcg(left_hap->hapid, right_hap->hapid + subsection);
+                }
+            }
+            if (++right_hap >= right_haps.e) right_hap = right_haps.s;
+        }
+        if (num_active < left_haps.size())
+            remove_invalid_haps(left_haps.s,dst);
+        break; }
     case N_OP_MUL:
         _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
                   [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,

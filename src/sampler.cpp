@@ -440,7 +440,6 @@ int init_sampler(bool eager) {
         }
 
     }
-
     return 0;
 }
 

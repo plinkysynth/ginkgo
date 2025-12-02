@@ -50,7 +50,6 @@ OP(N_OP_RANGE, "range", 2, 0, 100)
 OP(N_OP_RANGE2, "range2", 2, 0, 100)
 OP(N_OP_RIBBON, "rib", 1, 1, 100)
 
-
 OP(N_OP_NEVER, "never", 1, 0, 75)
 OP(N_OP_RARELY, "rarely", 1, 0, 75)
 OP(N_OP_SOMETIMES, "sometimes", 1, 0, 75)
@@ -72,6 +71,9 @@ OP(N_OP_POW, "pow", 1, 0, 11)
 OP(N_OP_EASE, "ease", 1, 0, 11)
 OP(N_OP_SMOOTH, "smooth", 1, 0, 11)
 OP(N_OP_MASK, "mask", 1, 0, 9)
+OP(N_OP_PLY, "ply", 1, 0, 9)
+OP(N_OP_STRUCT, "struct", 1, 0, 9)
+OP(N_OP_SEG, "seg", 1, 0, 9)
 OP(N_OP_ARP, "arp", 1, 0, 9)
 
 #define X(x, str, def, precedence, ...) OP(N_##x, str, 1, 0, precedence)

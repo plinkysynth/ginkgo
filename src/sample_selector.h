@@ -172,9 +172,10 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                 char buf[1024];
                 int n = snprintf(buf, sizeof(buf), "%s:%d from %0.5g to %0.5g", G->sounds[E->closest_sound_idx].value->name,
                                  E->closest_sound_number, fromt, tot);
-                stbds_arrdeln(E->str, start_idx, end_idx - start_idx);
-                stbds_arrinsn(E->str, start_idx, n);
-                memcpy(E->str + start_idx, buf, n);
+                // stbds_arrdeln(E->str, start_idx, end_idx - start_idx);
+                // stbds_arrinsn(E->str, start_idx, n);
+                // memcpy(E->str + start_idx, buf, n);
+                push_edit_op(E, start_idx, end_idx, buf, 0);
                 E->cursor_idx = start_idx + n;
                 E->select_idx = E->cursor_idx;
             }

@@ -11,12 +11,11 @@ enum {
 
 static const char btoa_tab[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$@";
 
-void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width, float softness=0.f, int character=0);
+void add_line(float p0x, float p0y, float p1x, float p1y, uint32_t col, float width, float softness = 0.f, int character = 0);
 
 int parse_midinote(const char *s, const char *e, const char **end, int allow_p_prefix);
 const char *print_midinote(int note);
 const char *spanstr(const char *s, const char *e, const char *substr);
-
 
 typedef struct edit_op_t {
     int remove_start;
@@ -67,19 +66,12 @@ enum {
     DRAG_TYPE_CC7 = 107,
 };
 
-enum {
-    TAB_SHADER = 0,
-    TAB_AUDIO = 1,
-    TAB_CANVAS = 2,
-    TAB_SAMPLES = 3,
-    TAB_LAST
-};
+enum { TAB_SHADER = 0, TAB_AUDIO = 1, TAB_CANVAS = 2, TAB_SAMPLES = 3, TAB_LAST };
 
 typedef struct stroke_t {
     float x, y, inner_rad, outer_rad;
     uint32_t col; // NOT premultiplied alpha
 } stroke_t;
-
 
 typedef struct EditorState {
     // all these arrays are stbds_arrs
@@ -225,7 +217,7 @@ int looks_like_slider_comment(const char *str, int n, int idx,
     if (idx >= n)
         return 0;
     int i = idx;
-    if (i>0 && str[i]=='/' && str[i-1]=='*')
+    if (i > 0 && str[i] == '/' && str[i - 1] == '*')
         i--;
     while (i >= 0 && i < n && str[i] != '/' && str[i] != '\n')
         i--;
@@ -306,16 +298,70 @@ edit_op_t apply_edit_op(EditorState *E, edit_op_t op, int update_cursor_idx) {
     return op;
 }
 
+bool try_to_merge_undo_op(edit_op_t &oldop, edit_op_t &newop) { // if newop can be merged into oldop, do it in place and return true
+    if (oldop.insert_str == NULL && newop.insert_str == NULL) {
+        if (newop.remove_start != oldop.remove_end)
+            return false;
+        // only do appending.
+        // printf("pure deletion! easy.\n");
+        oldop.remove_end += newop.remove_end - newop.remove_start;
+        return true;
+    }
+    int newop_len = newop.insert_str ? strlen(newop.insert_str) : 0;
+    int oldop_len = oldop.insert_str ? strlen(oldop.insert_str) : 0;
+    int midstart = oldop.remove_start;
+    int midend = midstart + oldop_len;
+    // pre merge undo_op: [st] remove 577-580 replace 2chars with 3
+    // pre merge undo_op: [str] remove 577-582 relpace same 3 chars with 5
+    if (newop.remove_start == midstart && newop.remove_start + newop_len == oldop.remove_end && newop_len > 1) {
+        // pure replacement! easy.
+        // printf("pure replacement.\n");
+        oldop.remove_end = newop.remove_end;
+        stbds_arrfree(newop.insert_str);
+        return true;
+    }
+    /*
+    pre merge undo_op: [ex] remove 450-450
+    pre merge undo_op: [l] remove 449-449
+    pre merge undo_op: [a] remove 448-448
+    */
+    if (newop.remove_start == newop.remove_end && oldop.remove_start == oldop.remove_end &&
+        newop.remove_start + newop_len == oldop.remove_start) {
+        // printf("pure addition");
+        char *newstr = NULL;
+        stbds_arrsetlen(newstr, newop_len + oldop_len + 1);
+        char *dst = newstr;
+        memcpy(dst, newop.insert_str, newop_len);
+        dst += newop_len;
+        memcpy(dst, oldop.insert_str, oldop_len);
+        dst += oldop_len;
+        *dst = '\0';
+        oldop.remove_start = oldop.remove_end = newop.remove_start;
+        stbds_arrfree(oldop.insert_str);
+        stbds_arrfree(newop.insert_str);
+        oldop.insert_str = newstr;
+        return true;
+    }
+
+    // too complicated to think about :)
+    return false;
+}
+
 void push_edit_op(EditorState *E, int remove_start, int remove_end, const char *insert_str, int update_cursor_idx) {
     edit_op_t op = {min(remove_start, remove_end), max(remove_start, remove_end), (char *)insert_str};
     edit_op_t undo_op = apply_edit_op(E, op, update_cursor_idx);
-    // delete any undo state after the current point...
+    // printf("pre merge undo_op: [%s] remove %d-%d\n", undo_op.insert_str, undo_op.remove_start, undo_op.remove_end);
+    //  delete any undo state after the current point...
     int num_undos = stbds_arrlen(E->edit_ops);
+    if (num_undos > 0 && try_to_merge_undo_op(E->edit_ops[E->undo_idx - 1], undo_op)) {
+        undo_op = E->edit_ops[E->undo_idx - 1];
+        // printf("merged undo_op: [%s] remove %d-%d\n", undo_op.insert_str, undo_op.remove_start, undo_op.remove_end);
+        return;
+    }
     for (int i = E->undo_idx; i < num_undos; i++) {
         stbds_arrfree(E->edit_ops[i].insert_str);
     }
     // ...and add this op as the last one in the stack. unless we can merge it
-    // TODO undo merging
     stbds_arrsetlen(E->edit_ops, E->undo_idx + 1);
     E->edit_ops[E->undo_idx++] = undo_op;
 }
@@ -548,16 +594,7 @@ void editor_click(GLFWwindow *win, EditorState *E, song_base_t *G, float x, floa
                             while (end > buf && end[-1] == '0')
                                 --end;
                         *end = 0;
-                        // TODO : undo merging. for now, just poke the text in directly.
-                        stbds_arrdeln(E->str, slider_spec.value_start_idx, slider_spec.value_end_idx - slider_spec.value_start_idx);
-                        stbds_arrdeln(E->new_idx_to_old_idx, slider_spec.value_start_idx,
-                                      slider_spec.value_end_idx - slider_spec.value_start_idx);
-                        stbds_arrinsn(E->str, slider_spec.value_start_idx, strlen(buf));
-                        memcpy(E->str + slider_spec.value_start_idx, buf, strlen(buf));
-                        stbds_arrinsn(E->new_idx_to_old_idx, slider_spec.value_start_idx, strlen(buf));
-                        for (int i = slider_spec.value_start_idx; i < slider_spec.value_start_idx + strlen(buf); i++) {
-                            E->new_idx_to_old_idx[i] = -1;
-                        }
+                        push_edit_op(E, slider_spec.value_start_idx, slider_spec.value_end_idx, buf, 1);
                     }
                 }
                 if (is_drag < 0) {
@@ -614,7 +651,7 @@ void cancel_autocomplete(EditorState *E, bool completely_ban) {
     E->autocomplete_options = NULL;
     E->autocomplete_index = 0;
     E->autocomplete_scroll_y = 0;
-    if (completely_ban) 
+    if (completely_ban)
         E->autocomplete_show_after = G->iTime + 10000.f; // completely ban autocomplete if you press escape.
 }
 
@@ -627,19 +664,33 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     int ctrl = mods & GLFW_MOD_CONTROL;
     int super = mods & GLFW_MOD_SUPER;
     if (E->editor_type == TAB_CANVAS) {
-        if (super && (key&0xFFFF) == GLFW_KEY_Z) {
-            if (shift) canvas_redo(E); else canvas_undo(E);
+        if (super && (key & 0xFFFF) == GLFW_KEY_Z) {
+            if (shift)
+                canvas_redo(E);
+            else
+                canvas_undo(E);
             return;
-        } else if (super && (key&0xFFFF) == GLFW_KEY_Y) {
+        } else if (super && (key & 0xFFFF) == GLFW_KEY_Y) {
             canvas_redo(E);
             return;
         }
-        if (mods==0) {
-            if (key>='1' && key<='9') { E->cur_col_idx = key - '1'; return; }
-            if (key == '[') { E->cur_inner_rad /= 1.1; E->cur_outer_rad /= 1.1; }
-            if (key == ']') { E->cur_inner_rad *= 1.1; E->cur_outer_rad *= 1.1; }
-            if (key == '{') E->cur_inner_rad /= 1.1;
-            if (key == '}') E->cur_inner_rad *= 1.1;
+        if (mods == 0) {
+            if (key >= '1' && key <= '9') {
+                E->cur_col_idx = key - '1';
+                return;
+            }
+            if (key == '[') {
+                E->cur_inner_rad /= 1.1;
+                E->cur_outer_rad /= 1.1;
+            }
+            if (key == ']') {
+                E->cur_inner_rad *= 1.1;
+                E->cur_outer_rad *= 1.1;
+            }
+            if (key == '{')
+                E->cur_inner_rad /= 1.1;
+            if (key == '}')
+                E->cur_inner_rad *= 1.1;
         }
         return;
     }
@@ -667,39 +718,40 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
     if (super)
         switch (key & 0xFFFF) {
         case GLFW_KEY_UP:
-        case GLFW_KEY_DOWN: if (!shift) {
-            int word_start, word_end;
-            int n = stbds_arrlen(E->str);
-            find_word_at_idx(E, E->cursor_idx, &word_start, &word_end);
-            float number = 0.f;
-            int number_idx = 0;
-            const char *end = E->str + word_end;
-            int midinote = parse_midinote(E->str + word_start, E->str + word_end, &end, 0);
-            if (midinote >= 0 && end == E->str +word_end) {
-                midinote += (key & 0xffff) == GLFW_KEY_UP ? 1 : -1;
-                midinote = clamp(midinote, 0, 127);
-                const char *buf = print_midinote(midinote);
-                push_edit_op(E, word_start, word_end, buf, 0);
-                return;
-            } else if (try_parse_number(E->str, n, word_start, &number, &number_idx, 0.f)) {
-                while (word_end > word_start && !ispartofnumber(E->str[word_end - 1]))
-                    word_end--;
-                // count decimal places
-                int dp = -1;
-                for (int i = word_start; i < word_end; i++)
-                    if (E->str[i] == '.')
-                        dp = i;
-                int numdp = (dp < 0) ? 0 : max(1, word_end - dp - 1);
-                number += powf(10.f, -numdp) * ((key & 0xffff) == GLFW_KEY_UP ? 1.f : -1.f);
-                char buf[32];
-                char fmt[32];
-                snprintf(fmt, sizeof(fmt), "%%0.%df", numdp);
-                snprintf(buf, sizeof(buf), fmt, number);
-                push_edit_op(E, word_start, word_end, buf, 0);
-                return;
+        case GLFW_KEY_DOWN:
+            if (!shift) {
+                int word_start, word_end;
+                int n = stbds_arrlen(E->str);
+                find_word_at_idx(E, E->cursor_idx, &word_start, &word_end);
+                float number = 0.f;
+                int number_idx = 0;
+                const char *end = E->str + word_end;
+                int midinote = parse_midinote(E->str + word_start, E->str + word_end, &end, 0);
+                if (midinote >= 0 && end == E->str + word_end) {
+                    midinote += (key & 0xffff) == GLFW_KEY_UP ? 1 : -1;
+                    midinote = clamp(midinote, 0, 127);
+                    const char *buf = print_midinote(midinote);
+                    push_edit_op(E, word_start, word_end, buf, 0);
+                    return;
+                } else if (try_parse_number(E->str, n, word_start, &number, &number_idx, 0.f)) {
+                    while (word_end > word_start && !ispartofnumber(E->str[word_end - 1]))
+                        word_end--;
+                    // count decimal places
+                    int dp = -1;
+                    for (int i = word_start; i < word_end; i++)
+                        if (E->str[i] == '.')
+                            dp = i;
+                    int numdp = (dp < 0) ? 0 : max(1, word_end - dp - 1);
+                    number += powf(10.f, -numdp) * ((key & 0xffff) == GLFW_KEY_UP ? 1.f : -1.f);
+                    char buf[32];
+                    char fmt[32];
+                    snprintf(fmt, sizeof(fmt), "%%0.%df", numdp);
+                    snprintf(buf, sizeof(buf), fmt, number);
+                    push_edit_op(E, word_start, word_end, buf, 0);
+                    return;
+                }
             }
-        }
-        break;
+            break;
         case GLFW_KEY_MINUS:
             adjust_font_size(E, -1);
             break;
@@ -1100,7 +1152,8 @@ void set_status_bar(uint32_t color, const char *msg, ...) {
 void parse_error_log(EditorState *E) {
     hmfree(E->error_msgs);
     E->error_msgs = NULL;
-    if (!E->last_compile_log) return;
+    if (!E->last_compile_log)
+        return;
     int fnamelen = strlen(E->fname);
     for (const char *c = E->last_compile_log; *c; c++) {
         int col = 0, line = 0;
@@ -1783,33 +1836,33 @@ int code_color(EditorState *E, uint32_t *ptr) {
                         col = C_PREPROC;
                         break;
                     case HASH("white"):
-                    col = 0xfff00;
-                    break;
+                        col = 0xfff00;
+                        break;
                     case HASH("red"):
-                    col = 0xf0000;
-                    break;
+                        col = 0xf0000;
+                        break;
                     case HASH("yellow"):
                     case HASH("orange"):
-                    col = 0xfd000;
-                    break;
+                        col = 0xfd000;
+                        break;
                     case HASH("green"):
-                    col=0x0f000;
-                    break;
+                        col = 0x0f000;
+                        break;
                     case HASH("cyan"):
                     case HASH("teal"):
-                    col=0x0fd00;
-                    break;
+                        col = 0x0fd00;
+                        break;
                     case HASH("blue"):
-                    col=0x000f00;
-                    break;
+                        col = 0x000f00;
+                        break;
                     case HASH("pink"):
                     case HASH("purple"):
                     case HASH("maganta"):
-                    col=0xf0d00;
-                    break;
+                        col = 0xf0d00;
+                        break;
                     case HASH("black"):
-                    col=0x000000;
-                    break;
+                        col = 0x000000;
+                        break;
                     default:
                         if (pattern_mode) {
                             Sound *s = get_sound_span(t.str + i, t.str + j);
@@ -1950,9 +2003,10 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     if (pattern_mode && cur_pattern && cur_pattern_line == 0 && cur_pattern->colbitmask) {
                         t.x++;
                         for (int i = 0; i < 8; i++) {
-                            if (cur_pattern->colbitmask & (1 << i) && t.x>=0 && t.x<TMW && t.y>=0 && t.y<TMH) {
-                                const uint32_t cols_bars[8] = { 0x444fff00, 0x400f0000, 0x430fd000, 0x0400f000, 0x0430fd00, 0x00400f00, 0x403f0d00, 0x11100000 };
-                                int lvl = clamp((int)(cur_pattern->get_color_output(i)*16.f+0.5f), 0, 15);
+                            if (cur_pattern->colbitmask & (1 << i) && t.x >= 0 && t.x < TMW && t.y >= 0 && t.y < TMH) {
+                                const uint32_t cols_bars[8] = {0x444fff00, 0x400f0000, 0x430fd000, 0x0400f000,
+                                                               0x0430fd00, 0x00400f00, 0x403f0d00, 0x11100000};
+                                int lvl = clamp((int)(cur_pattern->get_color_output(i) * 16.f + 0.5f), 0, 15);
                                 t.ptr[t.y * TMW + t.x] = cols_bars[i] | vertical_bar(lvl);
                                 t.x++;
                             }
@@ -2081,7 +2135,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 int avoid_y = y;
                 int unscrolled_besti = stbds_hmgeti(E->autocomplete_options, bestoption);
                 int besti = unscrolled_besti + E->autocomplete_scroll_y;
-                if (besti >= numchoices || besti<0)
+                if (besti >= numchoices || besti < 0)
                     cancel_autocomplete(E, true);
                 else {
                     E->autocomplete_scroll_y = besti - unscrolled_besti;
@@ -2149,19 +2203,23 @@ int code_color(EditorState *E, uint32_t *ptr) {
             float value = ((y2 - G->my) / E->font_height) * 16.f;
             value = clamp(value, 0.f, 64.f);
             if (mx >= 0 && mx < datalen) {
-                // TODO: edit op
-                char *ch = &E->str[cursor_in_curve_start_idx + mx];
+                // char *ch = &E->str[cursor_in_curve_start_idx + mx];
+                char buf[datalen + 1];
+                buf[datalen] = 0;
+                memcpy(buf, E->str + cursor_in_curve_start_idx, datalen);
                 if (mouse_click_down)
-                    E->mouse_click_original_char = *ch;
+                    E->mouse_click_original_char = buf[mx];
                 if (E->mouse_clicked_chart && E->mouse_click_original_char != ' ' && E->mouse_click_original_char_x == mx)
-                    *ch = ' ';
+                    buf[mx] = ' ';
                 else {
-                    if (*ch == ' ' && mx != E->mouse_click_original_char_x && E->mouse_click_original_char != ' ') {
-                        E->str[cursor_in_curve_start_idx + E->mouse_click_original_char_x] = ' ';
+                    if (buf[mx] == ' ' && mx != E->mouse_click_original_char_x && /*E->mouse_click_original_char != ' ' &&*/
+                        E->mouse_click_original_char_x < datalen) {
+                        buf[E->mouse_click_original_char_x] = ' ';
                         E->mouse_click_original_char_x = mx;
                     }
-                    *ch = btoa_tab[(int)value];
+                    buf[mx] = btoa_tab[(int)value];
                 }
+                push_edit_op(E, cursor_in_curve_start_idx, cursor_in_curve_start_idx + datalen, buf, 0);
                 E->cursor_idx = cursor_in_curve_start_idx + mx;
                 E->select_idx = E->cursor_idx;
             }
@@ -2199,10 +2257,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     return E->num_lines;
 }
 
-bool is_absolute_path(const char *path) {
-    return path[0] == '/';
-}
-
+bool is_absolute_path(const char *path) { return path[0] == '/'; }
 
 extern char livesrc_path[1024];
 void load_file_into_editor(EditorState *E) {

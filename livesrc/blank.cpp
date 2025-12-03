@@ -1,14 +1,15 @@
 
 #ifdef PATTERNS
 
-/pattern <<a1,c2,e2,a0,c4 f1,c2,a2,f0,a3 b0,a1,f2,f3 e1,b1,e3> add 1> / 2 
+/pattern <<a1,c2,e2,a0,c4 f1,c2,a2,f0,a3 b0,a1,f2,f3 e1,b1,e3> add 1 pan rand> / 2 
 : sqrpad:2 stretch 0.1 jitter 0.5 grain 2 gain 1 rel 0.7 att 0.7,
- 	<a1 f1 f1 e1>/2 :-1  att 0.5 rel 0.5 gain 0.7
+ 	<a1 f1 f1 e1>/2 :-1  att 0.5 rel 0.5 gain 0.7 
 
 /piano [[a3-a6 * 8]? rib 3 2] : <aminPent fmajPent fmajPent gmajPent>/2 : pianosg4 gain 4 
-/drums <br160:10>/4 fit
+// /drums <br160:10>/4 fit
 ///pattern <<c e a2 g2> struct [X X X _]*4> ^ [1 0.6]*8 clip sin/4 range 0.1 0.6 
 ///pattern [bd bd bd @2]*4
+
 /bpm 140
 #endif
 

@@ -264,10 +264,19 @@ typedef stereo sample_func_t(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end
 
 void register_osc(const char *name, sample_func_t *func);
 
+//#define FLUX 
+#ifdef FLUX
+#define FLUX_HOP_LENGTH 128
+#endif 
+
 typedef struct wave_t {
     const char *key; // interned url
     float *frames;   // malloc'd
     sample_func_t *sample_func;
+#ifdef FLUX
+    float *flux; // one flux value per FLUX_HOP_LENGTH frames
+    float *invflux; // inverse cdf of flux
+#endif
     uint64_t num_frames;
     float sample_rate;
     uint32_t channels;

@@ -701,6 +701,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             float sustain = square(h->get_param(P_SUS, 1.f));
             float attack_k = env_k(h->get_param(P_ATT, 0.f));
             float decay_k = env_k(h->get_param(P_DEC, 0.3f));
+            //float release_k = env_k(h->get_param(P_REL, 0.f));
             float release = (h->get_param(P_REL, -1.f));
             float release_k;
             if (release >= 0.f) {
@@ -715,6 +716,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                     release_k = 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.
                 }
             }
+
             float sustain2 = square(h->get_param(P_SUS2, 1.f));
             float attack2_k = env_k(h->get_param(P_ATT2, 0.f));
             float decay2_k = env_k(h->get_param(P_DEC2, 0.3f));

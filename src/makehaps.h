@@ -207,9 +207,13 @@ void pattern_t::_filter_haps(hap_span_t left_haps, hap_time speed_scale, hap_tim
 }
 
 void remove_invalid_haps(hap_t *from, hap_span_t &dst) {
-    while (dst.s > from && !dst.s[-1].valid_params) dst.s--;
-    for (hap_t *hap = from; hap < dst.s-1; ) {
-        if (hap->valid_params) { hap++; continue; }
+    while (dst.s > from && !dst.s[-1].valid_params)
+        dst.s--;
+    for (hap_t *hap = from; hap < dst.s - 1;) {
+        if (hap->valid_params) {
+            hap++;
+            continue;
+        }
         *hap = *--dst.s;
     }
 }
@@ -232,7 +236,8 @@ void pattern_t::_apply_fn(int nodeidx, int hapid, hap_span_t &dst, int tmp_size,
         haps[i] = hap_spans[i].s;
         maxhaps = max(maxhaps, hap_spans[i].size());
         if (hap_spans[i].empty()) {
-            if (!i) return; // oh dear! no structure haps.
+            if (!i)
+                return; // oh dear! no structure haps.
             hap_spans[i] = {};
         }
     }
@@ -907,12 +912,14 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         hap_t tmp_mem[tmp_size];
         hap_span_t tmp = {tmp_mem, tmp_mem + tmp_size};
         hap_span_t right_haps = _make_haps(tmp, tmp_size, viz_time, n->first_child + 1, when, hash2_pcg(hapid, n->first_child + 1));
-        int  num_active = 0;
+        int num_active = 0;
         int counts[right_haps.size()];
-        int i =0;
+        int i = 0;
         Sound *sound = get_sound("x");
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++, i++) {
-            int count = right_hap->has_param(P_NUMBER) ? (int)right_hap->params[P_NUMBER] : (right_hap->valid_params & ((1<<P_NOTE) | (1<<P_SOUND))) ? 1 : 0;
+            int count = right_hap->has_param(P_NUMBER)                                 ? (int)right_hap->params[P_NUMBER]
+                        : (right_hap->valid_params & ((1 << P_NOTE) | (1 << P_SOUND))) ? 1
+                                                                                       : 0;
             num_active += count > 0;
             counts[i] = count;
             i++;
@@ -921,12 +928,13 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             break;
         hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
         hap_t *right_hap = right_haps.s;
-        i=0;
+        i = 0;
         for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++, i++) {
             int count = counts[i];
-            if (count <= 0) { left_hap->valid_params = 0; }
-            else if (n->type!=N_OP_MASK) {
-                hap_t *structure = n->type==N_OP_PLY ? left_hap : right_hap;
+            if (count <= 0) {
+                left_hap->valid_params = 0;
+            } else if (n->type != N_OP_MASK) {
+                hap_t *structure = n->type == N_OP_PLY ? left_hap : right_hap;
                 hap_time duration = structure->t1 - structure->t0;
                 if (duration > 0. && when >= structure->t0 && when < structure->t1) {
                     duration /= count;
@@ -936,11 +944,13 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                     left_hap->hapid = hash2_pcg(left_hap->hapid, right_hap->hapid + subsection);
                 }
             }
-            if (++right_hap >= right_haps.e) right_hap = right_haps.s;
+            if (++right_hap >= right_haps.e)
+                right_hap = right_haps.s;
         }
         if (num_active < left_haps.size())
-            remove_invalid_haps(left_haps.s,dst);
-        break; }
+            remove_invalid_haps(left_haps.s, dst);
+        break;
+    }
     case N_OP_MUL:
         _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
                   [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
@@ -1043,7 +1053,19 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         } else
             _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, param, when, apply_value_func);
         break;
-
+    case N_OP_FROMFLUX:
+    case N_OP_TOFLUX:
+        _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
+                  [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
+                     size_t context, hap_time when) {
+                      if (num_src_haps < 1)
+                          return;
+                      hap_t *target = srchaps[0];
+                      float from = srchaps[1]->get_param(P_NUMBER, 0.f);
+                      target->set_param((context == N_OP_FROMFLUX) ? P_FROM : P_TO,
+                                        -10.f + frac(from)); // by convention (lol), if from is -10 to -9, we look up in the cdf
+                  });
+        break;
     case N_OP_CLIP:
         _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
                   [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
@@ -1060,17 +1082,19 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                   });
         break;
     case N_OP_DEGRADE: {
-        _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when, [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid, size_t context, hap_time when) {
-            hap_t *target = srchaps[0];
-            hap_t *right_hap = (num_src_haps>1) ? srchaps[1] : nullptr;
-            float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
-            if (value <= 0.f)
-                return;
-            if (value >= 1.f || ((pcg_mix(pcg_next(newid)) & 0xffffff) < (value * 0x1000000))) {
-                target->valid_params = 0;
-                return;
-            }
-        });
+        _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
+                  [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
+                     size_t context, hap_time when) {
+                      hap_t *target = srchaps[0];
+                      hap_t *right_hap = (num_src_haps > 1) ? srchaps[1] : nullptr;
+                      float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
+                      if (value <= 0.f)
+                          return;
+                      if (value >= 1.f || ((pcg_mix(pcg_next(newid)) & 0xffffff) < (value * 0x1000000))) {
+                          target->valid_params = 0;
+                          return;
+                      }
+                  });
         break;
     }
     case N_FASTCAT:
@@ -1159,43 +1183,51 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     case N_OP_ADSR2: {
         if (n->num_children < 2)
             break;
-        _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when, [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid, size_t context, hap_time when) {    
-            bool is_adsr2 = context == N_OP_ADSR2;
-            hap_t *target = srchaps[0];
-            hap_t *attack_hap = (num_src_haps>1) ? srchaps[1] : nullptr;
-            hap_t *decay_hap = (num_src_haps>2) ? srchaps[2] : nullptr;
-            hap_t *sustain_hap = (num_src_haps>3) ? srchaps[3] : nullptr;
-            hap_t *release_hap = (num_src_haps>4) ? srchaps[4] : nullptr;
-            if (attack_hap) target->set_param(is_adsr2 ? P_ATT2 : P_ATT, attack_hap->get_param(P_NUMBER, 0.5f));
-            if (decay_hap) target->set_param(is_adsr2 ? P_DEC2 : P_DEC, decay_hap->get_param(P_NUMBER, 0.5f));
-            if (sustain_hap) target->set_param(is_adsr2 ? P_SUS2 : P_SUS, sustain_hap->get_param(P_NUMBER, 0.5f));
-            if (release_hap) target->set_param(is_adsr2 ? P_REL2 : P_REL, release_hap->get_param(P_NUMBER, 0.5f));
-        });
+        _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
+                  [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
+                     size_t context, hap_time when) {
+                      bool is_adsr2 = context == N_OP_ADSR2;
+                      hap_t *target = srchaps[0];
+                      hap_t *attack_hap = (num_src_haps > 1) ? srchaps[1] : nullptr;
+                      hap_t *decay_hap = (num_src_haps > 2) ? srchaps[2] : nullptr;
+                      hap_t *sustain_hap = (num_src_haps > 3) ? srchaps[3] : nullptr;
+                      hap_t *release_hap = (num_src_haps > 4) ? srchaps[4] : nullptr;
+                      if (attack_hap)
+                          target->set_param(is_adsr2 ? P_ATT2 : P_ATT, attack_hap->get_param(P_NUMBER, 0.5f));
+                      if (decay_hap)
+                          target->set_param(is_adsr2 ? P_DEC2 : P_DEC, decay_hap->get_param(P_NUMBER, 0.5f));
+                      if (sustain_hap)
+                          target->set_param(is_adsr2 ? P_SUS2 : P_SUS, sustain_hap->get_param(P_NUMBER, 0.5f));
+                      if (release_hap)
+                          target->set_param(is_adsr2 ? P_REL2 : P_REL, release_hap->get_param(P_NUMBER, 0.5f));
+                  });
         break;
     }
     case N_OP_EUCLID: {
         if (n->num_children < 3)
             break;
-        _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when, [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid, size_t context, hap_time when) {
-            hap_t *target = srchaps[0];
-            hap_t *setsteps_hap = (num_src_haps>1) ? srchaps[1] : nullptr;
-            hap_t *numsteps_hap = (num_src_haps>2) ? srchaps[2] : nullptr;
-            hap_t *rot_hap = (num_src_haps>3) ? srchaps[3] : nullptr;
-            if (!setsteps_hap || !numsteps_hap)
-                return;
-            int set_steps = (int)setsteps_hap->get_param(P_NUMBER, 0.f);
-            int numsteps = (int)numsteps_hap->get_param(P_NUMBER, 0.f);
-            if (set_steps < 1 || numsteps < 1)
-                return;
-            int rot = rot_hap ? (int)rot_hap->get_param(P_NUMBER, 0.f) : 0;
-            hap_time child_when = when * numsteps;
-            int i = floor(child_when);
-            if (euclid_rhythm(i, set_steps, numsteps, rot)) {
-            target->t0 = i / (float)numsteps;
-            target->t1 = (i + 1) / (float)numsteps;
-            target->hapid = hash2_pcg(newid, i);
-            }
-        });
+        _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
+                  [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
+                     size_t context, hap_time when) {
+                      hap_t *target = srchaps[0];
+                      hap_t *setsteps_hap = (num_src_haps > 1) ? srchaps[1] : nullptr;
+                      hap_t *numsteps_hap = (num_src_haps > 2) ? srchaps[2] : nullptr;
+                      hap_t *rot_hap = (num_src_haps > 3) ? srchaps[3] : nullptr;
+                      if (!setsteps_hap || !numsteps_hap)
+                          return;
+                      int set_steps = (int)setsteps_hap->get_param(P_NUMBER, 0.f);
+                      int numsteps = (int)numsteps_hap->get_param(P_NUMBER, 0.f);
+                      if (set_steps < 1 || numsteps < 1)
+                          return;
+                      int rot = rot_hap ? (int)rot_hap->get_param(P_NUMBER, 0.f) : 0;
+                      hap_time child_when = when * numsteps;
+                      int i = floor(child_when);
+                      if (euclid_rhythm(i, set_steps, numsteps, rot)) {
+                          target->t0 = i / (float)numsteps;
+                          target->t1 = (i + 1) / (float)numsteps;
+                          target->hapid = hash2_pcg(newid, i);
+                      }
+                  });
     } // euclid
     break;
 

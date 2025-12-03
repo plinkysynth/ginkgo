@@ -289,9 +289,32 @@ void draw_umap(EditorState *E, uint32_t *ptr) {
                     mx = max(mx, v);
                 }
                 float ymid = G->fbh - 128.f;
+                #ifdef FLUX
+                int fluxidx = (int)(f * w->num_frames) / FLUX_HOP_LENGTH;
+                float flux = (w->flux && fluxidx < stbds_arrlen(w->flux)) ? w->flux[fluxidx] : 0.f;
+                int rr = int(clamp(flux * 1.5f, 0.f, 1.f)*255.f);
+                int gg = int(clamp(flux * flux * 1.2f, 0.f, 1.f)*255.f);
+                int bb = int(clamp(flux * flux * flux, 0.f, 1.f)*255.f);
+                int fluxcol = (bb << 16) | (gg << 8) | rr;
+                if (flux)
+                    add_line(x, ymid-128.f-flux*128.f, x, ymid-128.f, fluxcol, 2.f);
+                #endif
                 add_line(x, ymid + mn * 128.f, x, ymid + mx * 128.f, (f >= fromt && f < tot) ? e->col : 0x40404040, 2.f);
                 smp0 = smp1;
             }
+            /*
+            float prevx = 48.f;
+            int numflux = stbds_arrlen(w->flux);
+            if (numflux) {
+                for (int bin = 0; bin<256;++bin) {
+                    float x = w->invflux[bin];
+                    float newx = 48.f + (G->fbw - 96.f) * x;
+                    float y = G->fbh - 512.f - bin;
+                    add_line(prevx,y, newx, y, 0xffffffff, 4.f);
+                    prevx=newx;
+                }
+            }
+            */
         }
     }
     if (num_after_filtering == 1 &&

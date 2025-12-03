@@ -76,6 +76,9 @@ OP(N_OP_STRUCT, "struct", 1, 0, 9)
 OP(N_OP_SEG, "seg", 1, 0, 9)
 OP(N_OP_ARP, "arp", 1, 0, 9)
 
+OP(N_OP_FROMFLUX, "fromflux", 1, 0, 5)
+OP(N_OP_TOFLUX, "toflux", 1, 0, 5)
+
 #define X(x, str, def, precedence, ...) OP(N_##x, str, 1, 0, precedence)
 #include "params.h"
 

@@ -14,6 +14,7 @@
 #include "http_fetch.h"
 #include "json.h"
 #include <assert.h>
+#include "3rdparty/pffft.h"
 const char *trimurl(const char *url) {
     // shorten url for printing
     if (strncmp(url, "https://", 8) == 0)
@@ -24,6 +25,66 @@ const char *trimurl(const char *url) {
         url += 26;
     return url;
 }
+
+#ifdef FLUX
+void compute_flux(wave_t *out) {
+    #define FLUX_FFT_SIZE 512
+    static PFFFT_Setup *fft_setup = NULL;
+    static float flux_window[FLUX_FFT_SIZE];
+    if (!fft_setup) {
+        fft_setup = pffft_new_setup(FLUX_FFT_SIZE, PFFFT_REAL);
+        for (int i = 0; i < FLUX_FFT_SIZE; i++) 
+            flux_window[i] = 0.5f - 0.5f * cosf(TAU * (i+0.5f) / FLUX_FFT_SIZE);
+    }
+    float mags[2][FLUX_FFT_SIZE] = {0.f};
+    float emaflux = 0.f;
+    float peakflux = 1e-9f;
+    float cumflux = 1e-9f;
+    float *fluxes = NULL;
+    int numflux = (out->num_frames+FLUX_HOP_LENGTH-1)/FLUX_HOP_LENGTH;
+    stbds_arrsetlen(fluxes, numflux);
+    for (int i = 0; i < out->num_frames; i += FLUX_HOP_LENGTH) {
+        float inp[FLUX_FFT_SIZE*2] __attribute__((aligned(16)));
+        for (int j = 0; j < FLUX_FFT_SIZE; j++) {
+            if (i+j>=0 && i+j<out->num_frames) {
+                float mono = 0.f;
+                int idx = (i + j) * out->channels;
+
+                for (int k=0; k<out->channels; k++) {
+                    mono += out->frames[idx + k];
+                }
+                inp[j] = mono * flux_window[j];
+            } else inp[j] = 0.f;
+        }
+        pffft_transform(fft_setup, inp, inp, NULL, PFFFT_FORWARD);
+        int magidx = i&1;
+        float flux = 0.f;
+        for (int j=0; j<FLUX_FFT_SIZE/2; j++) {
+            mags[magidx][j] = logf((0.0001f + square(inp[j*2]) + square(inp[j*2+1])));/// * j; // scale by j for pink noise weighting
+            flux += max(0.f,mags[magidx][j] - mags[magidx^1][j]);
+        }
+        emaflux += (flux - emaflux) * (flux > emaflux ? 0.5f : 0.1f);
+        flux = max(0.f, flux - emaflux);
+        if (flux > peakflux) peakflux = flux;
+        assert(i/FLUX_HOP_LENGTH < numflux);
+        fluxes[i/FLUX_HOP_LENGTH] = flux;
+        cumflux += flux;
+    }
+    out->flux = fluxes;
+    // build an inverse cdf of the flux
+    float fluxsofar = 0.f;
+    int cdfidx = 0;
+    stbds_arrsetlen(out->invflux, 256);
+    for (int i =0 ; i<numflux; i++) {
+        fluxsofar += (fluxes[i] / cumflux) * 256.f;
+        while (cdfidx < 256 && fluxsofar >= cdfidx) 
+            out->invflux[cdfidx++] = (float)i / float(numflux);
+        fluxes[i] /= peakflux;
+    }
+    while (cdfidx < 256)
+        out->invflux[cdfidx++] = 1.f;
+}
+#endif
 
 bool decode_file_to_f32(const char *path, wave_t *out) {
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0); // keep source ch/sr
@@ -38,9 +99,14 @@ bool decode_file_to_f32(const char *path, wave_t *out) {
     out->sample_rate = cfg.sampleRate;
     out->channels = cfg.channels;
     out->frames = pcm;
-    const char *trimmed_path = strrchr(path, '/');
+    #ifdef FLUX
+    compute_flux(out);
+    #endif
+    //const char *trimmed_path = strrchr(path, '/');
     // printf("read %lld samples @ %dkhz %dchannels from " COLOR_YELLOW "%s" COLOR_RESET "\n", out->num_frames,
     //        (int)out->sample_rate / 1000, out->channels, trimmed_path ? trimmed_path + 1 : path);
+    
+    
     return true;
 }
 
@@ -273,6 +339,15 @@ stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
     double posmul = w->sample_rate / SAMPLE_RATE;
     float fromt = h->get_param(P_FROM, 0.f);
     float tot = h->get_param(P_TO, 1.f);
+    #ifdef FLUX
+    if (fromt >= -10.f && fromt < -9.f) 
+        fromt = w->invflux[(int)((fromt+10.f) * 255.f)];
+    if (tot >= -10.f && tot < -9.f) 
+        tot = w->invflux[(int)((tot+10.f) * 255.f)];
+    #else
+    if (fromt >= -10.f && fromt < -9.f) fromt = frac(fromt);
+    if (tot >= -10.f && tot < -9.f) tot = frac(tot);
+    #endif
     float loops = h->get_param(P_LOOPS, 0.f);
     float loope = h->get_param(P_LOOPE, 0.f);
     int nsamps = w->num_frames * abs(tot-fromt);

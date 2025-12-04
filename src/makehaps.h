@@ -424,6 +424,14 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     }
     case N_MIDI: {
+        if (dst.s < dst.e) {
+            // apppend a dummy hap
+            *dst.s++ = hap_t{
+                .hapid = hapid,
+                .node = nodeidx,
+                .valid_params = 0,
+            };
+        }
         break;
     }
     case N_SIN:
@@ -584,7 +592,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           pattern_t *pat = (pattern_t *)context;
                           hap_t *target = srchaps[0];
                           hap_t *right_hap = srchaps[1];
-                          if (!right_hap || !right_hap->valid_params)
+                          if (!right_hap)
                               return;
                           uint64_t right_params = right_hap->valid_params;
                           while (right_params) {
@@ -631,8 +639,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                                       target->params[P_GAIN] *= right_hap->params[P_GAIN];
                                   else
                                       target->params[param_idx] = right_hap->params[param_idx];
-                                  if (param_idx == P_SCALEBITS)
+                                  if (param_idx == P_SCALEBITS) {
                                       target->scale_bits = right_hap->scale_bits;
+                                      pat->last_scale_root = right_hap->params[P_SCALEBITS];
+                                      pat->last_scale_bits = right_hap->scale_bits;
+                                  }
                                   target->valid_params |= 1ull << param_idx;
                               }
                           }

@@ -10,7 +10,7 @@
 ///pattern <<c e a2 g2> struct [X X X _]*4> ^ [1 0.6]*8 clip sin/4 range 0.1 0.6 
 // /pattern [bd bd bd @2]*4
 
-// /pattern c4 : cmaj
+/pattern midi : amaj
 
 /bpm 140
 #endif

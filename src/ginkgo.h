@@ -414,13 +414,13 @@ struct env_follower_t {
     float lp;
     float y;
     int line;
-    float operator()(float x, float decay=0.2f, float attack = 0.f) {
+    float operator()(float x, float decay=0.1f, float attack = 0.05f) {
         lp += (fabsf(x)-lp)*0.01f;
         float d = lp-y;
         y += d * env_k((d>0.f) ? attack : decay);
         return x;
     }
-    stereo operator()(stereo x, float decay=0.2f, float attack = 0.f) {
+    stereo operator()(stereo x, float decay=0.1f, float attack = 0.05f) {
        operator()(max(fabsf(x.l), fabsf(x.r)), decay, attack);
        return x;
     }
@@ -438,6 +438,7 @@ typedef struct song_base_t {
     stereo preview; // the preview audio. will be mixed at the end, so the shader code can modify it as it wishes.
     int64_t t_q32; // the current musical time! as a 32.32 fixed point number
     uint8_t midi_cc[128];
+    uint8_t mutes; // 8 mutes to go with the 8 ccs
     //uint32_t midi_cc_gen[128];
     int cursor_x, cursor_y;
     float mx, my;
@@ -476,7 +477,7 @@ static inline void init_basic_state(void) {
 }
 
 
-#define cc(x) (G->midi_cc[16+((x)&7)]/127.f)
+#define cc(x) ((G->mutes & (1<<((x)&7))) ? 0.f : G->midi_cc[16+((x)&7)]/127.f)
 
 
 static inline float fold(float x) { // folds x when it goes beyond +-1

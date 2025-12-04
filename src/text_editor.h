@@ -1989,8 +1989,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     float lvl = G->vus[i].y;
                     if (line-1 == ysc) { 
                         float leftx = t.x + 1.f;
-                        float lvlx = saturate(1.f + lin2db(lvl) / 48.f) * 16.f + leftx;
-                        float threshx = saturate(1.f + lin2db(0.5f) / 48.f) * 16.f + leftx;
+                        float lvlx = saturate(1.f + lin2db(lvl) / 40.f) * 16.f + leftx;
+                        float threshx = saturate(1.f + lin2db(0.5f) / 40.f) * 16.f + leftx;
                         float maxx = leftx + 16.f;
                         float thick = E->font_height * 0.5f;
                         if (lvlx < threshx) {

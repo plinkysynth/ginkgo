@@ -453,8 +453,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         appended = _append_number_hap(dst, nodeidx, hapid, (pcg_mix(hash2_pcg(hapid, (int)floor(when))) & 0xffff) / 32768.f - 1.f);
         break;
     case N_CC: {
-        int cc = (int)(bfs_min_max_value[nodeidx].mx) & 15;
-        appended = _append_number_hap(dst, nodeidx, hapid, G->midi_cc[16 + cc] / 127.f);
+        int ccidx = (int)(bfs_min_max_value[nodeidx].mx) & 15;
+        appended = _append_number_hap(dst, nodeidx, hapid, cc(ccidx));
         break;
     }
     case N_RANDI: {

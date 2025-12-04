@@ -8,10 +8,11 @@ uint8_t mu8_connected = 0  ;
 uint8_t plinky12_leds[16][16] = {0};
 uint8_t plinky12_leds_sent[16][16] = {0};
 uint8_t plinky12_pressures[16][16] = {0};
+uint16_t plinky12_down[16] = {0}; // by COLUMN, ie index by x
 uint8_t hot_led = 0; // we slowly cycle through the leds and update at least this one per frame, in order to update a freshly rebooted device.
 float plinky12_scale_root = 0;
 uint32_t plinky12_scale_bits = 0;
-
+int plinky12_octave = 0;
 void on_midi_input(uint8_t data[3], void *user) {
     if (!G)
         return;
@@ -20,8 +21,40 @@ void on_midi_input(uint8_t data[3], void *user) {
     int type = data[0]>>4;
     //printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
     if (type==10 || type==9 || type==8) {
-        if (plinky12_connected && data[1]>=60 && data[1]<60+16) {
-            plinky12_pressures[data[1]-60][chan] = data[2];
+        int note = data[1]-60;
+        if (plinky12_connected && note>=0 && note<16) {
+            uint8_t old_pressure = plinky12_pressures[note][chan];
+            plinky12_pressures[note][chan] = data[2];
+            if (data[2]>0)
+                plinky12_down[chan] |= (1<<note);
+            else
+                plinky12_down[chan] &= ~(1<<note);
+            if (chan>=8 && note>8) {
+                // slider
+                int tot=0,ytot=0;
+                for (int y=0;y<7;y++) {
+                    int p = plinky12_pressures[15-y][chan];
+                    tot+=p; ytot+=y*p; 
+                }
+                if (tot > 48) {
+                    ytot=(ytot*127)/(tot*7);
+                    G->midi_cc[16 + note-8] = ytot;
+                }
+            }
+            if (!old_pressure && data[2]>0) {
+                if (chan==8 && note == 0 && plinky12_octave>0) {
+                    plinky12_octave--;
+                }
+                else if (chan==9 && note == 0 && plinky12_octave<3) {
+                    plinky12_octave++;
+                }
+                else if (chan==15 && note == 0) {
+                    G->playing = !G->playing;
+                }
+                else if (note>0 && note<=8 && chan>=8) {
+                    G->mutes ^= (1<<(chan-8));
+                }   
+            }
         }
     }
     if (data[0] == 0xb0 && cc < 128) {

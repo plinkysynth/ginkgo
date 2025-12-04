@@ -423,6 +423,9 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         appended = _append_number_hap(dst, nodeidx, hapid, c);
         break;
     }
+    case N_MIDI: {
+        break;
+    }
     case N_SIN:
         appended = _append_number_hap(dst, nodeidx, hapid, sinf(when * PI * 2) * 0.5f + 0.5f);
         break;
@@ -575,9 +578,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             if (n->num_children < 2)
                 break;
             // the : operator is quite flexible for applying scales to notes or numbers.
-            _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, P_NUMBER, when,
+            _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, (size_t)this, when,
                       [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps,
                          int newid, size_t context, hap_time when) {
+                          pattern_t *pat = (pattern_t *)context;
                           hap_t *target = srchaps[0];
                           hap_t *right_hap = srchaps[1];
                           if (!right_hap || !right_hap->valid_params)
@@ -593,6 +597,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                                   target->params[P_NOTE] = scale_index_to_note(target->scale_bits, target->params[P_SCALEBITS],
                                                                                (int)right_hap->params[P_NUMBER]);
                                   target->valid_params |= 1 << P_NOTE;
+                                  pat->last_scale_root = target->params[P_SCALEBITS];
+                                  pat->last_scale_bits = target->scale_bits;
                               } else if (param_idx == P_SCALEBITS && target->has_param(P_NUMBER) && !target->has_param(P_NOTE)) {
                                   // apply a scale to a number -> index scale into a note
                                   target->params[P_NOTE] = scale_index_to_note(
@@ -601,6 +607,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                                   target->valid_params &= ~(1ull << P_NUMBER);
                                   target->params[P_SCALEBITS] = right_hap->params[P_SCALEBITS];
                                   target->scale_bits = right_hap->scale_bits;
+                                  pat->last_scale_root = right_hap->params[P_SCALEBITS];
+                                  pat->last_scale_bits = right_hap->scale_bits;
                               } else if (param_idx == P_SCALEBITS && target->has_param(P_NOTE)) {
                                   // apply a scale to a note -> quantize to scale
                                   target->params[P_NOTE] = quantize_note_to_scale(
@@ -608,6 +616,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                                   target->valid_params |= (1ull << P_SCALEBITS);
                                   target->params[P_SCALEBITS] = right_hap->params[P_SCALEBITS];
                                   target->scale_bits = right_hap->scale_bits;
+                                  pat->last_scale_root = target->params[P_SCALEBITS];
+                                  pat->last_scale_bits = target->scale_bits;
+                              } else if (param_idx == P_NOTE && target->has_param(P_SCALEBITS)) {
+                                  // apply a note to a scale -> quantize to scale
+                                  target->params[P_NOTE] = quantize_note_to_scale(target->scale_bits, target->params[P_SCALEBITS],
+                                                                                  (int)right_hap->params[P_NOTE]);
+                                  target->valid_params |= (1ull << P_NOTE);
+                                  pat->last_scale_root = target->params[P_SCALEBITS];
+                                  pat->last_scale_bits = target->scale_bits;
+
                               } else { // just copy the value
                                   if (param_idx == P_GAIN && target->has_param(P_GAIN))
                                       target->params[P_GAIN] *= right_hap->params[P_GAIN];

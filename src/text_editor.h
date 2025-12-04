@@ -1536,6 +1536,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     int cursor_in_type = 0;
     int cursor_token_start_idx = 0;
     int cursor_token_end_idx = 0;
+    pattern_t *cursor_in_pattern = NULL;
     int pattern_entry_idx = -1;
     int pattern_mode = 0; // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
 #define INVALID_LINE 0x7fffffff
@@ -1898,6 +1899,13 @@ int code_color(EditorState *E, uint32_t *ptr) {
         if (cursor_token_start_idx == cursor_token_end_idx && i <= E->cursor_idx && j >= E->cursor_idx) {
             cursor_token_start_idx = i;
             cursor_token_end_idx = j;
+            if (pattern_mode && cur_pattern) {
+                cursor_in_pattern = cur_pattern;
+                plinky12_scale_root = cur_pattern->last_scale_root;
+                plinky12_scale_bits = cur_pattern->last_scale_bits;
+                if (j-i==4 && strncmp(t.str+i, "midi", 4)==0) {
+                }
+            }
         }
         int starti = i;
         int slider_val = 0;

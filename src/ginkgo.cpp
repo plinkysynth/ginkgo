@@ -2661,7 +2661,7 @@ int main(int argc, char **argv) {
                 add_line(x, y2, x, ythresh, 0xff0000cc, -8.f);
         }
 
-        // update the plinky12 leds with the cc and vu
+        // update the plinky12 leds with the cc and vu and scale
         for (int i = 0; i < 8; i++) {
             float lvl = G->vus[i].y;
             lvl = saturate(1.f + lin2db(lvl) / 48.f);
@@ -2670,12 +2670,22 @@ int main(int argc, char **argv) {
                 int bri = clamp(int((lvl * 8.f - y) * 8.f + 0.5f), 0, 8);
                 int hue = (y == 7) ? 1 : 7;
                 plinky12_leds[7 - y][i + 8] = bri * 16 + hue;
-                const static int hues[8] = {1, 2, 3, 4, 5, 6, 14, 15};
+                const static int hues[8] = {1, 1, 3, 3, 5, 5, 15, 15};
                 bri = clamp(int((cclvl * 8.f - y) * 8.f + 0.5f), 0, 8);
                 hue = hues[i];
                 plinky12_leds[15 - y][i + 8] = bri * 16 + hue;
             }
+            int scale_bits = plinky12_scale_bits;
+            if (!scale_bits) scale_bits = 0b101010110101; // white notes
+            for (int y = 0; y < 16; ++y) {
+                int note = y + i * 7;
+                note -= (int)plinky12_scale_root;
+                note%=12;
+                if (note<0) note+=12;
+                plinky12_leds[15 - y][i] = (note==0) ? 0x7f : (scale_bits & (1<<note)) ? 0x4f : 0x0f;
+            }
         }
+
 
         // draw a mini plinky12 display
         if (1 || plinky12_connected) {

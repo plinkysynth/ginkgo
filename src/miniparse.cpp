@@ -616,6 +616,8 @@ static int parse_expr_inner(pattern_maker_t *p) {
         switch (name_hash) {
         case HASH("lambda"):
             return make_node(p, N_LAMBDA, -1, -1, start_i, p->i);
+        case HASH("midi"):
+            return make_node(p, N_MIDI, -1, -1, start_i, p->i);
         case HASH("cc"): {
             if (!consume(p, '(')) {
                 error(p, "expected opening bracket in cc");
@@ -656,9 +658,13 @@ static int parse_expr_inner(pattern_maker_t *p) {
             return make_node(p, N_COLOR, -1, -1, start_i, p->i, 6.f);
         case HASH("black"):
             return make_node(p, N_COLOR, -1, -1, start_i, p->i, 7.f);
-        case HASH("x"):
+        case HASH("xpos"):
+        case HASH("xp"):
+        case HASH("X"):
             return make_node(p, N_COLOR, -1, -1, start_i, p->i, 8.f);
-        case HASH("y"):
+        case HASH("ypos"):
+        case HASH("yp"):
+        case HASH("Y"):
             return make_node(p, N_COLOR, -1, -1, start_i, p->i, 9.f);
         case HASH("up"):
             return make_node(p, N_UP, -1, -1, start_i, p->i);

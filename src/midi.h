@@ -9,6 +9,8 @@ uint8_t plinky12_leds[16][16] = {0};
 uint8_t plinky12_leds_sent[16][16] = {0};
 uint8_t plinky12_pressures[16][16] = {0};
 uint8_t hot_led = 0; // we slowly cycle through the leds and update at least this one per frame, in order to update a freshly rebooted device.
+float plinky12_scale_root = 0;
+uint32_t plinky12_scale_bits = 0;
 
 void on_midi_input(uint8_t data[3], void *user) {
     if (!G)

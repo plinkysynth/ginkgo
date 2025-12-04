@@ -89,6 +89,8 @@ typedef struct pattern_t { // a parsed version of a min notation string
     uint32_t colbitmask;
     float4 over_color;
     float x, y;
+    float last_scale_root;
+    uint32_t last_scale_bits;
     float get_near_output(pattern_t *other) const {
         if (!other)
             return 0.f;
@@ -150,7 +152,8 @@ typedef struct pattern_t { // a parsed version of a min notation string
     bool _append_leaf_hap(hap_span_t &dst, int nodeidx, hap_time t0, hap_time t1, int hapid); // does random range
     bool _append_number_hap(hap_span_t &dst, int nodeidx, int hapid, float value);
     hap_span_t make_haps(hap_span_t dst, int tmp_size, float viz_time, hap_time when) {
-        return _make_haps(dst, tmp_size, viz_time, 0, when, seed);
+        hap_span_t haps = _make_haps(dst, tmp_size, viz_time, 0, when, seed);
+        return haps;
     }
     void unalloc() {
         stbds_arrfree(curvedata);

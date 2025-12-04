@@ -49,19 +49,18 @@ int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh) { return 0
 void mac_touch_init(void *cocoa_window) {}                                          // pass NSWindow* from GLFW
 #endif
 
-char cache_path[1024]; // where we put web downloads
+char cache_path[1024];     // where we put web downloads
 char settings_fname[1024]; // the actual settings.json filename
-char livesrc_path[1024]; // user documents
-char build_path[1024]; // where we put the temp build files
+char livesrc_path[1024];   // user documents
+char build_path[1024];     // where we put the temp build files
 
 GLFWwindow *win;
-
 
 #ifdef __APPLE__
 const char *pick_filename(const char *init_name, const char *title) {
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-    glfwPollEvents();            // let the OS process it
-    const char *res= mac_pick_file(glfwGetCocoaWindow(win), init_name);
+    glfwPollEvents(); // let the OS process it
+    const char *res = mac_pick_file(glfwGetCocoaWindow(win), init_name);
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
     return res;
 }
@@ -1168,7 +1167,7 @@ static bool try_to_compile_audio(char **errorlog) {
 #define SANITIZE_OPTIONS ""
 #endif
     char stub_fname[1024];
-    snprintf(stub_fname,sizeof(stub_fname),"%s/stub.cpp", build_path);
+    snprintf(stub_fname, sizeof(stub_fname), "%s/stub.cpp", build_path);
     FILE *f = fopen(stub_fname, "w");
     if (!f) {
         fprintf(stderr, "failed to open %s for writing\n", stub_fname);
@@ -1176,6 +1175,7 @@ static bool try_to_compile_audio(char **errorlog) {
     }
     fprintf(f,
             "#include \"ginkgo.h\"\n"
+            "#line 1\n"
             "%.*s\n"
             "#include \"ginkgo_post.h\"\n",
             (int)stbds_arrlen(tabs[TAB_AUDIO].str), tabs[TAB_AUDIO].str);
@@ -1197,12 +1197,14 @@ static bool try_to_compile_audio(char **errorlog) {
         s = e + 6;
     }
     fclose(f);
+    for (int i = 0; i < 8; i++) {
+        G->vus[i].line = 0;
+        G->vus[i].y = 0.f;
+    }
     snprintf(cmd, sizeof(cmd),
              "clang++ " CLANG_OPTIONS " " SANITIZE_OPTIONS " %s"
              " -o %s/dsp.%d." BUILD_LIB_EXT " 2>&1",
-             stub_fname,
-             build_path,
-             version);
+             stub_fname, build_path, version);
     printf("[%s]\n", cmd);
     int64_t t0 = get_time_us();
     FILE *fp = popen(cmd, "r");
@@ -1311,7 +1313,7 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
     const GLFWvidmode *vm = primon ? glfwGetVideoMode(primon) : NULL;
     int ww = primon ? vm->width : 1920 / 2;
     int wh = primon ? vm->height : 1200 / 2;
-    
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -1334,12 +1336,12 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
         die("glfwCreateWindow failed");
     glfwGetWindowContentScale(win, &retina, NULL);
     if (primon && use_borderless) {
-        #ifdef __APPLE__
+#ifdef __APPLE__
         // kiosk mode covers the menu bar
         void mac_enable_kiosk(void *cocoa_win);
         mac_enable_kiosk(glfwGetCocoaWindow(win));
-        #endif
-        int x=0,y=0;
+#endif
+        int x = 0, y = 0;
         glfwGetMonitorPos(primon, &x, &y);
         glfwSetWindowPos(win, x, y);
     }
@@ -1364,16 +1366,16 @@ GLFWwindow *gl_init(int primon_idx, int secmon_idx) {
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
         glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_FALSE);
         const GLFWvidmode *vm = glfwGetVideoMode(secmon);
-        int ww = vm->width;                                              // 1920
-        int wh = vm->height;                                             // 1080
+        int ww = vm->width;                                                                      // 1920
+        int wh = vm->height;                                                                     // 1080
         winFS = glfwCreateWindow(ww, wh, "Ginkgo Visuals", use_borderless ? NULL : secmon, win); // 'share' = win
         if (secmon && use_borderless) {
-            #ifdef __APPLE__
+#ifdef __APPLE__
             // kiosk mode covers the menu bar
             void mac_enable_kiosk(void *cocoa_win);
             mac_enable_kiosk(glfwGetCocoaWindow(winFS));
-            #endif
-            int x=0,y=0;
+#endif
+            int x = 0, y = 0;
             glfwGetMonitorPos(secmon, &x, &y);
             glfwSetWindowPos(winFS, x, y);
         }
@@ -1410,7 +1412,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
             set_tab(&tabs[key - GLFW_KEY_F1]);
         }
         if (key == GLFW_KEY_F11) {
-            int i=1;
+            int i = 1;
         }
         if (key == GLFW_KEY_F12) {
             // tap tempo
@@ -1506,7 +1508,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     parse_named_patterns_in_source();
                     try_to_compile_shader(E);
                     try_to_compile_audio(&tabs[TAB_AUDIO].last_compile_log);
-                    curE=E;
+                    curE = E;
                     G->ui_alpha_target = 1.f;
                 } else if (strstr(fname, ".cpp")) {
                     EditorState *E = &tabs[TAB_AUDIO];
@@ -1515,7 +1517,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     load_file_into_editor(E);
                     parse_named_patterns_in_source();
                     try_to_compile_audio(&E->last_compile_log);
-                    curE=E;
+                    curE = E;
                     G->ui_alpha_target = 1.f;
                 } else if (strstr(fname, ".canvas")) {
                     EditorState *E = &tabs[TAB_CANVAS];
@@ -1523,7 +1525,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     E->fname = fname;
                     bool load_canvas(EditorState * E);
                     load_canvas(E);
-                    curE=E;
+                    curE = E;
                     G->ui_alpha_target = 1.f;
                 }
             }
@@ -1873,40 +1875,9 @@ float4 editor_update(EditorState *E, GLFWwindow *win) {
     return float4{kick_lvl, snare_lvl, hat_lvl, tot_lvl};
 }
 
-void on_midi_input(uint8_t data[3], void *user) {
-    if (!G)
-        return;
-    int cc = data[1];
-    if (data[0] == 0xb0 && cc < 128) {
-        int oldccdata = G->midi_cc[cc];
-        int newccdata = data[2];
-        G->midi_cc[cc] = newccdata;
-        /*
-        uint32_t gen = G->midi_cc_gen[cc]++;
-        if (gen == 0)
-            oldccdata = newccdata;
-        if (newccdata != oldccdata && cc >= 16 && cc < 32 && closest_slider[cc - 16] != NULL) {
-            // 'pickup': if we are increasing and bigger, or decreasing and smaller, then pick up the value, or closer than 2
-            int sliderval = (int)clamp(closest_slider[cc - 16][0] * 127.f, 0.f, 127.f);
-            int mindata = min(oldccdata, newccdata);
-            int maxdata = max(oldccdata, newccdata);
-            int vel = newccdata - oldccdata;
-            if (vel < 0)
-                maxdata += (-vel) + 16;
-            else
-                mindata -= (vel) + 16; // add slop for velocity
-            if (sliderval >= mindata - 4 && sliderval <= maxdata + 4) {
-                closest_slider[cc - 16][0] = newccdata / 127.f;
-            }
-        }
-            */
-    }
-    // printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
-}
-
 // Audio and MIDI initialization
 static void init_audio_midi(ma_device *dev) {
-    midi_init("Music Thing Modular", on_midi_input, NULL);
+    midi_init(on_midi_input, NULL);
     printf("starting audio - device config init\n");
     ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
     cfg.sampleRate = SAMPLE_RATE_OUTPUT;
@@ -1924,6 +1895,11 @@ static void init_audio_midi(ma_device *dev) {
         exit(3);
     }
     printf("ma_device_start success\n");
+    // for (int y = 0; y < 16; y++) {
+    //     for (int x = 0; x < 16; x++) {
+    //         plinky12_leds[y][x] = (y) * 16 + x;
+    //     }
+    // }
 }
 
 static GLFWwindow *_win;
@@ -1946,7 +1922,8 @@ void update_camera(GLFWwindow *win) {
     }
 }
 
-static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int num_fprts, uint32_t iFrame, GLuint vao, float taa_amount) {
+static void render_taa_pass(GLuint taa_pass, GLuint *fbo, GLuint *texFPRT, int num_fprts, uint32_t iFrame, GLuint vao,
+                            float taa_amount) {
     glUseProgram(taa_pass);
     bind_texture_to_slot(taa_pass, 0, "uFP", texFPRT[2], GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -2120,7 +2097,6 @@ GLuint load_texture(const char *key, int filter_mode = GL_LINEAR, int wrap_mode 
     return texi;
 }
 
-
 // typedef struct sphere_t {
 //     float4 pos_rad;
 //     float4 oldpos_rad;
@@ -2226,13 +2202,14 @@ void error_callback(int error, const char *description) { fprintf(stderr, "GLFW 
 #include <unistd.h>
 #include <limits.h>
 
-static void chdir_to_bundle_resources(void)
-{
+static void chdir_to_bundle_resources(void) {
     CFBundleRef bundle = CFBundleGetMainBundle();
-    if (!bundle) return;
+    if (!bundle)
+        return;
 
     CFURLRef resURL = CFBundleCopyResourcesDirectoryURL(bundle);
-    if (!resURL) return;
+    if (!resURL)
+        return;
 
     char path[PATH_MAX];
     if (CFURLGetFileSystemRepresentation(resURL, true, (UInt8 *)path, sizeof(path))) {
@@ -2241,26 +2218,26 @@ static void chdir_to_bundle_resources(void)
     CFRelease(resURL);
 }
 #else
-static void chdir_to_bundle_resources() { }
+static void chdir_to_bundle_resources() {}
 #endif
 
 void ensure_livesrc_file_exists(const char *fname) {
-    char srcname[1024],dstname[1024];
-    snprintf(srcname,sizeof(srcname),"livesrc/%s",fname);
-    snprintf(dstname,sizeof(dstname),"%s/%s", livesrc_path, fname);
-    FILE *dst = fopen(dstname,"rb");
+    char srcname[1024], dstname[1024];
+    snprintf(srcname, sizeof(srcname), "livesrc/%s", fname);
+    snprintf(dstname, sizeof(dstname), "%s/%s", livesrc_path, fname);
+    FILE *dst = fopen(dstname, "rb");
     if (dst) {
         fclose(dst);
         return;
     }
-    dst = fopen(dstname,"wb");
+    dst = fopen(dstname, "wb");
     if (!dst) {
         fprintf(stderr, "failed to open %s for writing\n", dstname);
         return;
     }
     char *content = load_file(srcname);
     if (content) {
-        fwrite(content,1,stbds_arrlen(content),dst);
+        fwrite(content, 1, stbds_arrlen(content), dst);
     }
     stbds_arrfree(content);
     fclose(dst);
@@ -2288,23 +2265,23 @@ int main(int argc, char **argv) {
 
     bool use_current_dir_for_user_files = true;
 
-
     // set up settings and cache folder
     const char *home = getenv("HOME");
-    if (!home) home=".";
+    if (!home)
+        home = ".";
 #ifdef __APPLE__
-    snprintf(cache_path,sizeof(cache_path), "%s/Library/Caches/com.bluespoon.ginkgo", home);
+    snprintf(cache_path, sizeof(cache_path), "%s/Library/Caches/com.bluespoon.ginkgo", home);
 #else
-    snprintf(cache_path,sizeof(cache_path), "%s/.cache/ginkgo", home);
+    snprintf(cache_path, sizeof(cache_path), "%s/.cache/ginkgo", home);
 #endif
-    snprintf(build_path,sizeof(build_path),"%s/build", cache_path);
+    snprintf(build_path, sizeof(build_path), "%s/build", cache_path);
     if (use_current_dir_for_user_files) {
-        snprintf(settings_fname,sizeof(settings_fname),"%s/settings.json", original_dir) ;
-        snprintf(livesrc_path,sizeof(livesrc_path),"%s/livesrc", original_dir);
+        snprintf(settings_fname, sizeof(settings_fname), "%s/settings.json", original_dir);
+        snprintf(livesrc_path, sizeof(livesrc_path), "%s/livesrc", original_dir);
     } else {
         // we dont use ~/Documents on mac because it triggeres a request to access that folder.
-        snprintf(settings_fname,sizeof(settings_fname),"%s/ginkgo/settings.json", home);
-        snprintf(livesrc_path,sizeof(livesrc_path),"%s/ginkgo", home);
+        snprintf(settings_fname, sizeof(settings_fname), "%s/ginkgo/settings.json", home);
+        snprintf(livesrc_path, sizeof(livesrc_path), "%s/ginkgo", home);
     }
     mkdir_p(cache_path, true);
     mkdir_p(build_path, true);
@@ -2319,9 +2296,6 @@ int main(int argc, char **argv) {
     printf("  build_path: " COLOR_CYAN "%s" COLOR_RESET "\n", build_path);
     printf("  livesrc_path: " COLOR_CYAN "%s" COLOR_RESET "\n", livesrc_path);
     printf("  settings_fname: " COLOR_CYAN "%s" COLOR_RESET "\n", settings_fname);
-    
-
-
 
     glfwSetErrorCallback(error_callback);
     if (!glfwInit())
@@ -2475,7 +2449,7 @@ int main(int argc, char **argv) {
         const char *tex_name = strstr(s, "// tex ");
         const char *want_taa_str = strstr(s, "// taa");
         float taa_amount = 0.95f;
-        
+
         if (want_taa_str && want_taa_str[6] == ' ' && isdigit(want_taa_str[7]))
             taa_amount = strtof(want_taa_str + 7, NULL);
 
@@ -2499,7 +2473,7 @@ int main(int argc, char **argv) {
                 ++s;
             sky_name = temp_cstring_from_span(spans, s);
             if (sky_name) {
-               skytex = load_texture(sky_name);
+                skytex = load_texture(sky_name);
             }
         }
         if (tex_name) {
@@ -2594,8 +2568,8 @@ int main(int argc, char **argv) {
             bind_texture_to_slot(user_pass, 1, "uFont", texFont, GL_LINEAR);
             bind_texture_to_slot(user_pass, 2, "uText", texText, GL_NEAREST);
             bind_texture_to_slot(user_pass, 0, "uFP", texFPRT[(iFrame + 1) % 2], GL_NEAREST);
-            bind_texture_to_slot(user_pass, 3, "uSky", (skytex<0)?0:skytex, GL_LINEAR);
-            bind_texture_to_slot(user_pass, 4, "uTex", (textex<0)?0:textex, GL_LINEAR);
+            bind_texture_to_slot(user_pass, 3, "uSky", (skytex < 0) ? 0 : skytex, GL_LINEAR);
+            bind_texture_to_slot(user_pass, 4, "uTex", (textex < 0) ? 0 : textex, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 4, "uPaperDiff", paper_diff, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 5, "uPaperDisp", paper_disp, GL_LINEAR);
             // bind_texture_to_slot(user_pass, 6, "uPaperNorm", paper_norm, GL_LINEAR);
@@ -2664,6 +2638,91 @@ int main(int argc, char **argv) {
             draw_canvas(curE);
         }
 
+        static const uint32_t cc_cols[] = {
+            0x3344ee, 0x3344ee, 0x4477ee, 0x4477ee, 0x33ccff, 0x33ccff, 0xffffee, 0xffffee,
+        };
+        float cc_bar_x = G->fbw - curE->font_width * 16.f;
+        float cc_bar_height = curE->font_height;
+
+        for (int i = 0; i < 8; ++i) {
+            float x = cc_bar_x + (i - 7.5f) * 30.f;
+            float y = G->fbh;
+            float y2 = y - G->midi_cc[i + 0x10] * cc_bar_height / 128.f;
+            add_line(x, y - cc_bar_height, x, y, 0x3f000000 | ((cc_cols[i] >> 2) & 0x3f3f3f),
+                     -20.f); // negative width is square cap
+            add_line(x, y, x, y2, 0x3f000000 | (cc_cols[i]), -20.f);
+            // vu meter
+            float lvl = saturate(1.f + lin2db(G->vus[i].y) / 48.f);
+            y2 = y - lvl * cc_bar_height;
+            float ythresh = y - 0.875f * cc_bar_height;
+            if (y2 < y)
+                add_line(x, y, x, max(y2, ythresh), 0xff00cc00, -8.f);
+            if (y2 < ythresh)
+                add_line(x, y2, x, ythresh, 0xff0000cc, -8.f);
+        }
+
+        // update the plinky12 leds with the cc and vu
+        for (int i = 0; i < 8; i++) {
+            float lvl = G->vus[i].y;
+            lvl = saturate(1.f + lin2db(lvl) / 48.f);
+            float cclvl = cc(i);
+            for (int y = 0; y < 8; ++y) {
+                int bri = clamp(int((lvl * 8.f - y) * 8.f + 0.5f), 0, 8);
+                int hue = (y == 7) ? 1 : 7;
+                plinky12_leds[7 - y][i + 8] = bri * 16 + hue;
+                const static int hues[8] = {1, 2, 3, 4, 5, 6, 14, 15};
+                bri = clamp(int((cclvl * 8.f - y) * 8.f + 0.5f), 0, 8);
+                hue = hues[i];
+                plinky12_leds[15 - y][i + 8] = bri * 16 + hue;
+            }
+        }
+
+        // draw a mini plinky12 display
+        if (1 || plinky12_connected) {
+            static uint32_t plinky_palette[256];
+            if (plinky_palette[255] == 0) {
+                // sampled from a photo of plinky :)
+                static const uint32_t plinky_hues[16] = {
+                    0xff89e9, 0xfe120f, 0xfe5231, 0xfdab58, 0xfdcd76, 0xffe07b, 0xabf789, 0x2bfe92,
+                    0x32fed4, 0x43fff5, 0x46eaf8, 0x44a1fa, 0x85adff, 0xe1a3fc, 0xebb3f9, 0xead4e5,
+                };
+                for (int i = 0; i < 256; ++i) {
+                    int hue = (i & 15);
+                    int bri = (int)roundf(powf((i / 16) * 200, 0.7f));
+                    int col = plinky_hues[hue];
+                    int r = clamp((((col >> 16) & 255) * bri + 6) / 256, 0, 255);
+                    int g = clamp((((col >> 8) & 255) * bri + 6) / 256, 0, 255);
+                    int b = clamp(((col & 255) * bri + 6) / 256, 0, 255);
+                    plinky_palette[i] = (b << 16) | (g << 8) | r | 0xff000000;
+                }
+            }
+            float yy = G->fbh - 16 * 10 - curE->font_height - 20.f;
+            for (int y = 0; y < 16; y++) {
+                float xx = G->fbw - 16 * 10 + 8 - 128.f;
+                if (y == 0)
+                    add_line(xx - 10.f, yy + 80.f, xx + 160.f, yy + 80.f, 0x40000000, -180.f);
+                for (int x = 0; x < 16; x++) {
+                    uint32_t col = plinky_palette[plinky12_leds[y][x]];
+                    add_line(xx, yy, xx + 0.01f, yy, col, 7.f);
+                    xx += 10.f;
+                }
+                yy += 10.f;
+            }
+            yy -= 160.f;
+            for (int y = 0; y < 16; y++) {
+                float xx = G->fbw - 16 * 10 + 8;
+                for (int x = 0; x < 16; x++) {
+                    int p = plinky12_pressures[y][x];
+                    if (p > 0) {
+                        // printf("pressure: %d\n", p);
+                        add_line(xx, yy, xx + 0.01f, yy, p * 0x020202, 10.f + p / 8.f);
+                    }
+                    xx += 10.f;
+                }
+                yy += 10.f;
+            }
+        }
+
 #define MOUSE_LEN 8
 #define MOUSE_MASK (MOUSE_LEN - 1)
         static float mxhistory[MOUSE_LEN], myhistory[MOUSE_LEN];
@@ -2684,20 +2743,6 @@ int main(int argc, char **argv) {
                 col = 0;
             if (alpha > 0)
                 add_line(p0x, p0y, p1x, p1y, col, 17.f - i);
-        }
-
-        static const uint32_t cc_cols[] = {
-            0x3344ee, 0x3344ee, 0x4477ee, 0x4477ee, 0x33ccff, 0x33ccff, 0xffffee, 0xffffee,
-        };
-        float cc_bar_x = G->fbw - curE->font_width * 16.f;
-        float cc_bar_height = curE->font_height;
-        for (int i = 0; i < 8; ++i) {
-            float x = cc_bar_x + (i - 7.5f) * 30.f;
-            float y = G->fbh;
-            float y2 = y - G->midi_cc[i + 0x10] * cc_bar_height / 128.f;
-            add_line(x, y - cc_bar_height, x, y, 0x3f000000 | ((cc_cols[i] >> 2) & 0x3f3f3f),
-                     -20.f); // negative width is square cap
-            add_line(x, y, x, y2, 0x3f000000 | (cc_cols[i]), -20.f);
         }
 
         draw_logo(iTime - start_time);
@@ -2776,6 +2821,8 @@ int main(int argc, char **argv) {
         // pump wave load requests
         pump_wave_load_requests_main_thread();
         // usleep(100000);
+
+        update_plinky12_leds();
     }
 
     dump_settings();

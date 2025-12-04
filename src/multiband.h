@@ -60,9 +60,12 @@ stereo ott_t::operator()(stereo rv, float amount) {
     const float inp_gain = db2lin(12.2);
     multiband(rv * inp_gain, bands);
     // thresh, decay, attack
-    float b=envfollow_novu(bands[0],0.02f, 0.01f, 0.001f);
-    float m=envfollow_novu(bands[1],0.02f, 0.01f, 0.001f);
-    float h=envfollow_novu(bands[2],0.02f, 0.01f, 0.001f);
+    env[0](bands[0],0.01f, 0.001f);
+    env[1](bands[1],0.01f, 0.001f);
+    env[2](bands[2],0.01f, 0.001f);
+    float b=max(0.02f, env[0].y);
+    float m=max(0.02f, env[1].y);
+    float h=max(0.02f, env[2].y);
     // -40.8 : -35.5 for hi,  inf:1 / 4:1
     // -41.8 : -30.2 for mid 66 : 1 / 4:1
     // -40.8 : -33.8 for lo  66 : 1 / 4:1

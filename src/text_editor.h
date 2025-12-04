@@ -1976,24 +1976,23 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     }
                 }
                 // add any vu meters
-                int n = G->env_followers_idx[1];
-                if (n > 64)
-                    n = 64;
-                for (int i = 0; i < n; i++) {
-                    env_follower_t *ef = &G->env_followers[1][i];
-                    if (ef->line - 1 == ysc) {
+                for (int i = 0; i < 8; i++) {
+                    int line = G->vus[i].line;
+                    float lvl = G->vus[i].y;
+                    if (line-1 == ysc) { 
                         float leftx = t.x + 1.f;
-                        float lvlx = saturate(1.f + lin2db(ef->y) / 48.f) * 16.f + leftx;
-                        float threshx = saturate(1.f + lin2db(ef->thresh) / 48.f) * 16.f + leftx;
+                        float lvlx = saturate(1.f + lin2db(lvl) / 48.f) * 16.f + leftx;
+                        float threshx = saturate(1.f + lin2db(0.5f) / 48.f) * 16.f + leftx;
                         float maxx = leftx + 16.f;
+                        float thick = E->font_height * 0.5f;
                         if (lvlx < threshx) {
-                            add_line(E, leftx, t.y + 0.5f, lvlx, t.y + 0.5f, 0xff108010, -E->font_height);
-                            add_line(E, lvlx, t.y + 0.5f, threshx, t.y + 0.5f, 0x40404040, -E->font_height);
-                            add_line(E, threshx, t.y + 0.5f, maxx, t.y + 0.5f, 0x40101040, -E->font_height);
+                            add_line(E, leftx, t.y + 0.5f, lvlx, t.y + 0.5f, 0xff108010, -thick);
+                            add_line(E, lvlx, t.y + 0.5f, threshx, t.y + 0.5f, 0x40102010, -thick);
+                            add_line(E, threshx, t.y + 0.5f, maxx, t.y + 0.5f, 0x40101040, -thick);
                         } else {
-                            add_line(E, leftx, t.y + 0.5f, threshx, t.y + 0.5f, 0xff108010, -E->font_height);
-                            add_line(E, threshx, t.y + 0.5f, lvlx, t.y + 0.5f, 0xff4040c0, -E->font_height);
-                            add_line(E, lvlx, t.y + 0.5f, maxx, t.y + 0.5f, 0x40101040, -E->font_height);
+                            add_line(E, leftx, t.y + 0.5f, threshx, t.y + 0.5f, 0xff108010, -thick);
+                            add_line(E, threshx, t.y + 0.5f, lvlx, t.y + 0.5f, 0xff4040c0, -thick);
+                            add_line(E, lvlx, t.y + 0.5f, maxx, t.y + 0.5f, 0x40101040, -thick);
                         }
                     }
                 }

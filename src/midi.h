@@ -1,14 +1,81 @@
 #pragma once
+typedef void (*midi_receive_cb)(uint8_t data[3], void *user);
+void midi_send(uint8_t data0, uint8_t data1, uint8_t data2);
+void midi_init(midi_receive_cb cb, void *cb_user);
+
+uint8_t plinky12_connected = 0;
+uint8_t mu8_connected = 0  ;
+uint8_t plinky12_leds[16][16] = {0};
+uint8_t plinky12_leds_sent[16][16] = {0};
+uint8_t plinky12_pressures[16][16] = {0};
+uint8_t hot_led = 0; // we slowly cycle through the leds and update at least this one per frame, in order to update a freshly rebooted device.
+
+void on_midi_input(uint8_t data[3], void *user) {
+    if (!G)
+        return;
+    int cc = data[1];
+    int chan = data[0]&0xf;
+    int type = data[0]>>4;
+    //printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
+    if (type==10 || type==9 || type==8) {
+        if (plinky12_connected && data[1]>=60 && data[1]<60+16) {
+            plinky12_pressures[data[1]-60][chan] = data[2];
+        }
+    }
+    if (data[0] == 0xb0 && cc < 128) {
+        int oldccdata = G->midi_cc[cc];
+        int newccdata = data[2];
+        G->midi_cc[cc] = newccdata;
+        /*
+        uint32_t gen = G->midi_cc_gen[cc]++;
+        if (gen == 0)
+            oldccdata = newccdata;
+        if (newccdata != oldccdata && cc >= 16 && cc < 32 && closest_slider[cc - 16] != NULL) {
+            // 'pickup': if we are increasing and bigger, or decreasing and smaller, then pick up the value, or closer than 2
+            int sliderval = (int)clamp(closest_slider[cc - 16][0] * 127.f, 0.f, 127.f);
+            int mindata = min(oldccdata, newccdata);
+            int maxdata = max(oldccdata, newccdata);
+            int vel = newccdata - oldccdata;
+            if (vel < 0)
+                maxdata += (-vel) + 16;
+            else
+                mindata -= (vel) + 16; // add slop for velocity
+            if (sliderval >= mindata - 4 && sliderval <= maxdata + 4) {
+                closest_slider[cc - 16][0] = newccdata / 127.f;
+            }
+        }
+            */
+    }
+    // printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
+}
+
+void update_plinky12_leds(void) {
+    if (!plinky12_connected)
+        return;
+    for (int y=0;y<16;y++) {
+        for (int x=0;x<16;x++) {
+            if (plinky12_leds[y][x] != plinky12_leds_sent[y][x] || hot_led == y*16 + x) {
+                uint8_t col = plinky12_leds[y][x];
+                if (col&128)
+                    midi_send(0xb0+x, 32+y, (col&15)+(col/32)*16); // double brightness
+                else
+                    midi_send(0xb0+x, 16+y, col);
+            }
+        }
+    }
+    hot_led = (hot_led + 1);
+}
+
 #ifdef __APPLE__
 
 #include <CoreMIDI/CoreMIDI.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <stdint.h>
 #include <string.h>
+#include "ansicols.h"
 
-typedef void (*midi_receive_cb)(uint8_t data[3], void *user);
 
-static struct {
+struct {
     MIDIClientRef client;
     MIDIPortRef in_port, out_port;
     MIDIEndpointRef in_src, out_dst;
@@ -16,30 +83,26 @@ static struct {
     void *cb_user;
 } midi_state;
 
-static void midi_input_proc(const MIDIPacketList *pktlist, void *ref, void *src) {
+ void midi_input_proc(const MIDIPacketList *pktlist, void *ref, void *src) {
     midi_receive_cb cb = midi_state.cb;
-    if (!cb) return;
+    if (!cb)
+        return;
 
     const MIDIPacket *pkt = &pktlist->packet[0];
     for (int i = 0; i < pktlist->numPackets; ++i) {
         const uint8_t *data = pkt->data;
         for (int j = 0; j + 2 < pkt->length; j += 3) {
-            cb((uint8_t[]){data[j], data[j+1], data[j+2]}, midi_state.cb_user);
+            cb((uint8_t[]){data[j], data[j + 1], data[j + 2]}, midi_state.cb_user);
         }
         pkt = MIDIPacketNext(pkt);
     }
 }
 
+int midi_get_num_inputs() { return (int)MIDIGetNumberOfSources(); }
 
-static int midi_get_num_inputs() {
-    return (int)MIDIGetNumberOfSources();
-}
+int midi_get_num_outputs() { return (int)MIDIGetNumberOfDestinations(); }
 
-static int midi_get_num_outputs() {
-    return (int)MIDIGetNumberOfDestinations();
-}
-
-static void midi_open_input(int index) {
+void midi_open_input(int index) {
     MIDIEndpointRef src = MIDIGetSource(index);
     if (src) {
         midi_state.in_src = src;
@@ -47,23 +110,24 @@ static void midi_open_input(int index) {
     }
 }
 
-static void midi_open_output(int index) {
+void midi_open_output(int index) {
     MIDIEndpointRef dst = MIDIGetDestination(index);
-    if (dst) midi_state.out_dst = dst;
+    if (dst)
+        midi_state.out_dst = dst;
 }
 
-
-
-static void midi_send(uint8_t data[3]) {
-    if (!midi_state.out_dst) return;
+void midi_send(uint8_t data0, uint8_t data1, uint8_t data2) {
+    if (!midi_state.out_dst)
+        return;
     Byte buffer[3 + 100];
-    MIDIPacketList *pktlist = (MIDIPacketList*)buffer;
+    MIDIPacketList *pktlist = (MIDIPacketList *)buffer;
     MIDIPacket *pkt = MIDIPacketListInit(pktlist);
+    uint8_t data[3] = {data0, data1, data2};
     MIDIPacketListAdd(pktlist, sizeof(buffer), pkt, 0, 3, data);
     MIDISend(midi_state.out_port, midi_state.out_dst, pktlist);
 }
 
-static const char* midi_get_input_name(int index) {
+const char *midi_get_input_name(int index) {
     static char namebuf[256];
     namebuf[0] = 0;
     MIDIEndpointRef src = MIDIGetSource(index);
@@ -76,7 +140,7 @@ static const char* midi_get_input_name(int index) {
     return namebuf;
 }
 
-static const char* midi_get_output_name(int index) {
+const char *midi_get_output_name(int index) {
     static char namebuf[256];
     namebuf[0] = 0;
     MIDIEndpointRef dst = MIDIGetDestination(index);
@@ -89,22 +153,56 @@ static const char* midi_get_output_name(int index) {
     return namebuf;
 }
 
-static void midi_init(const char *match_name ,midi_receive_cb cb, void *cb_user) {
+void midi_init(midi_receive_cb cb, void *cb_user) {
     MIDIClientCreate(CFSTR("midi"), NULL, NULL, &midi_state.client);
     MIDIInputPortCreate(midi_state.client, CFSTR("in"), midi_input_proc, NULL, &midi_state.in_port);
     MIDIOutputPortCreate(midi_state.client, CFSTR("out"), &midi_state.out_port);
     midi_state.cb = cb;
     midi_state.cb_user = cb_user;
     int ni = midi_get_num_inputs();
-    int idx = 0;
-    for (int i = 0; i < ni; i++) {
-        const char *name = midi_get_input_name(i);
-        if (strstr(name, match_name)) {
-            idx = i;
-            break;
+    int no = midi_get_num_outputs();
+    int in_idx = 0;
+    int out_idx = 0;
+
+    printf(COLOR_CYAN "%d" COLOR_RESET " MIDI inputs found, " COLOR_CYAN "%d" COLOR_RESET " MIDI outputs found\n", ni, no);
+    for (int i = 0; i < ni + no; i++) {
+        const char *name = i < ni ? midi_get_input_name(i) : midi_get_output_name(i - ni);
+        printf("\t" COLOR_CYAN "%s%d" COLOR_RESET " - %s\n", i < ni ? "in" : "out", i, name);
+        if (strcmp(name, "plinky12") == 0) {
+            if (i < ni)
+                in_idx = i;
+            else
+                out_idx = i - ni;
+            plinky12_connected |= (i < ni) ? 1 : 2;
+            mu8_connected = 0;
+        }
+        if (strstr(name, "Music Thing Modular")) {
+            if (i < ni)
+                in_idx = i;
+            else
+                out_idx = i - ni;
+            plinky12_connected = 0;
+            mu8_connected |= (i < ni) ? 1 : 2;
         }
     }
-    if (ni>0) midi_open_input(idx);
+    if (plinky12_connected < 3)
+        plinky12_connected = 0;
+    else
+        printf(COLOR_RED "plinky12 connected" COLOR_RESET "\n");
+    if (mu8_connected < 3)
+        mu8_connected = 0;
+    else
+        printf(COLOR_RED "mu8 connected" COLOR_RESET "\n");
+    if (ni > 0) {
+        const char *name = midi_get_input_name(in_idx);
+        printf(COLOR_CYAN "using midi input: %s" COLOR_RESET "\n", name);
+        midi_open_input(in_idx);
+    }
+    if (no > 0) {
+        const char *name = midi_get_output_name(out_idx);
+        printf(COLOR_CYAN "using midi output: %s" COLOR_RESET "\n", name);
+        midi_open_output(out_idx);
+    }
 }
 
 #endif // __APPLE__
@@ -115,9 +213,9 @@ static void midi_init(const char *match_name ,midi_receive_cb cb, void *cb_user)
 #include <alsa/asoundlib.h>
 #include <pthread.h>
 
-typedef void (*midi_receive_cb)(uint8_t data[3], void *user);
 
-static struct {
+
+struct {
     snd_rawmidi_t *in;
     snd_rawmidi_t *out;
     midi_receive_cb cb;
@@ -126,7 +224,7 @@ static struct {
     pthread_t thread;
 } midi_state = {0};
 
-static void* midi_read_thread(void *arg) {
+void *midi_read_thread(void *arg) {
     (void)arg;
     uint8_t buf[3];
     int n = 0;
@@ -134,19 +232,21 @@ static void* midi_read_thread(void *arg) {
     while (midi_state.running && midi_state.in) {
         unsigned char b;
         int r = snd_rawmidi_read(midi_state.in, &b, 1);
-        if (r <= 0) continue; // ignore errors for simplicity
+        if (r <= 0)
+            continue; // ignore errors for simplicity
 
         buf[n++] = (uint8_t)b;
         if (n == 3) {
             midi_receive_cb cb = midi_state.cb;
-            if (cb) cb(buf, midi_state.cb_user);
+            if (cb)
+                cb(buf, midi_state.cb_user);
             n = 0;
         }
     }
     return NULL;
 }
 
-static void midi_init(const char *match_name ,midi_receive_cb cb, void *cb_user) {
+void midi_init(midi_receive_cb cb, void *cb_user) {
     midi_state.cb = cb;
     midi_state.cb_user = cb_user;
     midi_state.in = NULL;
@@ -165,8 +265,10 @@ static void midi_init(const char *match_name ,midi_receive_cb cb, void *cb_user)
     pthread_create(&midi_state.thread, NULL, midi_read_thread, NULL);
 }
 
-static void midi_send(uint8_t data[3]) {
-    if (!midi_state.out) return;
+void midi_send(uint8_t data0, uint8_t data1, uint8_t data2) {
+    if (!midi_state.out)
+        return;
+    uint8_t data[3] = {data0, data1, data2};
     snd_rawmidi_write(midi_state.out, data, 3);
     snd_rawmidi_drain(midi_state.out);
 }
@@ -181,32 +283,35 @@ static void midi_send(uint8_t data[3]) {
 
 #pragma comment(lib, "winmm.lib")
 
-typedef void (*midi_receive_cb)(uint8_t data[3], void *user);
 
-static struct {
+
+struct {
     HMIDIIN in;
     HMIDIOUT out;
     midi_receive_cb cb;
     void *cb_user;
 } midi_state = {0};
 
-static void CALLBACK midi_in_proc(HMIDIIN hMidiIn, UINT wMsg, DWORD_PTR dwInstance,
-                                  DWORD_PTR dwParam1, DWORD_PTR dwParam2) {
-    (void)hMidiIn; (void)dwInstance; (void)dwParam2;
-    if (wMsg != MIM_DATA) return;
+void CALLBACK midi_in_proc(HMIDIIN hMidiIn, UINT wMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2) {
+    (void)hMidiIn;
+    (void)dwInstance;
+    (void)dwParam2;
+    if (wMsg != MIM_DATA)
+        return;
     midi_receive_cb cb = midi_state.cb;
-    if (!cb) return;
+    if (!cb)
+        return;
 
     DWORD msg = (DWORD)dwParam1;
     uint8_t b0 = (uint8_t)(msg & 0xFF);
     uint8_t b1 = (uint8_t)((msg >> 8) & 0xFF);
     uint8_t b2 = (uint8_t)((msg >> 16) & 0xFF);
 
-    uint8_t data[3] = { b0, b1, b2 };
+    uint8_t data[3] = {b0, b1, b2};
     cb(data, midi_state.cb_user);
 }
 
-static void midi_init(const char *match_name, midi_receive_cb cb, void *cb_user) {
+void midi_init(midi_receive_cb cb, void *cb_user) {
     midi_state.cb = cb;
     midi_state.cb_user = cb_user;
     midi_state.in = NULL;
@@ -222,7 +327,7 @@ static void midi_init(const char *match_name, midi_receive_cb cb, void *cb_user)
         for (UINT i = 0; i < in_count; ++i) {
             MIDIINCAPS caps;
             if (midiInGetDevCaps(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
-                if (strstr(caps.szPname, match_name)) {
+                if (strstr(caps.szPname, "Music Thing Modular")) {
                     in_index = i;
                     break;
                 }
@@ -255,9 +360,10 @@ static void midi_init(const char *match_name, midi_receive_cb cb, void *cb_user)
     }
 }
 
-static void midi_send(uint8_t data[3]) {
-    if (!midi_state.out) return;
-    DWORD msg = (DWORD)data[0] | ((DWORD)data[1] << 8) | ((DWORD)data[2] << 16);
+void midi_send(uint8_t data0, uint8_t data1, uint8_t data2) {
+    if (!midi_state.out)
+        return;
+    DWORD msg = (DWORD)data0 | ((DWORD)data1 << 8) | ((DWORD)data2 << 16);
     midiOutShortMsg(midi_state.out, msg);
 }
 

@@ -385,12 +385,6 @@ struct delay_t {
 
 typedef struct pattern_t pattern_t;
 
-typedef struct env_follower_t {
-    float lp;
-    float y;
-    float thresh;
-    int line;
-} env_follower_t;
 
 typedef struct camera_state_t {
     float4 c_cam2world_old[4];
@@ -411,6 +405,27 @@ typedef struct camera_state_t {
 
 typedef bool (*get_key_func_t)(int key);
 
+static inline float env_k(float x, float epsilon = 0.00025f) {
+    // 0.00001 (e^-11) is a few seconds; 0.5 is fast.
+    return 1.f - exp(-0.00001f / (x*x + epsilon));
+}
+
+struct env_follower_t {
+    float lp;
+    float y;
+    int line;
+    float operator()(float x, float decay=0.2f, float attack = 0.f) {
+        lp += (fabsf(x)-lp)*0.01f;
+        float d = lp-y;
+        y += d * env_k((d>0.f) ? attack : decay);
+        return x;
+    }
+    stereo operator()(stereo x, float decay=0.2f, float attack = 0.f) {
+       operator()(max(fabsf(x.l), fabsf(x.r)), decay, attack);
+       return x;
+    }
+};
+
 
 typedef struct song_base_t {
     int _size;
@@ -423,8 +438,6 @@ typedef struct song_base_t {
     stereo preview; // the preview audio. will be mixed at the end, so the shader code can modify it as it wishes.
     int64_t t_q32; // the current musical time! as a 32.32 fixed point number
     uint8_t midi_cc[128];
-    env_follower_t env_followers[2][64];
-    int env_followers_idx[2];
     //uint32_t midi_cc_gen[128];
     int cursor_x, cursor_y;
     float mx, my;
@@ -450,6 +463,7 @@ typedef struct song_base_t {
     float preview_fromt;
     float preview_tot;
     float limiter_state[2];
+    env_follower_t vus[8];
     uint8_t reloaded;
     uint8_t playing;
     void init(void) {}
@@ -612,6 +626,9 @@ static inline int euclid_rhythm(int stepidx, int numset, int numsteps, int rot) 
 void init_basic_state(void);
 wave_t *request_wave_load(wave_t *wave);
 
+
+#define vu(idx, audio, ...) (G->vus[idx&7].line = __LINE__, G->vus[idx&7].operator()(audio, ##__VA_ARGS__)) // be careful to only use audio once.
+
 typedef struct multiband_t {
     stereo state[12];
     void  operator()(stereo x, stereo out[3]);
@@ -619,6 +636,7 @@ typedef struct multiband_t {
 
 typedef struct ott_t {
     multiband_t multiband;
+    env_follower_t env[3];
     stereo operator()(stereo rv, float amount);
 } ott_t;
 
@@ -804,10 +822,6 @@ static inline float shapeo(double phase, double dphase, float wavetable_number) 
 }
 
 
-static inline float env_k(float x, float epsilon = 0.00025f) {
-    // 0.00001 (e^-11) is a few seconds; 0.5 is fast.
-    return 1.f - exp(-0.00001f / (x*x + epsilon));
-}
 
 static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=right
     if (balance>0.f) {
@@ -817,34 +831,7 @@ static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=
     }
 }
 
-#define envfollow(x, ...) (update_envfollow(__LINE__, x, ##__VA_ARGS__)) // has a vu meter...
-#define envfollow_novu(x, ...) (update_envfollow(-1, x, ##__VA_ARGS__)) // no vu meter...
-#define vu(x, ...) (add_vu(__LINE__, x, ##__VA_ARGS__))
 
-static inline void add_vu(int line, float x, float thresh) {
-    int idx = G->env_followers_idx[0]++;
-    if (idx >= 64) return ;
-    env_follower_t *ef = &G->env_followers[0][idx];
-    ef->y = x;
-    ef->line = line;
-    ef->thresh = thresh;
-}
-
-static inline float update_envfollow(int line, float x, float thresh = 0.25f, float decay=0.2f, float attack = 0.f) {
-    int idx = G->env_followers_idx[0]++;
-    if (idx >= 64) return x;
-    env_follower_t *ef = &G->env_followers[0][idx];
-    ef->line = line;
-    ef->thresh = thresh;
-    x = ef->lp += (x-ef->lp)*0.01f;
-    float d = x-ef->y;
-    ef->y += d * env_k((d>0.f) ? attack : decay);
-    return max(ef->y, thresh);
-}
-
-static inline float update_envfollow(int line, stereo x, float thresh = 0.25f, float decay=0.2f, float attack = 0.f) {
-    return update_envfollow(line, max(fabsf(x.l), fabsf(x.r)), thresh, decay, attack);
-}
 
 
 stereo limiter(float state[2] , stereo inp);
@@ -914,7 +901,6 @@ __attribute__((visibility("default"))) void *dsp(song_base_t *_G, stereo *audio,
     int dt_q32 = G->playing ? G->bpm * (4294967296.0 / (SAMPLE_RATE * 240.0)) : 0; // on the order of 22000
     G->dt = dt_q32 *(1./4294967296.);
     for (int i = 0; i < frames; i++) {
-        G->env_followers_idx[0] = 0;
         probe = {};
         G->t=G->t_q32*(1./4294967296.);
         //G->t=swing(G->t);
@@ -926,10 +912,6 @@ __attribute__((visibility("default"))) void *dsp(song_base_t *_G, stereo *audio,
         G->t_q32 += dt_q32;
         G->reloaded = 0;
     }
-    int n = G->env_followers_idx[0];
-    if (n>64) n=64;
-    memcpy(G->env_followers[1], G->env_followers[0], sizeof(G->env_followers[0][0]) * n);
-    G->env_followers_idx[1] = n;
     return G;
 }
 

@@ -9,7 +9,14 @@
 #include "3rdparty/stb_ds.h"
 #include "miniparse.h"
 #include "multiband.h"
+#include "ansicols.h"
 
+const static char *param_names[P_LAST] = {
+    #define X(x, shortname, ...) shortname,
+    #include "params.h"
+    };
+    
+    
 bool get_key(int key) { return G && G->get_key_func && G->get_key_func(key); }
 
 void update_camera_matrix(camera_state_t *cam) {
@@ -568,14 +575,70 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     return au;
 }
 
-stereo synth_t::operator()(const char *pattern_name, float level, int max_voices) {
+void printf_bar(float v, int width=16) {
+    static const char *blocks[] = { " ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█" };
+    int i, full, sub;
+    float x;
+    if (v < 0.f) v = 0.f;
+    else if (v > 1.f) v = 1.f;
+    x = v * width;
+    full = (int)x;
+    x = (x - full) * 8.f;
+    sub = (int)(x + 0.5f);
+    if (sub > 8) { sub = 0; full++; }
+    for (i = 0; i < width; ++i) {
+        if (i < full) fputs(blocks[8], stdout);                 // full block
+        else if (i == full && sub > 0 ) fputs(blocks[sub], stdout); // partial
+        else fputs(" ", stdout);
+    }
+}
+
+void synth_t::debug_draw_voices(void) const {
+    printf(CURSOR_TO_HOME);
+    for (int i=0;i<synth_t::max_voices;i++) {
+        const voice_state_t *v = &voices[i];
+        printf("%02d ", i);
+        bool keydown = G->playing && v->h.valid_params && (v->h.t0 <= G->t && v->h.t1 > G->t);
+        if (v->in_use == EInUse::IN_USE) 
+            printf(keydown ? COLOR_GREEN "*" : COLOR_RED "*");
+        else if (v->in_use == EInUse::ALLOCATED)
+            printf(COLOR_YELLOW ">");
+        else if (v->in_use == EInUse::UNUSED)
+            printf(COLOR_GREY " ");
+        else 
+            printf(COLOR_RED "?");
+        printf("id=%04x %5.1f-%5.1f ", v->h.hapid&0xffff, v->h.t0, v->h.t1);
+        float env_level = fabsf(v->adsr1.state[0]);
+        printf(COLOR_CYAN "%4.2f", env_level);
+        printf_bar(env_level, 8);
+        printf(COLOR_RESET " ");
+
+        const hap_t *hap = &v->h;
+        for (int i = 0; i < P_LAST; i++) {
+            if (hap->valid_params & (1ull << i)) {
+                if (i == P_SOUND) {
+                    Sound *sound = get_sound_by_index((int)hap->params[i]);
+                    printf("s=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", sound ? sound->name : "<missing>");
+                } else if (i == P_NOTE) {
+                    printf("note=" COLOR_BRIGHT_YELLOW "%s" COLOR_RESET " ", print_midinote((int)hap->params[i]));
+                } else {
+                    printf("%s=" COLOR_BRIGHT_YELLOW "%5.2f" COLOR_RESET " ", param_names[i], hap->params[i]);
+                }
+            }
+        }
+        printf(CLEAR_TO_END_OF_LINE "\n");
+    }
+    printf("---------------------" CLEAR_TO_END_OF_LINE "\n");
+}
+
+stereo synth_t::operator()(const char *pattern_name, float level_target, int max_voices, bool debug_draw) {
     if (max_voices > synth_t::max_voices)
         max_voices = synth_t::max_voices;
     if (max_voices < 1)
         return {};
-    if (level < 0.f)
-        level = 0.f;
-    level = level * level;
+    if (level_target < 0.f)
+        level_target = 0.f;
+    level_target = level_target * level_target;
 
     if ((G->sampleidx % 96) == 0) {
         memset(audio, 0, sizeof(audio));
@@ -585,7 +648,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
         hap_t haps[8];
         hap_span_t hs = {};
         if (p && G->playing)
-            hs = p->make_haps({haps, haps + 8}, 8, (level > 0.f) ? G->iTime : -1.f, to);
+            hs = p->make_haps({haps, haps + 8}, 8, (level_target > 0.f) ? G->iTime : -1.f, to);
         pretty_print_haps(hs, from, to);
         for (hap_t *h = hs.s; h < hs.e; h++) {
             if (!(h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from))
@@ -594,7 +657,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             if (i < 0 || i >= max_voices) {
                 for (; i < max_voices; ++i) {
                     hap_t *existing_hap = &voices[i].h;
-                    if (existing_hap->hapid == h->hapid && existing_hap->t0 == h->t0 && existing_hap->valid_params)
+                    if (existing_hap->hapid == h->hapid && existing_hap->t0 == h->t0)
                         break;
                 }
                 if (i == max_voices) {
@@ -603,7 +666,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                     }
                     // ok its a new voice.
                     // find oldest one to steal
-                    i = 0;
+                    i = -1;
                     //float quietest = 1e10f;
                     double oldest_t = 1e10;
                     for (int j = 0; j < max_voices; ++j) {
@@ -614,11 +677,16 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                         //float lvl = fabsf(voices[j].adsr1.state[0]);
                         double t = voices[j].h.t0;
                         //if (voices[j].cur_power < quietest && voices[j].h.t1 < to) {
-                        if (voices[j].h.t0 < oldest_t && voices[j].h.t1 < to) {
-                            //quietest = voices[j].cur_power;
-                            oldest_t = t;
+                        hap_time t0 = voices[j].h.t0;
+                        if (!voices[j].h.valid_params) t0 = -1000.;
+                        if (t0 < oldest_t && voices[j].h.t1 < to) {
+                            oldest_t = t0;
                             i = j;
                         }
+                    }
+                    if (i<0) {
+                        printf("no voice found to steal\n");
+                        continue;
                     }
                     if (voices[i].in_use != EInUse::UNUSED) {
                         printf("voice %d stolen, %f\n", i, voices[i].adsr1.state[0]);
@@ -626,7 +694,7 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 }
             }
             // end of voice allocation
-            assert(i < max_voices);
+            assert(i < max_voices && i>=0);
             if (h->t0 < to && h->t0 >= from) {
                 // trigger voices at the right time.
                 voices[i].h.valid_params = 0;
@@ -694,9 +762,11 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             double dphase = exp2((note - C3) / 12.f);         // midi2dphase(note);
             float key_track_gain = exp2((note - C3) / -36.f); // gentle falloff of high notes
             
-            float newlevel = level * key_track_gain * newtrem;
+            level_target = level_target * 0.2f + level * 0.8f; // smooth level target.
+            float newlevel = level_target * key_track_gain * newtrem;
             float curlevel = level * key_track_gain * oldtrem;
             float dlevel = (newlevel - curlevel) / (96.f - first_smpl);
+            level = level_target;
 
             float sustain = square(h->get_param(P_SUS, 1.f));
             float attack_k = env_k(h->get_param(P_ATT, 0.f));
@@ -731,9 +801,6 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
             float env2fold = h->get_param(P_ENV2FOLD, 0.f);
             float k_glide = env_k(0.5f * h->get_param(P_GLIDE, 0.f));
             hap_time t = from + first_smpl * G->dt;
-            if (!G->playing) {
-                v->h.hapid = 0;
-            }
             if (v->phase <= 0.)
                 v->phase = dphase;
             for (int smpl = first_smpl; smpl < 96; smpl++, t += G->dt) {
@@ -752,13 +819,17 @@ stereo synth_t::operator()(const char *pattern_name, float level, int max_voices
                 curlevel += dlevel;
                 if (v->in_use != EInUse::IN_USE) {
                     printf("voice %d released - from %f to %f - now %d\n", i, from, to, num_in_use);
-                    h->t0 = -1e10; // mark it as 'old'.
                     break;
                 }
             } // voice sample loop
             num_in_use++;
         } // voice loop
     } // are we first sample of 96 sample block loop
+    if (debug_draw) {
+        if ((G->sampleidx % 9600) == 0) {
+            debug_draw_voices();
+        }
+    }
     return audio[G->sampleidx % 96];
 }
 

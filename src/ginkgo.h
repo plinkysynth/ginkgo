@@ -924,7 +924,9 @@ typedef struct synth_t {
     stereo audio[96];
     voice_state_t voices[max_voices]; // one voice per voice.
     int num_in_use;
-    stereo operator()(const char *pattern_name, float level=1.f, int max_voices = 16);
+    float level;
+    stereo operator()(const char *pattern_name, float level=1.f, int max_voices = 16, bool debug_draw = false);
+    void debug_draw_voices(void) const;
 } synth_t;
 
 

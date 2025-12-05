@@ -1,6 +1,7 @@
 #pragma once
 typedef void (*midi_receive_cb)(uint8_t data[3], void *user);
 void midi_send(uint8_t data0, uint8_t data1, uint8_t data2);
+void midi_send_many(const uint8_t *triplets, size_t count);
 void midi_init(midi_receive_cb cb, void *cb_user);
 
 uint8_t plinky12_connected = 0;
@@ -10,6 +11,7 @@ uint8_t plinky12_leds_sent[16][16] = {0};
 uint8_t plinky12_pressures[16][16] = {0};
 uint16_t plinky12_down[16] = {0}; // by COLUMN, ie index by x
 uint8_t hot_led = 0; // we slowly cycle through the leds and update at least this one per frame, in order to update a freshly rebooted device.
+uint8_t next_led = 0;
 float plinky12_scale_root = 0;
 uint32_t plinky12_scale_bits = 0;
 int plinky12_octave = 0;
@@ -38,7 +40,7 @@ void on_midi_input(uint8_t data[3], void *user) {
                 }
                 if (tot > 48) {
                     ytot=(ytot*127)/(tot*7);
-                    G->midi_cc[16 + note-8] = ytot;
+                    G->midi_cc[16 + chan-8] = ytot;
                 }
             }
             if (!old_pressure && data[2]>0) {
@@ -50,6 +52,9 @@ void on_midi_input(uint8_t data[3], void *user) {
                 }
                 else if (chan==15 && note == 0) {
                     G->playing = !G->playing;
+                }
+                else if (chan==14 && note == 0) {
+                    G->t_q32 = 0;
                 }
                 else if (note>0 && note<=8 && chan>=8) {
                     G->mutes ^= (1<<(chan-8));
@@ -87,18 +92,29 @@ void on_midi_input(uint8_t data[3], void *user) {
 void update_plinky12_leds(void) {
     if (!plinky12_connected)
         return;
-    for (int y=0;y<16;y++) {
-        for (int x=0;x<16;x++) {
-            if (plinky12_leds[y][x] != plinky12_leds_sent[y][x] || hot_led == y*16 + x) {
-                uint8_t col = plinky12_leds[y][x];
-                if (col&128)
-                    midi_send(0xb0+x, 32+y, (col&15)+(col/32)*16); // double brightness
-                else
-                    midi_send(0xb0+x, 16+y, col);
+    const static int max_triplets = 64;
+    uint8_t triplets[max_triplets*3];
+    int n=0;
+    for (int i =0; i<256 && n<max_triplets*3; i++) {
+        int x = next_led & 15;
+        int y = next_led >> 4;
+        next_led++;
+        if (next_led == 0) hot_led++;
+        if (plinky12_leds[y][x] != plinky12_leds_sent[y][x] || hot_led == y*16 + x) {
+            uint8_t col = plinky12_leds[y][x];
+            if (col&128) {
+                triplets[n++] = 0xb0+x;
+                triplets[n++] = 32+y;
+                triplets[n++] = (col&15)+(col/32)*16;
+            } else {
+                triplets[n++] = 0xb0+x;
+                triplets[n++] = 16+y;
+                triplets[n++] = col;
             }
         }
     }
-    hot_led = (hot_led + 1);
+    if (n > 0)
+        midi_send_many(triplets, n/3);
 }
 
 #ifdef __APPLE__
@@ -154,11 +170,34 @@ void midi_open_output(int index) {
 void midi_send(uint8_t data0, uint8_t data1, uint8_t data2) {
     if (!midi_state.out_dst)
         return;
-    Byte buffer[3 + 100];
+    Byte buffer[256];
     MIDIPacketList *pktlist = (MIDIPacketList *)buffer;
     MIDIPacket *pkt = MIDIPacketListInit(pktlist);
     uint8_t data[3] = {data0, data1, data2};
     MIDIPacketListAdd(pktlist, sizeof(buffer), pkt, 0, 3, data);
+    MIDISend(midi_state.out_port, midi_state.out_dst, pktlist);
+}
+
+void midi_send_many(const uint8_t *triplets, size_t count) {
+    if (!midi_state.out_dst || count == 0) return;
+
+    Byte buffer[1024];
+    MIDIPacketList *pktlist = (MIDIPacketList *)buffer;
+    MIDIPacket *pkt = MIDIPacketListInit(pktlist);
+
+    // triplets is [status0,data10,data20, status1,data11,data21, ...]
+    for (size_t i = 0; i < count; ++i) {
+        MIDITimeStamp ts = 0; // or mach_absolute_time() if you care
+        MIDIPacket *next = MIDIPacketListAdd(
+            pktlist, sizeof(buffer), pkt, ts, 3, &triplets[i * 3]
+        );
+        if (!next) {
+            printf("midi_send_many: buffer full\n");
+            break; // buffer full
+        }
+        pkt = next;
+    }
+
     MIDISend(midi_state.out_port, midi_state.out_dst, pktlist);
 }
 

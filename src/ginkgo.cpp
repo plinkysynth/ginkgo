@@ -2665,17 +2665,18 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 8; i++) {
             float lvl = G->vus[i].y;
             lvl = saturate(1.f + lin2db(lvl) / 40.f);
-            float cclvl = cc(i);
+            float cclvl = G->midi_cc[16 + i] / 127.f;
+            bool muted = (G->mutes & (1<<i));
             for (int y = 0; y < 7; ++y) {
                 int bri = clamp(int((lvl * 7.f - y) * 8.f + 0.5f), 0, 8);
                 int hue = (y == 7) ? 1 : 7;
                 plinky12_leds[7 - y][i + 8] = bri * 16 + hue;
                 const static int hues[8] = {1, 1, 3, 3, 5, 5, 15, 15};
-                bri = clamp(int((cclvl * 8.f - y) * 8.f + 0.5f), 0, 8);
-                hue = hues[i];
+                bri = clamp(int((cclvl * 8.f - y) * 8.f + 0.5f), 0, 8) + muted;
+                hue = muted ? 0 :hues[i];
                 plinky12_leds[15 - y][i + 8] = bri * 16 + hue;
             }
-            plinky12_leds[8][i + 8] = (G->mutes & (1<<i)) ? 0xf0 : 0x20;
+            plinky12_leds[8][i + 8] = muted ? 0xf0 : 0x20;
             int scale_bits = plinky12_scale_bits;
             if (!scale_bits) scale_bits = 0b101010110101; // white notes
             for (int y = 0; y < 16; ++y) {

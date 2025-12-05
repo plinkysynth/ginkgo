@@ -17,3 +17,12 @@
 #define COLOR_BRIGHT_CYAN "\033[96m"
 #define COLOR_BRIGHT_WHITE "\033[97m"
 #define COLOR_GREY "\033[90m"
+
+#define CURSOR_TO_HOME "\033[H"
+#define CURSOR_TO_LINE(line) "\033[" #line "H"
+#define CURSOR_TO_COLUMN(column) "\033[" #column "G"
+#define CURSOR_TO_POSITION(line, column) "\033[" #line ";" #column "H"
+#define CURSOR_TO_END_OF_LINE "\033[K"
+#define CURSOR_TO_START_OF_LINE "\033[1K"
+#define CURSOR_TO_START_OF_LINE "\033[1K"
+#define CLEAR_TO_END_OF_LINE "\033[0K"

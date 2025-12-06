@@ -467,6 +467,20 @@ typedef struct song_base_t {
     env_follower_t vus[8];
     uint8_t reloaded;
     uint8_t playing;
+
+    // plinky12 state
+    uint8_t plinky12_connected;
+    uint8_t mu8_connected;
+    uint8_t plinky12_leds[16][16];
+    uint8_t plinky12_leds_sent[16][16];
+    uint8_t plinky12_pressures[16][16];
+    uint16_t plinky12_down[16]; // by COLUMN, ie index by x
+    double plinky12_trigger_time[16][16]; // by COLUMN, ie index by x
+    float plinky12_scale_root;
+    uint32_t plinky12_scale_bits;
+    int plinky12_octave;
+    //
+    
     void init(void) {}
     
 } song_base_t;
@@ -506,6 +520,13 @@ typedef struct hap_t {
     inline void set_param(int param, float value) { params[param] = value; valid_params |= 1ull << param; }
     bool has_param(int param) const { return valid_params & (1ull << param); }
 } hap_t;
+
+static inline int plinky_pad_to_note(int x, int y) {
+    int whitenoteidx =  x * 4 + 15 - y;
+    int octave = whitenoteidx / 7 + G->plinky12_octave + 2;
+    const static int whitenotes[8] = {0, 2, 4, 5, 7, 9, 11,12};
+    return octave * 12 + whitenotes[whitenoteidx % 7];
+}
 
 typedef struct adsr_t {
     float state[1];

@@ -649,7 +649,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
         hap_span_t hs = {};
         if (p && G->playing)
             hs = p->make_haps({haps, haps + 8}, 8, (level_target > 0.f) ? G->iTime : -1.f, to);
-        pretty_print_haps(hs, from, to);
+        //pretty_print_haps(hs, from, to);
         for (hap_t *h = hs.s; h < hs.e; h++) {
             if (!(h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from))
                 continue;
@@ -685,11 +685,11 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
                         }
                     }
                     if (i<0) {
-                        printf("no voice found to steal\n");
+                        //printf("no voice found to steal\n");
                         continue;
                     }
                     if (voices[i].in_use != EInUse::UNUSED) {
-                        printf("voice %d stolen, %f\n", i, voices[i].adsr1.state[0]);
+                        //printf("voice %d stolen, %f\n", i, voices[i].adsr1.state[0]);
                     }
                 }
             }
@@ -704,7 +704,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
                 voices[i].in_use = EInUse::ALLOCATED;
                 voices[i].vibphase = rnd01();
                 voices[i].tremphase = 0.f;
-                printf("voice %d allocated, now %d\n", i, num_in_use);
+                //printf("voice %d allocated, now %d\n", i, num_in_use);
             }
             hap_t *dst = &voices[i].h;
             if (dst->hapid != h->hapid) {
@@ -719,6 +719,9 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
                 // however we do set inuse to allocated, to force an envelope retrig.
                 voices[i].in_use = EInUse::ALLOCATED;
             }
+            // actually lets always update t1, useful for live midi playing where we dont know when its going to end...
+            dst->t1 = h->t1; 
+
             merge_hap(dst, h);
         }
         /////////////////////
@@ -758,9 +761,11 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
             float oldtrem = square(1.f - trem - trem * cosf(v->tremphase * TAU));
             v->tremphase = frac(v->tremphase + tremfreq * 96.f * 8.f * G->dt);
             float newtrem = square(1.f - trem - trem * cosf(v->tremphase * TAU));
+            float lpg = h->get_param(P_LPG, 0.f);
+            float key_track_amount = saturate(1.f - lpg);
 
             double dphase = exp2((note - C3) / 12.f);         // midi2dphase(note);
-            float key_track_gain = exp2((note - C3) / -36.f); // gentle falloff of high notes
+            float key_track_gain = exp2(((note - C3) / -36.f) * key_track_amount); // gentle falloff of high notes
             
             level_target = level_target * 0.2f + level * 0.8f; // smooth level target.
             float newlevel = level_target * key_track_gain * newtrem;
@@ -808,17 +813,18 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
                 bool keydown = G->playing && t < h->t1 + G->dt * 0.5f;
                 bool retrig = v->in_use < EInUse::IN_USE;
                 float env1 = v->adsr1(keydown ? gate : 0.f, attack_k, decay_k, sustain, release_k, retrig);
-                float env2 = v->adsr2(keydown ? gate : 0.f, attack2_k, decay2_k, sustain2, release2_k, retrig);
-                float cutoff_actual = max(20.f, cutoff * (min(1.f, 1.f - env2vcf) + env2 * env2vcf));
+                float env2 = v->adsr2(keydown ? 1.f : 0.f, attack2_k, decay2_k, sustain2, release2_k, retrig);
+                float lpg_amount = lerp(1.f, env1 * env1, lpg);
+                float cutoff_actual = max(20.f, lpg_amount * cutoff * (min(1.f, 1.f - env2vcf) + env2 * env2vcf));
                 float fold_actual = fold_amount * (min(1.f, 1.f - env2fold) + env2 * env2fold);
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
-                audio[smpl] += v->synth_sample(h, keydown, env1, env2, fold_actual, dist_actual, cutoff_actual, w) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
+                audio[smpl] += v->synth_sample(h, keydown, lerp(env1, 1.f, lpg), env2, fold_actual, dist_actual, cutoff_actual, w) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
                 v->cur_power += fabsf(audio[smpl].l) + fabsf(audio[smpl].r);
 
                 curlevel += dlevel;
                 if (v->in_use != EInUse::IN_USE) {
-                    printf("voice %d released - from %f to %f - now %d\n", i, from, to, num_in_use);
+                    //printf("voice %d released - from %f to %f - now %d\n", i, from, to, num_in_use);
                     break;
                 }
             } // voice sample loop

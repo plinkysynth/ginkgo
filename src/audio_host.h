@@ -102,17 +102,18 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         G->cpu_usage_smooth = cpu_usage;
     else
         G->cpu_usage_smooth = G->cpu_usage_smooth * 0.999f + cpu_usage * 0.001f;
-    if (!wav_recording) {
-        wav_recording = fopen("recording.wav", "wb");
-        write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
-    }
-    if (wav_recording) {
-        fwrite(audio, sizeof(stereo), frames * OVERSAMPLE, wav_recording);
-        int pos = ftell(wav_recording);
-        fseek(wav_recording, 0, SEEK_SET);
-        write_wav_header(wav_recording, G->sampleidx, SAMPLE_RATE, 2);
-        fseek(wav_recording, 0, SEEK_END);
-    }
+    // TODO: move this to a thread.
+    // if (!wav_recording) {
+    //     wav_recording = fopen("recording.wav", "wb");
+    //     write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
+    // }
+    // if (wav_recording) {
+    //     fwrite(audio, sizeof(stereo), frames * OVERSAMPLE, wav_recording);
+    //     int pos = ftell(wav_recording);
+    //     fseek(wav_recording, 0, SEEK_SET);
+    //     write_wav_header(wav_recording, G->sampleidx, SAMPLE_RATE, 2);
+    //     fseek(wav_recording, 0, SEEK_END);
+    // }
 
     // downsample the output audio and update the scopes...
 #define K 16 // the kernel has this many non-center non-zero taps.

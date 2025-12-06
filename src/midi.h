@@ -4,17 +4,9 @@ void midi_send(uint8_t data0, uint8_t data1, uint8_t data2);
 void midi_send_many(const uint8_t *triplets, size_t count);
 void midi_init(midi_receive_cb cb, void *cb_user);
 
-uint8_t plinky12_connected = 0;
-uint8_t mu8_connected = 0  ;
-uint8_t plinky12_leds[16][16] = {0};
-uint8_t plinky12_leds_sent[16][16] = {0};
-uint8_t plinky12_pressures[16][16] = {0};
-uint16_t plinky12_down[16] = {0}; // by COLUMN, ie index by x
 uint8_t hot_led = 0; // we slowly cycle through the leds and update at least this one per frame, in order to update a freshly rebooted device.
 uint8_t next_led = 0;
-float plinky12_scale_root = 0;
-uint32_t plinky12_scale_bits = 0;
-int plinky12_octave = 0;
+
 void on_midi_input(uint8_t data[3], void *user) {
     if (!G)
         return;
@@ -24,18 +16,21 @@ void on_midi_input(uint8_t data[3], void *user) {
     //printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
     if (type==10 || type==9 || type==8) {
         int note = data[1]-60;
-        if (plinky12_connected && note>=0 && note<16) {
-            uint8_t old_pressure = plinky12_pressures[note][chan];
-            plinky12_pressures[note][chan] = data[2];
-            if (data[2]>0)
-                plinky12_down[chan] |= (1<<note);
-            else
-                plinky12_down[chan] &= ~(1<<note);
+        int pressure = data[2];
+        if (G->plinky12_connected && note>=0 && note<16) {
+            uint8_t old_pressure = G->plinky12_pressures[note][chan];
+            G->plinky12_pressures[note][chan] = pressure;
+            if (pressure>0) {
+                if (old_pressure==0) 
+                   G->plinky12_trigger_time[note][chan] = -1.;
+                G->plinky12_down[chan] |= (1<<note);
+            } else
+                G->plinky12_down[chan] &= ~(1<<note);
             if (chan>=8 && note>8) {
                 // slider
                 int tot=0,ytot=0;
                 for (int y=0;y<7;y++) {
-                    int p = plinky12_pressures[15-y][chan];
+                    int p = G->plinky12_pressures[15-y][chan];
                     tot+=p; ytot+=y*p; 
                 }
                 if (tot > 48) {
@@ -43,12 +38,12 @@ void on_midi_input(uint8_t data[3], void *user) {
                     G->midi_cc[16 + chan-8] = ytot;
                 }
             }
-            if (!old_pressure && data[2]>0) {
-                if (chan==8 && note == 0 && plinky12_octave>0) {
-                    plinky12_octave--;
+            if (!old_pressure && pressure>0) {
+                if (chan==8 && note == 0 && G->plinky12_octave>-2) {
+                    G->plinky12_octave--;
                 }
-                else if (chan==9 && note == 0 && plinky12_octave<3) {
-                    plinky12_octave++;
+                else if (chan==9 && note == 0 && G->plinky12_octave<2) {
+                    G->plinky12_octave++;
                 }
                 else if (chan==15 && note == 0) {
                     G->playing = !G->playing;
@@ -90,7 +85,7 @@ void on_midi_input(uint8_t data[3], void *user) {
 }
 
 void update_plinky12_leds(void) {
-    if (!plinky12_connected)
+    if (!G->plinky12_connected)
         return;
     const static int max_triplets = 64;
     uint8_t triplets[max_triplets*3];
@@ -100,8 +95,8 @@ void update_plinky12_leds(void) {
         int y = next_led >> 4;
         next_led++;
         if (next_led == 0) hot_led++;
-        if (plinky12_leds[y][x] != plinky12_leds_sent[y][x] || hot_led == y*16 + x) {
-            uint8_t col = plinky12_leds[y][x];
+        if (G->plinky12_leds[y][x] != G->plinky12_leds_sent[y][x] || hot_led == y*16 + x) {
+            uint8_t col = G->plinky12_leds[y][x];
             if (col&128) {
                 triplets[n++] = 0xb0+x;
                 triplets[n++] = 32+y;
@@ -247,24 +242,24 @@ void midi_init(midi_receive_cb cb, void *cb_user) {
                 in_idx = i;
             else
                 out_idx = i - ni;
-            plinky12_connected |= (i < ni) ? 1 : 2;
-            mu8_connected = 0;
+            G->plinky12_connected |= (i < ni) ? 1 : 2;
+            G->mu8_connected = 0;
         }
         if (strstr(name, "Music Thing Modular")) {
             if (i < ni)
                 in_idx = i;
             else
                 out_idx = i - ni;
-            plinky12_connected = 0;
-            mu8_connected |= (i < ni) ? 1 : 2;
+            G->plinky12_connected = 0;
+            G->mu8_connected |= (i < ni) ? 1 : 2;
         }
     }
-    if (plinky12_connected < 3)
-        plinky12_connected = 0;
+    if (G->plinky12_connected < 3)
+        G->plinky12_connected = 0;
     else
         printf(COLOR_RED "plinky12 connected" COLOR_RESET "\n");
-    if (mu8_connected < 3)
-        mu8_connected = 0;
+    if (G->mu8_connected < 3)
+        G->mu8_connected = 0;
     else
         printf(COLOR_RED "mu8 connected" COLOR_RESET "\n");
     if (ni > 0) {

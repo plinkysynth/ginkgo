@@ -35,5 +35,6 @@ X(P_HPF, "hpf", 0, 5)
 X(P_TIMESTRETCH, "stretch", 1.f, 5)
 X(P_GRAIN_SIZE, "grain", 1, 5)
 X(P_JITTER, "jitter", 0, 5)
+X(P_LPG, "lpg", 0.f, 5)
 X(P_SCALEBITS, "scale", 0.f, 5)
 #undef X

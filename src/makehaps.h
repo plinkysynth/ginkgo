@@ -424,7 +424,49 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     }
     case N_MIDI: {
-        if (dst.s < dst.e) {
+        bool emitted_any = false;
+        if (cursor_in_midi && G->plinky12_connected) {
+            bool mono = true;
+            for (int x=0;x<8;x++) if (G->plinky12_down[x]) {
+
+                int down = G->plinky12_down[x];
+                int ptot=0, ytot=0;
+                if (mono) {
+                    while (down && dst.s < dst.e) {
+                        int y = __builtin_ctz(down);
+                        down &= ~(1<<y);
+                        int p = G->plinky12_pressures[y][x];
+                        ytot+=y*p;
+                        ptot+=p;
+                    }
+                    if (ptot) {
+                        ytot/=ptot;
+                        down = 1<<ytot;
+                    }
+                }
+                while (down && dst.s < dst.e) {
+                    int y = __builtin_ctz(down);
+                    down &= ~(1<<y);
+                    int note = plinky_pad_to_note(x,y);
+                    dst.s->hapid = hash2_pcg(hapid, y);
+                    if (G->plinky12_trigger_time[y][x] < 0.) {
+                        G->plinky12_trigger_time[y][x] = when;
+                    }
+                    dst.s->t0 = G->plinky12_trigger_time[y][x];
+                    dst.s->t1 = when + 0.125f; // play for a bit...
+                    dst.s->valid_params = (1 << P_NOTE) | (1 << P_GATE) | (mono << P_STRING);
+                    dst.s->params[P_NOTE] = note;
+                    dst.s->params[P_STRING] = x;
+                    int p = mono ? ptot : G->plinky12_pressures[y][x];
+                    dst.s->params[P_GATE] = clamp(p/127.f, 0.f, 1.f);
+                    dst.s++;
+                    emitted_any = true;
+                    
+                }
+            }
+        }
+
+        if (!emitted_any && dst.s < dst.e) {
             // apppend a dummy hap
             *dst.s++ = hap_t{
                 .hapid = hapid,

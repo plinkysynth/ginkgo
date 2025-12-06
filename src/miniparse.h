@@ -91,6 +91,7 @@ typedef struct pattern_t { // a parsed version of a min notation string
     float x, y;
     float last_scale_root;
     uint32_t last_scale_bits;
+    int cursor_in_midi;
     float get_near_output(pattern_t *other) const {
         if (!other)
             return 0.f;

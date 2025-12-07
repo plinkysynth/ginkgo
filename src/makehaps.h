@@ -425,7 +425,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
     case N_MIDI: {
         bool emitted_any = false;
-        if (cursor_in_midi && G->plinky12_connected) {
+        if (G->cursor_in_pattern == this && G->plinky12_connected) {
             bool mono = true;
             for (int x=0;x<8;x++) if (G->plinky12_down[x]) {
 

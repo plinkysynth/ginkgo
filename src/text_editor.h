@@ -1537,7 +1537,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     int cursor_token_start_idx = 0;
     int cursor_token_end_idx = 0;
     pattern_t *cursor_in_pattern = NULL;
-    int cursor_in_midi = 0;
+    
     int pattern_entry_idx = -1;
     int pattern_mode = 0; // if >0, we are parsing pattern not C; we code colour differently, and only exit when we leave.
 #define INVALID_LINE 0x7fffffff
@@ -1649,10 +1649,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
                     const char *s = t.str + i;
                     ///////// START OF A NEW PATTERN
                     jump_after_columns();
-                    if (cur_pattern) {
-                        cur_pattern->cursor_in_midi = cursor_in_midi;
-                        cursor_in_midi = 0;
-                    }
                     cur_pattern = get_pattern(temp_cstring_from_span(s, e));
                     cur_pattern_line = 0;
                     stbds_arrsetlen(hilites, 0);
@@ -1908,9 +1904,6 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 cursor_in_pattern = cur_pattern;
                 G->plinky12_scale_root = cur_pattern->last_scale_root;
                 G->plinky12_scale_bits = cur_pattern->last_scale_bits;
-                if (j-i==4 && strncmp(t.str+i, "midi", 4)==0) {
-                    cursor_in_midi = 1;
-                }
             }
         }
         int starti = i;
@@ -2070,9 +2063,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 E->max_width = w;
         }
     }
-    if (cur_pattern) {
-        cur_pattern->cursor_in_midi = cursor_in_midi;
-    }
+    G->cursor_in_pattern = cursor_in_pattern;
     E->num_lines = t.y + 1 + E->intscroll_y;
     E->mouse_hovering_chart = false;
 

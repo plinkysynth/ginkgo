@@ -440,6 +440,7 @@ typedef struct song_base_t {
     uint8_t midi_cc[128];
     uint8_t mutes; // 8 mutes to go with the 8 ccs
     //uint32_t midi_cc_gen[128];
+    void *cursor_in_pattern; // compare pointer equality to pattern_t*
     int cursor_x, cursor_y;
     float mx, my;
     float mscrollx, mscrolly;

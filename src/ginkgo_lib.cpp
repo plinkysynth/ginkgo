@@ -523,11 +523,10 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
 }
 
 stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual,
-                                   float cutoff_actual, wave_t *w) {
+                                   float cutoff_actual, wave_t *w, bool *at_end) {
     stereo au;
-    bool at_end = false;
     if (w && w->sample_func) {
-        au = (w->sample_func)(this, h, w, &at_end);
+        au = (w->sample_func)(this, h, w, at_end);
     } else {
         if (in_use < EInUse::IN_USE) {
             // BELT AND BRACES: retrig the sample.
@@ -568,10 +567,6 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     float panpos = h->get_param(P_PAN, 0.5f);
     au = pan(au, panpos * 2.f - 1.f);
     au *= gain;
-    if (!keydown && (env1 < 0.01f || at_end)) {
-        h->valid_params = 0;
-        in_use = EInUse::UNUSED;
-    }
     return au;
 }
 
@@ -819,8 +814,14 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
                 float fold_actual = fold_amount * (min(1.f, 1.f - env2fold) + env2 * env2fold);
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
-                audio[smpl] += v->synth_sample(h, keydown, lerp(env1, 1.f, lpg), env2, fold_actual, dist_actual, cutoff_actual, w) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
+                bool at_end = false;
+                audio[smpl] += v->synth_sample(h, keydown, lerp(env1, 1.f, lpg), env2, fold_actual, dist_actual, cutoff_actual, w, &at_end) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
                 v->cur_power += fabsf(audio[smpl].l) + fabsf(audio[smpl].r);
+                if (!keydown && (env1 < 0.01f || at_end)) {
+                    h->valid_params = 0;
+                    v->in_use = EInUse::UNUSED;
+                }
+            
 
                 curlevel += dlevel;
                 if (v->in_use != EInUse::IN_USE) {

@@ -631,7 +631,7 @@ typedef struct voice_state_t {
     float tremphase;
     float cur_power;
     EInUse in_use;
-    stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w);
+    stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w, bool *at_end);
 } voice_state_t;
 
 // TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.

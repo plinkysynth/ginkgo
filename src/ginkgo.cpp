@@ -2698,6 +2698,28 @@ int main(int argc, char **argv) {
         G->plinky12_leds[0][9] = octave_brightnesses[clamp( G->plinky12_octave, 0, 3)] + 0x0d; 
         
 
+        //// fake midi generation when you press f5. quick way to test without plugging in a plinky12
+        {
+            static bool f5down_old = false;
+            static int f5x=0,f5y=0;
+            static float fyphase = 0.f;
+            fyphase+=0.05f;
+            if (fyphase > TAU) fyphase -= TAU;
+            bool f5down = glfwGetKey(win, GLFW_KEY_F5) == GLFW_PRESS;
+            int pressure= 64+(int)(sin(fyphase) * 32.f);
+            if (f5down && !f5down_old) {
+                f5x =rand()&7;
+                f5y =rand()&15;
+            }
+            if (f5down || f5down_old) {
+                int msg = 0xa0;
+                if (f5down && !f5down_old) msg = 0x90;
+                else if (!f5down && f5down_old) msg = 0x80;
+                uint8_t data[3] = {(uint8_t)(msg+f5x),(uint8_t)(60+f5y),(uint8_t)pressure};    
+                on_midi_input(data, NULL);
+            }
+            f5down_old = f5down;
+        }
 
         // draw a mini plinky12 display
         if (1 || G->plinky12_connected) {

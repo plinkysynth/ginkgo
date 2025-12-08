@@ -16,8 +16,8 @@ void on_midi_input(uint8_t data[3], void *user) {
     //printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
     if (type==10 || type==9 || type==8) {
         int note = data[1]-60;
-        int pressure = data[2];
-        if (G->plinky12_connected && note>=0 && note<16) {
+        int pressure = (type==8) ? 0 : data[2];
+        if (/*G->plinky12_connected && */note>=0 && note<16) {
             uint8_t old_pressure = G->plinky12_pressures[note][chan];
             G->plinky12_pressures[note][chan] = pressure;
             if (pressure>0) {
@@ -61,25 +61,6 @@ void on_midi_input(uint8_t data[3], void *user) {
         int oldccdata = G->midi_cc[cc];
         int newccdata = data[2];
         G->midi_cc[cc] = newccdata;
-        /*
-        uint32_t gen = G->midi_cc_gen[cc]++;
-        if (gen == 0)
-            oldccdata = newccdata;
-        if (newccdata != oldccdata && cc >= 16 && cc < 32 && closest_slider[cc - 16] != NULL) {
-            // 'pickup': if we are increasing and bigger, or decreasing and smaller, then pick up the value, or closer than 2
-            int sliderval = (int)clamp(closest_slider[cc - 16][0] * 127.f, 0.f, 127.f);
-            int mindata = min(oldccdata, newccdata);
-            int maxdata = max(oldccdata, newccdata);
-            int vel = newccdata - oldccdata;
-            if (vel < 0)
-                maxdata += (-vel) + 16;
-            else
-                mindata -= (vel) + 16; // add slop for velocity
-            if (sliderval >= mindata - 4 && sliderval <= maxdata + 4) {
-                closest_slider[cc - 16][0] = newccdata / 127.f;
-            }
-        }
-            */
     }
     // printf("midi: %02x %02x %02x\n", data[0], data[1], data[2]);
 }

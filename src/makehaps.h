@@ -425,7 +425,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
     case N_MIDI: {
         bool emitted_any = false;
-        if (G->cursor_in_pattern == this && G->plinky12_connected) {
+        if (G->cursor_in_pattern == this/* && G->plinky12_connected*/) {
             bool mono = true;
             for (int x=0;x<8;x++) if (G->plinky12_down[x]) {
 
@@ -1146,6 +1146,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       hap_t *target = srchaps[0];
                       hap_t *right_hap = srchaps[1];
                       float value = right_hap ? right_hap->get_param(P_NUMBER, 0.5f) : 0.5f;
+                      if (!target->has_param(P_REL)) target->set_param(P_REL, 0.005f);
                       if (value <= 0.f)
                           target->valid_params = 0;
                       else

@@ -205,12 +205,12 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
         char c = peek(p);
         if (c <= 0 || c == close)
             break;
-        if (c == '$') {
-            // $ is just used to bail to the lowest precedence. we skip it in lists.
-            consume(p, '$');
-            skipws(p);
-            continue;
-        }
+        // if (c == '$') {
+        //     // $ is just used to bail to the lowest precedence. we skip it in lists.
+        //     consume(p, '$');
+        //     skipws(p);
+        //     continue;
+        // }
         int i;
         if (list_delimeter <= 0) {
             i = parse_args(p, N_RANDOM, close, '|', allow_comma);
@@ -853,7 +853,15 @@ static int parse_expr(pattern_maker_t *p, int caller_precedence) {
         } else if (peek(p) == '(') {
             consume(p, '(');
             node = parse_euclid(p, node);
-        } else if (isopening(peek(p)) || isclosing(peek(p)) || peek(p) == '$') {
+        } else if (peek(p) == '$') {
+            if (caller_precedence > 0) {
+                break;
+            } else {
+                consume(p, '$');
+                skipws(p);
+                continue;
+            }
+        } else if (isopening(peek(p)) || isclosing(peek(p))) {
             break; // its a brace; break out of the loop
         } else if (peek(p) == '/' && isalpha(peek_i(p, p->i + 1))) {
             break; // its a call; break out of the loop
@@ -974,7 +982,8 @@ void test_minipat(void) {
     // const char *s = "{a b c, d e}%4";
     //const char *s = "blendnear [/foo /bar]";
     //const char *s = "<c^'C  q   A  i D'>@1-2";
-    const char *s = "[bd _ bd@2]";
+    //const char *s = "[bd _ bd@2]";
+    const char *s = "c3 sus 0 dec 0.3 $ : -1";
     //const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";

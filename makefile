@@ -59,7 +59,7 @@ $(error Unsupported platform)
 endif
 
 # per-config bits
-CXXFLAGS_debug  = -O0 #-fsanitize=address
+CXXFLAGS_debug  = -O1 #-fsanitize=address
 LDFLAGS_debug   = #-fsanitize=address
 CXXFLAGS_release = -O3
 LDFLAGS_release  =

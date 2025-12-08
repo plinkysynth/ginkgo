@@ -48,8 +48,16 @@ void multiband_t::operator()(stereo x, stereo out[3]) {
 
 // inf upward, 4:1 downward
 inline float compgain(float inp, float lothresh, float hithresh, float makeup) {
-	if (inp > hithresh) return min(32.f,sqrtf(sqrtf(hithresh/inp)) * makeup);
-    if (inp < lothresh) return min(32.f,lothresh/inp * makeup);
+	
+    if (inp > hithresh) return min(32.f,hithresh/inp * makeup);
+    //if (inp < lothresh) return min(32.f,lothresh/inp * makeup);
+    if (inp < lothresh) return min(32.f,sqrtf(sqrtf(lothresh/inp)) * makeup);
+    return makeup;
+}
+
+inline float logcompgain(float inp, float lothresh, float hithresh, float makeup) {
+    if (inp > hithresh) return hithresh-inp + makeup;
+    if (inp < lothresh) return (lothresh-inp)*0.75f + makeup;
     return makeup;
 }
 
@@ -57,28 +65,35 @@ inline float compgain(float inp, float lothresh, float hithresh, float makeup) {
 stereo ott_t::operator()(stereo rv, float amount) {
     stereo bands[3];
     // +5.2 on input then
-    const float inp_gain = db2lin(12.2);
+    const float inp_gain_db = 5.2;
+    const float inp_gain = db2lin(inp_gain_db);
+    const static float time_percent = 0.25f;
+    const static float attack_k_h = env_ms(13.5f * time_percent), release_k_h = env_ms(132.f * time_percent);
+    const static float attack_k_m = env_ms(22.4f * time_percent), release_k_m = env_ms(282.f * time_percent);
+    const static float attack_k_b = env_ms(47.8f * time_percent), release_k_b = env_ms(282.f * time_percent);
+    const float lothreshh = (-40.8),hithreshh=(-35.5);
+    const float lothreshm = (-41.8),hithreshm=(-30.2);
+    const float lothreshb = (-40.8),hithreshb=(-33.8);
+    const float makeuph = (10.3);
+    const float makeupm = (5.7);
+    const float makeupb = (5.3);
+
     multiband(rv * inp_gain, bands);
     // thresh, decay, attack
-    env[0](bands[0],0.01f, 0.001f);
-    env[1](bands[1],0.01f, 0.001f);
-    env[2](bands[2],0.01f, 0.001f);
-    float b=max(0.02f, env[0].y);
-    float m=max(0.02f, env[1].y);
-    float h=max(0.02f, env[2].y);
-    // -40.8 : -35.5 for hi,  inf:1 / 4:1
-    // -41.8 : -30.2 for mid 66 : 1 / 4:1
-    // -40.8 : -33.8 for lo  66 : 1 / 4:1
+    float b = env[0](bands[0],attack_k_b, release_k_b);
+    float m = env[1](bands[1],attack_k_m, release_k_m);
+    float h = env[2](bands[2],attack_k_h, release_k_h);
+    b=lin2db(max(0.002f, b));
+    m=lin2db(max(0.002f, m));
+    h=lin2db(max(0.002f, h));
+    // -40.8 : -35.5 for hi,  inf:1 / 4:1 - attack/release 13.5 / 132
+    // -41.8 : -30.2 for mid 66 : 1 / 4:1 - attack/release 22.4 / 282
+    // -40.8 : -33.8 for lo  66 : 1 / 4:1 - attack/release 47.8 / 282
     // +10.3 out for lo/hi, +5.7 out for mid
-    const float lothreshb = db2lin(-40.8),hithreshb=db2lin(-35.5);
-    const float lothreshm = db2lin(-41.8),hithreshm=db2lin(-30.2);
-    const float lothreshh = db2lin(-40.8),hithreshh=db2lin(-33.8);
-    const float makeupb = db2lin(10.3);
-    const float makeupm = db2lin(5.7);
-    const float makeuph = db2lin(8.3);
-    float bgain = lerp(1.f/inp_gain, compgain(b,lothreshb,hithreshb, makeupb), amount);
-    float mgain = lerp(1.f/inp_gain, compgain(m,lothreshm,hithreshm, makeupm), amount);
-    float hgain = lerp(1.f/inp_gain, compgain(h,lothreshh,hithreshh, makeuph), amount);
-    rv=sclip(bands[0] * bgain + bands[1] * mgain + bands[2] * hgain);
+    gain[0] = db2lin(lerp(-inp_gain_db, logcompgain(b,lothreshb,hithreshb, makeupb), amount));
+    gain[1] = db2lin(lerp(-inp_gain_db, logcompgain(m,lothreshm,hithreshm, makeupm), amount));
+    gain[2] = db2lin(lerp(-inp_gain_db, logcompgain(h,lothreshh,hithreshh, makeuph), amount));
+    rv=bands[0] * gain[0] + bands[1] * gain[1] + bands[2] * gain[2];
     return rv;
 }
+

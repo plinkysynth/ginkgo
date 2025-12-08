@@ -2423,11 +2423,17 @@ int main(int argc, char **argv) {
     ma_device dev;
     init_audio_midi(&dev);
 
+    wav_recording = fopen("recording.wav", "wb");
+    write_wav_header(wav_recording, 0, SAMPLE_RATE_OUTPUT, 2);
+    
     try_to_compile_audio(&tabs[TAB_AUDIO].last_compile_log);
+
+   
 
     double start_time = glfwGetTime();
     double prev_frame_time = 0.;
     while (!glfwWindowShouldClose(win)) {
+        pump_record_buffer();
         glfwPollEvents();
         glfwGetFramebufferSize(win, &G->fbw, &G->fbh);
         update_multitouch_dragging();
@@ -2742,7 +2748,7 @@ int main(int argc, char **argv) {
             }
             float yy = G->fbh - 16 * 10 - curE->font_height - 20.f;
             for (int y = 0; y < 16; y++) {
-                float xx = G->fbw - 16 * 10 + 8 - 128.f;
+                float xx = G->fbw - 16 * 10 + 8 - 64.f;
                 if (y == 0)
                     add_line(xx - 10.f, yy + 80.f, xx + 160.f, yy + 80.f, 0x40000000, -180.f);
                 for (int x = 0; x < 16; x++) {
@@ -2754,7 +2760,7 @@ int main(int argc, char **argv) {
             }
             yy -= 160.f;
             for (int y = 0; y < 16; y++) {
-                float xx = G->fbw - 16 * 10 + 8 - 128.f;
+                float xx = G->fbw - 16 * 10 + 8 - 64.f;
                 for (int x = 0; x < 16; x++) {
                     int p = G->plinky12_pressures[y][x];
                     if (p > 0) {
@@ -2867,6 +2873,36 @@ int main(int argc, char **argv) {
         // usleep(100000);
 
         update_plinky12_leds();
+
+        ott_t *ott = &G->ott;
+        float b=lin2db(max(0.00027f, ott->env[0].y));
+        float m=lin2db(max(0.00027f, ott->env[1].y));
+        float h=lin2db(max(0.00027f, ott->env[2].y));
+        const float lothreshh = (-40.8),hithreshh=(-35.5);
+        const float lothreshm = (-41.8),hithreshm=(-30.2);
+        const float lothreshb = (-40.8),hithreshb=(-33.8);
+        const float makeuph = (10.3);
+        const float makeupm = (5.7);
+        const float makeupb = (5.3);
+        
+        //printf("b: %f, m: %f, h: %f\n", b, m, h);
+        for (int band = 0; band < 3; band++) {
+            float lothresh = band == 0 ? lothreshb : band == 1 ? lothreshm : lothreshh;
+            float hithresh = band == 0 ? hithreshb : band == 1 ? hithreshm : hithreshh;
+            float makeup = band == 0 ? makeupb : band == 1 ? makeupm : makeuph;
+            float lvl = band == 0 ? b : band == 1 ? m : h;
+            float gain = lin2db(ott->gain[band]);
+            float xscale = 2.f;
+            float yscale = 10.f;
+            float xbase = G->fbw;
+            float ybase = 10.f;//G->fbh-curE->font_height-20.f;
+            float y = (2 - band) * yscale + ybase;
+            add_line(xbase-70.f * xscale, y, xbase + lothresh * xscale, y, 0xff004000, -yscale*0.4f);
+            add_line(xbase, y, xbase + hithresh * xscale, y, 0xff004000, -yscale*0.4f);
+            add_line(xbase+lvl*xscale, y-yscale*0.5f, xbase+lvl*xscale, y+yscale*0.5f, 0xffffffff, -yscale*0.2f);
+            add_line(xbase-70.f * xscale, y, xbase + lvl * xscale + gain * xscale, y, 0xff4080ff, -yscale*0.2f);
+            add_line(xbase-70.f * xscale, y, xbase + lvl * xscale + (gain - makeup) * xscale, y, 0xff00aacc, -yscale*0.2f);
+        }
     }
 
     dump_settings();

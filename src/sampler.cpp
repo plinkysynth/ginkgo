@@ -324,7 +324,7 @@ void dump_all_sounds(const char *fname) {
 }
 
 stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
-    if (v->in_use < EInUse::IN_USE) {
+    if (v->retrig) {
         //printf("RETRIG\n");
         v->phase = 0.f;
         v->grainphase = 0.f;

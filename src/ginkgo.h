@@ -405,26 +405,45 @@ typedef struct camera_state_t {
 
 typedef bool (*get_key_func_t)(int key);
 
-static inline float env_k(float x, float epsilon = 0.00025f) {
+static inline float env_k(float x, float epsilon = 0.001f) {
     // 0.00001 (e^-11) is a few seconds; 0.5 is fast.
     return 1.f - exp(-0.00001f / (x*x + epsilon));
 }
+
+static inline float env_ms(float ms) {
+    return 1.f - expf(-1.f / (SAMPLE_RATE  * 0.001f * ms));
+}
+
+const static float default_env_attack_k = env_ms(10.f);
+const static float default_env_decay_k = env_ms(100.f);
 
 struct env_follower_t {
     float lp;
     float y;
     int line;
-    float operator()(float x, float decay=0.1f, float attack = 0.05f) {
+    float operator()(float x, float attack_k=default_env_attack_k, float decay_k=default_env_decay_k) {
         lp += (fabsf(x)-lp)*0.01f;
         float d = lp-y;
-        y += d * env_k((d>0.f) ? attack : decay);
-        return x;
+        y += d * ((d>0.f) ? attack_k : decay_k);
+        return y;
     }
-    stereo operator()(stereo x, float decay=0.1f, float attack = 0.05f) {
-       operator()(max(fabsf(x.l), fabsf(x.r)), decay, attack);
-       return x;
+    float operator()(stereo x, float attack_k=default_env_attack_k, float decay_k=default_env_decay_k) {
+       return operator()(max(fabsf(x.l), fabsf(x.r)), attack_k, decay_k);
     }
 };
+
+typedef struct multiband_t {
+    stereo state[12];
+    void  operator()(stereo x, stereo out[3]);
+} multiband_t;
+
+typedef struct ott_t {
+    multiband_t multiband;
+    env_follower_t env[3];
+    float gain[3];
+    stereo operator()(stereo rv, float amount=1.f);
+} ott_t;
+
 
 
 typedef struct song_base_t {
@@ -464,7 +483,7 @@ typedef struct song_base_t {
     float preview_wave_fade;
     float preview_fromt;
     float preview_tot;
-    float limiter_state[2];
+    float limiter_state[4];
     env_follower_t vus[8];
     uint8_t reloaded;
     uint8_t playing;
@@ -482,6 +501,8 @@ typedef struct song_base_t {
     int plinky12_octave;
     //
     
+    ott_t ott;
+
     void init(void) {}
     
 } song_base_t;
@@ -630,7 +651,7 @@ typedef struct voice_state_t {
     float vibphase;
     float tremphase;
     float cur_power;
-    EInUse in_use;
+    bool retrig;
     stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w, bool *at_end);
 } voice_state_t;
 
@@ -650,18 +671,11 @@ void init_basic_state(void);
 wave_t *request_wave_load(wave_t *wave);
 
 
-#define vu(idx, audio, ...) (G->vus[idx&7].line = __LINE__, G->vus[idx&7].operator()(audio, ##__VA_ARGS__)) // be careful to only use audio once.
+const static float vu_env_attack_k = env_ms(10.f);
+const static float vu_env_decay_k = env_ms(100.f);
 
-typedef struct multiband_t {
-    stereo state[12];
-    void  operator()(stereo x, stereo out[3]);
-} multiband_t;
+#define vu(idx, audio, ...) ({ G->vus[idx&7].line = __LINE__; auto a = audio; G->vus[idx&7].operator()(a, vu_env_attack_k, vu_env_decay_k, ##__VA_ARGS__); a; }) // be careful to only use audio once.
 
-typedef struct ott_t {
-    multiband_t multiband;
-    env_follower_t env[3];
-    stereo operator()(stereo rv, float amount);
-} ott_t;
 
 // for now, the set of sounds and waves is fixed at boot time to avoid having to think about syncing threads
 // however, the audio data itself *is* lazy loaded, so the boot time isnt too bad.
@@ -857,7 +871,7 @@ static inline stereo pan(stereo inp, float balance) { // 0=center, -1 = left, 1=
 
 
 
-stereo limiter(float state[2] , stereo inp);
+stereo limiter(float state[4] , stereo inp);
 
 
 static inline float note2dphase(float midi) { return exp2f((midi - 150.2326448623f) * (1.f / 12.f)); }

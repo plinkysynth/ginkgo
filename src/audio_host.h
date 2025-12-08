@@ -68,7 +68,30 @@ static _Atomic(dsp_fn_t) g_dsp_req = NULL;  // current callback
 static _Atomic(dsp_fn_t) g_dsp_used = NULL; // what version the main thread compiled
 static void *g_handle = NULL;
 static int g_version = 0;
-static FILE *wav_recording = NULL;
+static FILE *wav_recording = NULL; 
+
+#define RECORD_BUFFER_SIZE (65536*2)
+static stereo record_buffer[RECORD_BUFFER_SIZE];
+static uint32_t record_buffer_write = 0;
+static uint32_t record_buffer_read = 0;
+
+void pump_record_buffer(void) {
+    if (!wav_recording) return;
+    uint32_t amount_to_write = (record_buffer_write - record_buffer_read) % RECORD_BUFFER_SIZE;
+    while (amount_to_write >= RECORD_BUFFER_SIZE / 2) {
+        uint32_t write_to_end = RECORD_BUFFER_SIZE - (record_buffer_read % RECORD_BUFFER_SIZE);
+        if (write_to_end > amount_to_write) write_to_end = amount_to_write;
+        fwrite(record_buffer + (record_buffer_read & (RECORD_BUFFER_SIZE-1)), sizeof(stereo), write_to_end, wav_recording);
+        record_buffer_read += write_to_end;
+        amount_to_write -= write_to_end;
+        size_t pos = ftell(wav_recording);
+        fseek(wav_recording, 0, SEEK_SET);
+        write_wav_header(wav_recording, record_buffer_read, SAMPLE_RATE_OUTPUT, 2);
+        fseek(wav_recording, pos, SEEK_SET);
+        fflush(wav_recording);
+    }
+}
+
 static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) {
     stereo *o = (stereo *)out;
     const stereo *i = (const stereo *)in;
@@ -102,18 +125,6 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         G->cpu_usage_smooth = cpu_usage;
     else
         G->cpu_usage_smooth = G->cpu_usage_smooth * 0.999f + cpu_usage * 0.001f;
-    // TODO: move this to a thread.
-    // if (!wav_recording) {
-    //     wav_recording = fopen("recording.wav", "wb");
-    //     write_wav_header(wav_recording, 0, SAMPLE_RATE, 2);
-    // }
-    // if (wav_recording) {
-    //     fwrite(audio, sizeof(stereo), frames * OVERSAMPLE, wav_recording);
-    //     int pos = ftell(wav_recording);
-    //     fseek(wav_recording, 0, SEEK_SET);
-    //     write_wav_header(wav_recording, G->sampleidx, SAMPLE_RATE, 2);
-    //     fseek(wav_recording, 0, SEEK_END);
-    // }
 
     // downsample the output audio and update the scopes...
 #define K 16 // the kernel has this many non-center non-zero taps.
@@ -150,6 +161,9 @@ static void audio_cb(ma_device *d, void *out, const void *in, ma_uint32 frames) 
         } else {
             probe = audio[k + frames];
             acc = limiter(G->limiter_state, ensure_finite(audio[k]));
+        }
+        if (wav_recording) {
+            record_buffer[record_buffer_write++ & (RECORD_BUFFER_SIZE-1)] = acc;
         }
         o[k] = acc;
         scope[scope_pos & SCOPE_MASK] = acc;

@@ -1022,7 +1022,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         int i = 0;
         Sound *sound = get_sound("x");
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++, i++) {
-            int count = right_hap->has_param(P_NUMBER)                                 ? (int)right_hap->params[P_NUMBER]
+            int count = right_hap->has_param(P_NUMBER)                                 ? (int)(0.5f+right_hap->params[P_NUMBER])
                         : (right_hap->valid_params & ((1 << P_NOTE) | (1 << P_SOUND))) ? 1
                                                                                        : 0;
             num_active += count > 0;

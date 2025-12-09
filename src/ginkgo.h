@@ -210,6 +210,25 @@ static inline float ssclip(float x) { return atanf(x) * (2.f / PI); }
 static inline float sclip(float x) { return tanhf(x); }
 static inline float clip(float x) { return clamp(x, -1.f, 1.f); }
 
+struct bitcrush_t {
+    stereo sandh;
+    float phase;
+    stereo operator()(stereo s, float amount) {
+        float clean = square(1.f-saturate(amount));
+        float bits = clean*15.f + 1.f;
+        float scale = powf(2.f, bits);
+        s.l = roundf(s.l * scale) / scale;
+        s.r = roundf(s.r * scale) / scale;
+        phase += (clean + 0.001f);
+        if (phase>=1.f) {
+            phase-=1.f;
+            sandh=s;
+        }
+        return sandh;
+    }
+};
+
+
 static inline float ensure_finite(float s) { return isfinite(s) ? s : 0.f; }
 
 static inline bool isfinite(float4 x) { return isfinite(x.x) && isfinite(x.y) && isfinite(x.z) && isfinite(x.w); }
@@ -980,6 +999,25 @@ typedef struct synth_t {
 
 
 hap_t *pat2hap(const char *pattern_name, hap_t *cache);
+
+struct stutter_t {
+    #define LOOP_BUFFER_SIZE (1<<18)
+    stereo buf[LOOP_BUFFER_SIZE];
+    uint32_t buffer_pos;
+    stereo operator()(stereo s, int loopsize, int numsubsteps=1) {
+        buf[buffer_pos & (LOOP_BUFFER_SIZE-1)]=s;
+        buffer_pos++;
+        if (loopsize <= 0 || G->dt<=0.) return s;
+        float write_pos = frac(G->t);
+        int substep = int(floorf(G->t*loopsize));
+        if (numsubsteps>1) substep%=numsubsteps; else substep=0;
+        substep=(uint32_t)pcg_mix(substep+1000*int(floorf(G->t))) % (uint32_t)loopsize;
+        float read_pos = (frac(G->t*loopsize)-substep)/loopsize; // always smaller than writepos
+        int read_pos_samples = (int)roundf((read_pos - write_pos) / G->dt); // negative
+        int read_pos_index = (buffer_pos-1 + read_pos_samples) & (LOOP_BUFFER_SIZE-1);
+        return buf[read_pos_index];
+    }
+};
 
 #ifdef __cplusplus
 }

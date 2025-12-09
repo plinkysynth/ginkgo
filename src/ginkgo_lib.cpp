@@ -731,12 +731,19 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
             if (!h->valid_params) {
                 continue;
             }
+            if (!G->playing) {
+                // as soon as we stop playing, move the haps to the 'before times'
+                // so that they are both old (can be stolen), and arent held down,
+                // and aren't from the future.
+                h->t0 = h->t1 = -1.f;
+            }
             static int sawidx = get_sound_index("saw");
             int sound = h->get_param(P_SOUND, sawidx);
             int first_smpl = (h->t0 - from) / G->dt;
             if (first_smpl >= 96) {
                 // printf("FIRST SAMPLE OUT OF BOUNDS. SKIPPING %d\n", i);
-                continue;
+                first_smpl = 0; // when we pause and then quickly rewind, we have 'haps from the future'.
+                // lets let them ring out. :)
             }
             if (first_smpl < 0)
                 first_smpl = 0;
@@ -758,13 +765,8 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
             double dphase = exp2((note - C3) / 12.f);         // midi2dphase(note);
             float key_track_gain = exp2(((note - C3) / -36.f) * key_track_amount); // gentle falloff of high notes
             
-            level_target = level_target * 0.2f + level * 0.8f; // smooth level target.
-            float newlevel = level_target;
-            float curlevel = level;
             float predist_level = key_track_gain * oldtrem;
             float predist_dlevel = (key_track_gain * newtrem - predist_level) / (96.f - first_smpl);
-            float dlevel = (newlevel - curlevel) / (96.f - first_smpl);
-            level = level_target;
 
             float sustain = square(h->get_param(P_SUS, 1.f));
             float attack_k = env_k(h->get_param(P_ATT, 0.f));
@@ -817,28 +819,34 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
                 bool at_end = false;
-                audio[smpl] += v->synth_sample(h, keydown, lerp(env1, min(1.f, env1 * 20.f), lpg), env2, fold_actual, dist_actual, cutoff_actual, noise_actual, w, &at_end);
-                audio[smpl] *= predist_level;
+                audio[smpl] +=  v->synth_sample(h, keydown, lerp(env1, min(1.f, env1 * 20.f), lpg), env2, fold_actual, dist_actual, cutoff_actual, noise_actual, w, &at_end) * predist_level;
                 predist_level += predist_dlevel;
                 
                // v->cur_power += fabsf(audio[smpl].l) + fabsf(audio[smpl].r);
                 v->retrig = false;
-                if (!keydown && (env1 < 0.0001f || at_end)) {
+                if (!keydown && (env1 < 0.001f || at_end)) {
                     h->valid_params = 0;
                 }
-                if (options.distortion != 1.f) {
-                    audio[smpl] = sclip(audio[smpl] * distortion);
-                }
-                audio[smpl] *= curlevel;
-
-                curlevel += dlevel;
                 if (v->h.valid_params == 0) {
                     //printf("voice %d released - from %f to %f - now %d\n", i, from, to, num_in_use);
-                    break;
+                    
                 }
             } // voice sample loop
             num_in_use++;
         } // voice loop
+        level_target = level_target * 0.2f + level * 0.8f; // smooth level target.
+        float newlevel = level_target;
+        float curlevel = level;
+        float dlevel = (newlevel - curlevel) / 96.f;
+        level = level_target;
+
+        for (int smpl = 0; smpl < 96; smpl++) {
+            audio[smpl] *= curlevel;
+            if (distortion != 1.f) {
+                audio[smpl] = sclip(audio[smpl] * distortion);
+            }
+            curlevel += dlevel;
+        }
     } // are we first sample of 96 sample block loop
     if (options.debug_draw) {
         if ((G->sampleidx % 9600) == 0) {

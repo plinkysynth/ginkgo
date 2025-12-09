@@ -524,7 +524,7 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
 }
 
 stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual,
-                                   float cutoff_actual, wave_t *w, bool *at_end) {
+                                   float cutoff_actual, float noise_actual, wave_t *w, bool *at_end) {
     stereo au;
     if (w && w->sample_func) {
         au = (w->sample_func)(this, h, w, at_end);
@@ -543,6 +543,12 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
         float distgain = exp(clamp(dist_actual, 0., 5.) * 4.f);
         au.l = lerp(au.l, sclip(au.l * distgain), mix);
         au.r = lerp(au.r, sclip(au.r * distgain), mix);
+    }
+    if (noise_actual > 0.f) {
+        noise_lpf += (rnd01()-0.5f - noise_lpf) * 0.1f;
+        float n = noise_lpf * noise_actual; 
+        au.l += n;
+        au.r += n;
     }
     float resonance = h->get_param(P_RESONANCE, 0.f);
     au = filter.lpf(au, cutoff_actual, saturate(1.f - resonance));
@@ -614,14 +620,22 @@ void synth_t::debug_draw_voices(void) const {
     printf("---------------------" CLEAR_TO_END_OF_LINE "\n");
 }
 
-stereo synth_t::operator()(const char *pattern_name, float level_target, int max_voices, bool debug_draw) {
-    if (max_voices > synth_t::max_voices)
+
+stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t_options options) {
+    int max_voices = options.max_voices;
+    if (max_voices > synth_t::max_voices || max_voices < 1)
         max_voices = synth_t::max_voices;
-    if (max_voices < 1)
-        return {};
     if (level_target < 0.f)
         level_target = 0.f;
     level_target = level_target * level_target;
+    float distortion = options.distortion;
+    if (distortion <= 0.f) {
+        distortion = 1.f;
+    } else {
+        distortion = exp(clamp(distortion, 0., 2.) * 4.f);
+        level_target /= sqrtf(distortion); // compensate after the fact
+    }
+    
 
     if ((G->sampleidx % 96) == 0) {
         memset(audio, 0, sizeof(audio));
@@ -712,7 +726,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
 
         for (int i = 0; i < max_voices; ++i) {
             voice_state_t *v = &voices[i];
-            v->cur_power *= 0.99f;
+           // v->cur_power *= 0.99f;
             hap_t *h = &v->h;
             if (!h->valid_params) {
                 continue;
@@ -745,8 +759,10 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
             float key_track_gain = exp2(((note - C3) / -36.f) * key_track_amount); // gentle falloff of high notes
             
             level_target = level_target * 0.2f + level * 0.8f; // smooth level target.
-            float newlevel = level_target * key_track_gain * newtrem;
-            float curlevel = level * key_track_gain * oldtrem;
+            float newlevel = level_target;
+            float curlevel = level;
+            float predist_level = key_track_gain * oldtrem;
+            float predist_dlevel = (key_track_gain * newtrem - predist_level) / (96.f - first_smpl);
             float dlevel = (newlevel - curlevel) / (96.f - first_smpl);
             level = level_target;
 
@@ -760,12 +776,16 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
                 release_k = env_k(release);
             } else {
                 // no release specified...
+                bool has_any_env = h->valid_params & (1 << P_ATT | 1 << P_DEC | 1 << P_SUS | 1 << P_REL);
+                if (has_any_env) {
+                    release_k = decay_k;
+                } else
                 if (!G->playing) {
-                    release_k = 0.005f; // stop immediately if not playing.
+                    release_k = 0.005f; // stop immediately if not playing or if an envelope was set without release.
                 } else if (w && w->num_frames > 0 && h->get_param(P_LOOPS, 0.f) >= h->get_param(P_LOOPE, 0.f)) {
                     release_k = 0.f; // it's a one shot sample so let it play out. nb this is now a _k value, not a time.
                 } else {
-                    release_k = 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.
+                    release_k = decay_k; // 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.
                 }
             }
 
@@ -774,6 +794,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
             float decay2_k = env_k(h->get_param(P_DEC2, 0.3f));
             float release2_k = env_k(h->get_param(P_REL2, 1000.f));
 
+            float noise = h->get_param(P_NOISE, 0.f);
             float gate = h->get_param(P_GATE, 0.75f);
             float cutoff = h->get_param(P_CUTOFF, 24000.f);
             float dist = h->get_param(P_DIST, 0.f);
@@ -781,6 +802,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
             float env2vcf = h->get_param(P_ENV2VCF, 1.f);
             float env2dist = h->get_param(P_ENV2DIST, 0.f);
             float env2fold = h->get_param(P_ENV2FOLD, 0.f);
+            float env2noise = h->get_param(P_ENV2NOISE, 0.f);
             float k_glide = env_k(0.5f * h->get_param(P_GLIDE, 0.f));
             hap_time t = from + first_smpl * G->dt;
             if (v->phase <= 0.)
@@ -791,19 +813,26 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
                 
                 float env1 = v->adsr1(keydown ? gate : 0.f, attack_k, decay_k, sustain, release_k, v->retrig);
                 float env2 = v->adsr2(keydown ? 1.f : 0.f, attack2_k, decay2_k, sustain2, release2_k, v->retrig);
+                float noise_actual = noise * (min(1.f, 1.f - env2noise) + env2 * env2noise);
                 float lpg_amount = lerp(1.f, env1 * env1, lpg);
                 float cutoff_actual = max(20.f, lpg_amount * cutoff * (min(1.f, 1.f - env2vcf) + env2 * env2vcf));
                 float fold_actual = fold_amount * (min(1.f, 1.f - env2fold) + env2 * env2fold);
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
                 bool at_end = false;
-                audio[smpl] += v->synth_sample(h, keydown, lerp(env1, min(1.f, env1 * 20.f), lpg), env2, fold_actual, dist_actual, cutoff_actual, w, &at_end) * curlevel; // (curlevel * ((i==2) ? 1.f : 0.f));
-                v->cur_power += fabsf(audio[smpl].l) + fabsf(audio[smpl].r);
+                audio[smpl] += v->synth_sample(h, keydown, lerp(env1, min(1.f, env1 * 20.f), lpg), env2, fold_actual, dist_actual, cutoff_actual, noise_actual, w, &at_end);
+                audio[smpl] *= predist_level;
+                predist_level += predist_dlevel;
+                
+               // v->cur_power += fabsf(audio[smpl].l) + fabsf(audio[smpl].r);
                 v->retrig = false;
                 if (!keydown && (env1 < 0.0001f || at_end)) {
                     h->valid_params = 0;
                 }
-            
+                if (options.distortion != 1.f) {
+                    audio[smpl] = sclip(audio[smpl] * distortion);
+                }
+                audio[smpl] *= curlevel;
 
                 curlevel += dlevel;
                 if (v->h.valid_params == 0) {
@@ -814,7 +843,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, int max
             num_in_use++;
         } // voice loop
     } // are we first sample of 96 sample block loop
-    if (debug_draw) {
+    if (options.debug_draw) {
         if ((G->sampleidx % 9600) == 0) {
             debug_draw_voices();
         }

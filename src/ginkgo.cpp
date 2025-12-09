@@ -42,7 +42,7 @@
 #include "logo.h"
 #include "crash.h"
 #include "mac_touch_input.h"
-
+#include "hash_literal.h"
 #ifndef __APPLE__
 RawPen *mac_pen_get(void) { return NULL; } // returns pointer to pen if valid, NULL if no pen
 int mac_touch_get(RawTouch *out, int max_count, float fbw, float fbh) { return 0; } // returns number of touches
@@ -2243,7 +2243,7 @@ void ensure_livesrc_file_exists(const char *fname) {
     fclose(dst);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv) {  
     printf(COLOR_CYAN "ginkgo" COLOR_RESET " - " __DATE__ " " __TIME__ "\n");
 #if USING_ASAN
     printf(COLOR_RED "Address sanitizer enabled\n" COLOR_RESET);
@@ -2324,7 +2324,7 @@ int main(int argc, char **argv) {
     init_sampler(prefetch);
 
     void test_minipat(void);
-    test_minipat();
+    // test_minipat();
     // return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);

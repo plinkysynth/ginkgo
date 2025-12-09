@@ -1591,7 +1591,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
     };
 
     for (int i = 0; i <= t.n;) {
-        unsigned h = 0;
+        size_t h = 0;
         char c = tok_get(&t, i);
         uint32_t col = C_DEF;
         int j = i + 1;
@@ -2064,6 +2064,40 @@ int code_color(EditorState *E, uint32_t *ptr) {
         }
     }
     G->cursor_in_pattern = cursor_in_pattern;
+    {
+        int ss = get_select_start(E);
+        int se = get_select_end(E);
+        G->record_midi = cursor_in_pattern && se-ss >= 4 && strncmp(&t.str[ss], "midi", 4) == 0;
+        if (G->record_midi) {
+            spin_lock(&G->plinky12_cs);
+            for (int x=0;x<16;++x) {
+                uint16_t makehaps_down = G->plinky12_makehaps_down[x];
+                if (!makehaps_down) continue;
+                G->plinky12_makehaps_down[x]=0;
+                for (int y=0;y<16;++y) if (makehaps_down & (1<<y)) {
+                    float down_time = G->plinky12_down_time[y][x];
+                    float up_time = G->plinky12_up_time[y][x];
+                    if (down_time >= 0. && up_time > down_time) {
+                        char buf[64];
+                        int note = plinky_pad_to_note(x,y);
+                        char curvedata[PRESSURE_HISTORY_SIZE+1];
+                        double duration = up_time - down_time;
+                        double time_per_history = get_rate_of_pressure_history(duration);
+                        int num_history = (int)(floorf(duration / time_per_history) + 1.f);
+                        if (num_history > PRESSURE_HISTORY_SIZE) num_history = PRESSURE_HISTORY_SIZE;
+                        for (int i=0;i<num_history;++i) {
+                            int pressure = G->plinky12_pressure_history[y][x][i];
+                            curvedata[i] = btoa_tab[pressure];
+                        }
+                        curvedata[num_history] = 0;
+                        snprintf(buf,sizeof(buf),"<%s^'%s'@%0.2f-%0.2f>", print_midinote(note), curvedata, down_time, duration);
+                        printf("%s\n",buf);
+                    }
+                }
+            }
+            spin_unlock(&G->plinky12_cs);
+        }
+    }
     E->num_lines = t.y + 1 + E->intscroll_y;
     E->mouse_hovering_chart = false;
 

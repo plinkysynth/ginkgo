@@ -82,6 +82,11 @@ typedef struct shader_param_t {
 typedef void (*fn_cb_t)(int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps,
                        int newid, size_t context, hap_time when);
 
+static inline hap_time get_rate_of_pressure_history(hap_time duration) {
+    return next_pow2(max(1,(int)(duration*128.f))) / (128.f * PRESSURE_HISTORY_SIZE / 2);
+}
+
+
 typedef struct pattern_t { // a parsed version of a min notation string
     const char *key;
     uint32_t seed;

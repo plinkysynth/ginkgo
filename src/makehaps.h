@@ -371,6 +371,7 @@ float pattern_t::compute_blendnear_weights(bfs_node_t *n, float *weights) {
     return tot_weight;
 }
 
+
 hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, int nodeidx, hap_time when, int hapid) {
     if (nodeidx < 0 || !bfs_nodes)
         return {};
@@ -427,8 +428,10 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         bool emitted_any = false;
         if (G->cursor_in_pattern == this/* && G->plinky12_connected*/) {
             bool mono = true;
+            spin_lock(&G->plinky12_cs);
+            
+            
             for (int x=0;x<8;x++) if (G->plinky12_down[x]) {
-
                 int down = G->plinky12_down[x];
                 int ptot=0, ytot=0;
                 if (mono) {
@@ -444,15 +447,46 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                         down = 1<<ytot;
                     }
                 }
-                while (down && dst.s < dst.e) {
-                    int y = __builtin_ctz(down);
+                G->plinky12_makehaps_down[x] = down;
+                while (down) {
+                    int y = ctz(down);
                     down &= ~(1<<y);
                     int note = plinky_pad_to_note(x,y);
                     dst.s->hapid = hash2_pcg(hapid, y);
-                    if (G->plinky12_trigger_time[y][x] < 0.) {
-                        G->plinky12_trigger_time[y][x] = when;
+                    if (G->plinky12_down_time[y][x] < 0.) {
+                        G->plinky12_down_time[y][x] = when;
                     }
-                    dst.s->t0 = G->plinky12_trigger_time[y][x];
+                    if (G->plinky12_up_time[y][x] < 0.) {
+                        G->plinky12_up_time[y][x] = when;
+                        memset(G->plinky12_pressure_history[y][x], 0, sizeof(G->plinky12_pressure_history[y][x]));
+                    } else {
+                        // up time can only increase.
+                        hap_time old_up_time = G->plinky12_up_time[y][x];
+                        hap_time new_up_time = /*floor(old_up_time) + when*/when;
+                        if (new_up_time > old_up_time) {
+                            G->plinky12_up_time[y][x] = new_up_time;
+                            // work out if we have to resample the history.
+                            hap_time old_duration = old_up_time - G->plinky12_down_time[y][x];
+                            hap_time new_duration = new_up_time - G->plinky12_down_time[y][x];
+                            hap_time old_time_per_history = get_rate_of_pressure_history(old_duration);
+                            hap_time new_time_per_history = get_rate_of_pressure_history(new_duration);
+                            assert(new_duration / new_time_per_history <= PRESSURE_HISTORY_SIZE);
+                            if (old_time_per_history != new_time_per_history) {
+                                printf("RESAMPLE\n");
+                                uint8_t new_history[PRESSURE_HISTORY_SIZE]={};
+                                for (int i=0;i<PRESSURE_HISTORY_SIZE;i++) {
+                                    int dsti = (i * old_time_per_history) / new_time_per_history;
+                                    if (dsti>=0 && dsti<8) new_history[dsti] = max(new_history[dsti], G->plinky12_pressure_history[y][x][i]);
+                                }
+                                memcpy(G->plinky12_pressure_history[y][x], new_history, sizeof(new_history));
+                            }
+                            int dsti = new_duration / new_time_per_history;
+                            printf("dsti: %d\n",dsti);
+                            if (dsti>=0 && dsti<PRESSURE_HISTORY_SIZE) 
+                                G->plinky12_pressure_history[y][x][dsti] = max(G->plinky12_pressure_history[y][x][dsti], G->plinky12_pressures[y][x] / 2);
+                        }
+                    }
+                    dst.s->t0 = G->plinky12_down_time[y][x];
                     dst.s->t1 = when + 0.125f; // play for a bit...
                     dst.s->valid_params = (1 << P_NOTE) | (1 << P_GATE) | (mono << P_STRING);
                     dst.s->params[P_NOTE] = note;
@@ -460,11 +494,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                     int p = mono ? ptot : G->plinky12_pressures[y][x];
                     dst.s->params[P_GATE] = clamp(p/127.f, 0.f, 1.f);
                     dst.s++;
-                    emitted_any = true;
-                    
-                }
-            }
-        }
+                    emitted_any = true;                    
+                } // hap output
+            } //loop over columns
+            spin_unlock(&G->plinky12_cs);
+        } // cursor in midi
 
         if (!emitted_any && dst.s < dst.e) {
             // apppend a dummy hap
@@ -1285,12 +1319,16 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       hap_t *setsteps_hap = (num_src_haps > 1) ? srchaps[1] : nullptr;
                       hap_t *numsteps_hap = (num_src_haps > 2) ? srchaps[2] : nullptr;
                       hap_t *rot_hap = (num_src_haps > 3) ? srchaps[3] : nullptr;
-                      if (!setsteps_hap || !numsteps_hap)
+                      if (!setsteps_hap || !numsteps_hap) {
+                          target->valid_params = 0;
                           return;
+                      }
                       int set_steps = (int)setsteps_hap->get_param(P_NUMBER, 0.f);
                       int numsteps = (int)numsteps_hap->get_param(P_NUMBER, 0.f);
-                      if (set_steps < 1 || numsteps < 1)
+                      if (set_steps < 1 || numsteps < 1) {
+                        target->valid_params = 0;
                           return;
+                      }
                       int rot = rot_hap ? (int)rot_hap->get_param(P_NUMBER, 0.f) : 0;
                       hap_time child_when = when * numsteps;
                       int i = floor(child_when);
@@ -1298,6 +1336,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           target->t0 = i / (float)numsteps;
                           target->t1 = (i + 1) / (float)numsteps;
                           target->hapid = hash2_pcg(newid, i);
+                      } else {
+                        target->valid_params = 0;
                       }
                   });
     } // euclid

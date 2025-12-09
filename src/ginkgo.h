@@ -444,7 +444,7 @@ typedef struct ott_t {
     stereo operator()(stereo rv, float amount=1.f);
 } ott_t;
 
-
+#define PRESSURE_HISTORY_SIZE 16
 
 typedef struct song_base_t {
     int _size;
@@ -487,15 +487,22 @@ typedef struct song_base_t {
     env_follower_t vus[8];
     uint8_t reloaded;
     uint8_t playing;
+    bool record_midi; // set to true when the user hilights 'midi' in a pattern.
 
-    // plinky12 state
+    // plinky12 state, protected by plinky12_cs
+    // there's cooperation between 3 threads: midi callback, makehaps at audio rate, and editor thread at text edit rate.
+    // when record_midi is true, the editor thread scans for notes where down time and up time are set. if down is not set, it then clears them.
+    atomic_flag plinky12_cs;
     uint8_t plinky12_connected;
     uint8_t mu8_connected;
     uint8_t plinky12_leds[16][16];
     uint8_t plinky12_leds_sent[16][16];
     uint8_t plinky12_pressures[16][16];
-    uint16_t plinky12_down[16]; // by COLUMN, ie index by x
-    double plinky12_trigger_time[16][16]; // by COLUMN, ie index by x
+    uint16_t plinky12_down[16]; // by COLUMN, ie index by x. this is set & cleared by the midi callback
+    uint16_t plinky12_makehaps_down[16]; // by COLUMN, ie index by x. the audio thread maintains this, eg if we are in mono mode it may be different from _down.
+    double plinky12_down_time[16][16]; // by COLUMN, ie index by x. set by the makehaps thread.
+    double plinky12_up_time[16][16]; // by COLUMN, ie index by x. set by the makehaps thread when it detected 'released' is set.
+    uint8_t plinky12_pressure_history[16][16][PRESSURE_HISTORY_SIZE];
     float plinky12_scale_root;
     uint32_t plinky12_scale_bits;
     int plinky12_octave;
@@ -650,9 +657,10 @@ typedef struct voice_state_t {
     float grainphase;
     float vibphase;
     float tremphase;
-    float cur_power;
+   // float cur_power;
+    float noise_lpf;
     bool retrig;
-    stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, wave_t *w, bool *at_end);
+    stereo synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual, float cutoff_actual, float noise_actual, wave_t *w, bool *at_end);
 } voice_state_t;
 
 // TODO: for some patterns, tidal/strudel prefers a rotation that puts the first stumble earlier in the cycle.
@@ -954,6 +962,11 @@ __attribute__((visibility("default"))) void *dsp(song_base_t *_G, stereo *audio,
 
 #endif
 
+struct synth_t_options {
+    float distortion;
+    int max_voices;
+    bool debug_draw;
+};
 
 typedef struct synth_t {
     const static int max_voices = 16;
@@ -961,7 +974,7 @@ typedef struct synth_t {
     voice_state_t voices[max_voices]; // one voice per voice.
     int num_in_use;
     float level;
-    stereo operator()(const char *pattern_name, float level=1.f, int max_voices = 16, bool debug_draw = false);
+    stereo operator()(const char *pattern_name, float level=1.f, synth_t_options options = {});
     void debug_draw_voices(void) const;
 } synth_t;
 

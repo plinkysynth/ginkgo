@@ -173,7 +173,7 @@ static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
 static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end, float maxval = -1e9f, float minval=-1e9f) {
     int i = stbds_arrlen(p->nodes);
-    Node n = (Node){.type = (uint8_t)node_type,
+    Node nd = (Node){.type = (uint8_t)node_type,
                     .start = start,
                     .end = end,
                     .linenumber = p->linecount,
@@ -182,10 +182,10 @@ static int make_node(pattern_maker_t *p, int node_type, int first_child, int nex
                     .total_length = 0,
                     .num_children = 0};
     if (maxval != -1e9f)
-        n.max_value = maxval;
+        nd.max_value = maxval;
     if (minval != -1e9f)
-        n.min_value = minval;
-    stbds_arrput(p->nodes, n);
+        nd.min_value = minval;
+    stbds_arrput(p->nodes, nd);
     return i;
 }
 
@@ -612,7 +612,7 @@ static int parse_expr_inner(pattern_maker_t *p) {
         // check if its one of the generators
         int start_i = p->i;
         skiptoendoftoken(p);
-        uint32_t name_hash = literal_hash_span(p->s + start_i, p->s + p->i);
+        size_t name_hash = literal_hash_span(p->s + start_i, p->s + p->i);
         switch (name_hash) {
         case HASH("lambda"):
             return make_node(p, N_LAMBDA, -1, -1, start_i, p->i);
@@ -815,8 +815,10 @@ static int parse_op(pattern_maker_t *p, int left_node, int node_type, int num_pa
         } else {
             right_node = parse_expr(p, caller_precedence);
         }
-        p->nodes[prev_node].next_sib = right_node;
-        prev_node = right_node;
+        if (right_node >= 0) {
+            p->nodes[prev_node].next_sib = right_node;
+            prev_node = right_node;
+        }
     }
     int parent_node = make_node(p, node_type, left_node, -1, p->nodes[left_node].start, p->i, maxval, minval);
     return parent_node;
@@ -868,7 +870,7 @@ static int parse_expr(pattern_maker_t *p, int caller_precedence) {
         } else {
             int start = p->i;
             skiptoendoftoken(p);
-            uint32_t name_hash = literal_hash_span(p->s + start, p->s + p->i);
+            size_t name_hash = literal_hash_span(p->s + start, p->s + p->i);
             int op_node = -1;
             switch (name_hash) {
 #define NODE(x, ...)

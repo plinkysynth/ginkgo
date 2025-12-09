@@ -18,14 +18,18 @@ void on_midi_input(uint8_t data[3], void *user) {
         int note = data[1]-60;
         int pressure = (type==8) ? 0 : data[2];
         if (/*G->plinky12_connected && */note>=0 && note<16) {
+            spin_lock(&G->plinky12_cs);
             uint8_t old_pressure = G->plinky12_pressures[note][chan];
             G->plinky12_pressures[note][chan] = pressure;
             if (pressure>0) {
-                if (old_pressure==0) 
-                   G->plinky12_trigger_time[note][chan] = -1.;
+                if (old_pressure==0) {
+                   G->plinky12_down_time[note][chan] = -1.;
+                   G->plinky12_up_time[note][chan] = -1.;
+                }
                 G->plinky12_down[chan] |= (1<<note);
-            } else
+            } else {
                 G->plinky12_down[chan] &= ~(1<<note);
+            }
             if (chan>=8 && note>8) {
                 // slider
                 int tot=0,ytot=0;
@@ -55,6 +59,7 @@ void on_midi_input(uint8_t data[3], void *user) {
                     G->mutes ^= (1<<(chan-8));
                 }   
             }
+            spin_unlock(&G->plinky12_cs);
         }
     }
     if (data[0] == 0xb0 && cc < 128) {

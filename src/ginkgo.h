@@ -90,7 +90,7 @@ static inline void operator/=(stereo &a, stereo b) { a.l /= b.l; a.r /= b.r; }
 static inline void operator/=(stereo &a, float b) { a.l /= b; a.r /= b; }
 
 #include "notes.h"
-
+#define NO_NOTE -128
 
 inline float fast_tanh(float x) {
     float x2 = x * x;

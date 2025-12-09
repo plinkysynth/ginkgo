@@ -91,6 +91,7 @@ Sound *add_alias_init_only(const char *alias, const char *name) {
 
 const char *print_midinote(int note) {
     static char buf[4];
+    note += 48; // add c3; we now have C3 as 0 internally.
     if (note < 12 || note >= 128)
         return "";
     note -= 12;
@@ -376,18 +377,19 @@ static int parse_grid(pattern_maker_t *p) {
     return group_node;
 }
 
+
 int parse_midinote(const char *s, const char *e, const char **end,
                    int allow_p_prefix) { // if you dont speify *end, midi note must fill all of s-e
     if (allow_p_prefix && e > s + 2 && s[0] == 'P' && s[1] == '_') {
         s += 2;
     }
     if (s >= e)
-        return -1;
+        return NO_NOTE;
     char notename = s[0];
     if (notename >= 'A' && notename <= 'Z')
         notename += 'a' - 'A';
     if (notename < 'a' || notename > 'g')
-        return -1;
+        return NO_NOTE;
     const static int note_indices[7] = {9, 11, 0, 2, 4, 5, 7};
     int note = note_indices[notename - 'a'];
     int octave = 3;
@@ -405,10 +407,10 @@ int parse_midinote(const char *s, const char *e, const char **end,
         octave = *s++ - '0';
     }
     if (!end && s != e)
-        return -1;
+        return NO_NOTE;
     if (end)
         *end = s;
-    return note + (octave + 1) * 12;
+    return note + (octave - 3) * 12;
 }
 
 static int parse_number(const char *s, const char *e, const char **end, float *number) {
@@ -459,7 +461,7 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
 static inline EValueType parse_number_or_note_or_sound(const char *s, const char *e, float *out, float *out2) {
     const char *midiend = NULL;
     int note = parse_midinote(s, e, &midiend, 0);
-    if (note >= 0) {
+    if (note > NO_NOTE) {
         if (midiend == e) {
             *out = note;
             return VT_NOTE;

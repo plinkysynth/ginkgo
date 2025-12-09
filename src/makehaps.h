@@ -1136,6 +1136,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       float v = right_hap->params[P_NUMBER];
                       target->params[param_idx] /= v;
                   });
+    case N_OP_SUB:
     case N_OP_ADD:
         _apply_fn(nodeidx, hapid, dst, tmp_size, viz_time, n->type, when,
                   [](int left_hap_idx, hap_span_t &dst, int tmp_size, float viz_time, int num_src_haps, hap_t **srchaps, int newid,
@@ -1144,11 +1145,13 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           return;
                       hap_t *target = srchaps[0];
                       hap_t *right_hap = srchaps[1];
-                      if (!right_hap || !right_hap->has_param(P_NUMBER))
+                      if (!right_hap || !right_hap->valid_params || !target->valid_params) 
                           return;
-                      int param_idx = __builtin_ctzll(target->valid_params);
+                      int src_idx = __builtin_ctzll(right_hap->valid_params);
+                      int param_idx = src_idx ? src_idx : __builtin_ctzll(target->valid_params);
                       assert(param_idx < P_LAST);
-                      float v = right_hap->params[P_NUMBER];
+                      float v = right_hap->params[src_idx];
+                      if (context == N_OP_SUB) v = -v;
                       target->params[param_idx] += v;
                   });
         break;

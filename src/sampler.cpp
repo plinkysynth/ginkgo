@@ -262,7 +262,7 @@ int parse_strudel_json(const char *json_url, bool prefer_offline, const char *so
                     stbds_arrput(
                         sound->wave_indices,
                         waveidx); // TODO; if this causes sound->waves to grow, we may get an exception on the other thread...
-                    if (midinote >= 0) {
+                    if (midinote > NO_NOTE) {
                         int_pair_t pair = {.k = midinote, .v = j};
                         int insert_at = lower_bound_int_pair(sound->midi_notes, stbds_arrlen(sound->midi_notes), pair);
                         stbds_arrins(sound->midi_notes, insert_at, pair);

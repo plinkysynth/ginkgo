@@ -727,9 +727,9 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
                 int number_idx = 0;
                 const char *end = E->str + word_end;
                 int midinote = parse_midinote(E->str + word_start, E->str + word_end, &end, 0);
-                if (midinote >= 0 && end == E->str + word_end) {
+                if (midinote > NO_NOTE && end == E->str + word_end) {
                     midinote += (key & 0xffff) == GLFW_KEY_UP ? 1 : -1;
-                    midinote = clamp(midinote, 0, 127);
+                    midinote = clamp(midinote, -127, 127);
                     const char *buf = print_midinote(midinote);
                     push_edit_op(E, word_start, word_end, buf, 0);
                     return;
@@ -1812,7 +1812,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
                 j = scan_ident(t.str, i, t.n);
                 h = literal_hash_span(t.str + i, t.str + j);
                 int midinote = parse_midinote(t.str + i, t.str + j, NULL, 1);
-                if (midinote >= 0) {
+                if (midinote > NO_NOTE) {
                     col = C_NOTE;
                 } else
                     switch (h) {
@@ -2118,8 +2118,8 @@ int code_color(EditorState *E, uint32_t *ptr) {
             // if the start of the token parses as a midi note, then skip forward
             const char *noteend = NULL;
             const char *tokenend = &t.str[cursor_token_end_idx];
-            int note = parse_midinote(token, tokenend, &noteend, 0);
-            if (note >= 0 && noteend < tokenend) {
+            int midinote = parse_midinote(token, tokenend, &noteend, 0);
+            if (midinote > NO_NOTE && noteend < tokenend) {
                 include_chord_names = noteend - token;
             }
         }

@@ -5,6 +5,7 @@ void merge_hap(hap_t *dst, hap_t *src) {
     dst->valid_params |= p;
     while (p) {
         int i = __builtin_ctzll(p);
+        assert(i<P_LAST);
         dst->params[i] = src->params[i];
         p &= ~(1ull << i);
     }
@@ -326,6 +327,7 @@ int add_value_func(int target_hap_idx, hap_t *target, hap_t **right_hap, size_t 
     if (!right_hap || !right_hap[0]->has_param(P_NUMBER) || !target->valid_params)
         return 1;
     int param_idx = __builtin_ctzll(target->valid_params);
+    assert(param_idx < P_LAST);
     float v = right_hap[0]->params[P_NUMBER];
     target->params[param_idx] += negative ? -v : v;
     return 1;
@@ -454,9 +456,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                     int note = plinky_pad_to_note(x,y);
                     dst.s->hapid = hash2_pcg(hapid, y);
                     if (G->plinky12_down_time[y][x] < 0.) {
+                        //printf("down - %d %f\n", note, when);
                         G->plinky12_down_time[y][x] = when;
                     }
                     if (G->plinky12_up_time[y][x] < 0.) {
+                        //printf("up - %d %f\n", note, when);
                         G->plinky12_up_time[y][x] = when;
                         memset(G->plinky12_pressure_history[y][x], 0, sizeof(G->plinky12_pressure_history[y][x]));
                     } else {
@@ -472,7 +476,6 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                             hap_time new_time_per_history = get_rate_of_pressure_history(new_duration);
                             assert(new_duration / new_time_per_history <= PRESSURE_HISTORY_SIZE);
                             if (old_time_per_history != new_time_per_history) {
-                                printf("RESAMPLE\n");
                                 uint8_t new_history[PRESSURE_HISTORY_SIZE]={};
                                 for (int i=0;i<PRESSURE_HISTORY_SIZE;i++) {
                                     int dsti = (i * old_time_per_history) / new_time_per_history;
@@ -481,18 +484,19 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                                 memcpy(G->plinky12_pressure_history[y][x], new_history, sizeof(new_history));
                             }
                             int dsti = new_duration / new_time_per_history;
-                            printf("dsti: %d\n",dsti);
+                            //printf("dsti: %d\n",dsti);
                             if (dsti>=0 && dsti<PRESSURE_HISTORY_SIZE) 
                                 G->plinky12_pressure_history[y][x][dsti] = max(G->plinky12_pressure_history[y][x][dsti], G->plinky12_pressures[y][x] / 2);
                         }
                     }
                     dst.s->t0 = G->plinky12_down_time[y][x];
                     dst.s->t1 = when + 0.125f; // play for a bit...
-                    dst.s->valid_params = (1 << P_NOTE) | (1 << P_GATE) | (mono << P_STRING);
+                    dst.s->valid_params = (1ull << P_NOTE) | (1ull << P_GATE) | ((mono?1ull:0ull) << P_STRING);
                     dst.s->params[P_NOTE] = note;
                     dst.s->params[P_STRING] = x;
                     int p = mono ? ptot : G->plinky12_pressures[y][x];
                     dst.s->params[P_GATE] = clamp(p/127.f, 0.f, 1.f);
+                    assert(dst.s->valid_params < (1ull << P_LAST));
                     dst.s++;
                     emitted_any = true;                    
                 } // hap output
@@ -673,6 +677,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           uint64_t right_params = right_hap->valid_params;
                           while (right_params) {
                               int param_idx = __builtin_ctzll(right_params);
+                              assert(param_idx < P_LAST);
                               right_params &= ~(1ull << param_idx);
                               if (param_idx == P_NUMBER && target->has_param(P_SCALEBITS) && !target->has_param(P_NOTE)) {
                                   // apply a number to a scale -> index scale into a note
@@ -829,6 +834,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                     uint64_t valid = src_hap->valid_params;
                     while (valid) {
                         int bit = __builtin_ctzll(valid);
+                        assert(bit < P_LAST);
                         valid &= ~(1ull << bit);
                         float v = src_hap->params[bit];
                         if (!out.s[j].has_param(bit)) {
@@ -849,6 +855,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 uint64_t valid = out.s[j].valid_params;
                 while (valid) {
                     int bit = __builtin_ctzll(valid);
+                    assert(bit < P_LAST);
                     valid &= ~(1ull << bit);
                     float tw = tot_weights[j][bit];
                     if (tw > 0.f)
@@ -932,6 +939,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 uint64_t shared_params = srchap->valid_params & out_hap->valid_params;
                 while (shared_params) {
                     int bit = __builtin_ctzll(shared_params);
+                    assert(bit < P_LAST);
                     out_hap->params[bit] = out_hap->params[bit] * (1.0f - t) + srchap->params[bit] * t;
                     shared_params &= ~(1ull << bit);
                 }
@@ -953,6 +961,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           !target->valid_params)
                           return;
                       int param_idx = __builtin_ctzll(target->valid_params);
+                      assert(param_idx < P_LAST);
                       float mn = right_hap->params[P_NUMBER];
                       float mx = right_hap2->params[P_NUMBER];
                       float v = target->params[param_idx];
@@ -1067,6 +1076,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       if (!right_hap || !right_hap->has_param(P_NUMBER))
                           return;
                       int param_idx = __builtin_ctzll(target->valid_params);
+                      assert(param_idx < P_LAST);
                       float v = right_hap->params[P_NUMBER];
                       target->params[param_idx] *= v;
                   });
@@ -1082,6 +1092,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       if (!right_hap || !right_hap->has_param(P_NUMBER))
                           return;
                       int param_idx = __builtin_ctzll(target->valid_params);
+                      assert(param_idx < P_LAST);
                       float v = right_hap->params[P_NUMBER];
                       target->params[param_idx] = powf(target->params[param_idx], v);
                   });
@@ -1094,6 +1105,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           return;
                       hap_t *target = srchaps[0];
                       int param_idx = __builtin_ctzll(target->valid_params);
+                      assert(param_idx < P_LAST);
                       target->params[param_idx] = roundf(target->params[param_idx]);
                   });
         break;
@@ -1105,6 +1117,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           return;
                       hap_t *target = srchaps[0];
                       int param_idx = __builtin_ctzll(target->valid_params);
+                      assert(param_idx < P_LAST);
                       target->params[param_idx] = floorf(target->params[param_idx]);
                   });
         break;
@@ -1119,6 +1132,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       if (!right_hap || !right_hap->has_param(P_NUMBER))
                           return;
                       int param_idx = __builtin_ctzll(target->valid_params);
+                      assert(param_idx < P_LAST);
                       float v = right_hap->params[P_NUMBER];
                       target->params[param_idx] /= v;
                   });
@@ -1133,6 +1147,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                       if (!right_hap || !right_hap->has_param(P_NUMBER))
                           return;
                       int param_idx = __builtin_ctzll(target->valid_params);
+                      assert(param_idx < P_LAST);
                       float v = right_hap->params[P_NUMBER];
                       target->params[param_idx] += v;
                   });

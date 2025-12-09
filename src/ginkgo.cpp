@@ -1154,11 +1154,10 @@ static const char *filename(const char *path) {
     return last_slash ? last_slash + 1 : path;
 }
 
-static bool try_to_compile_audio(char **errorlog) {
-    if (errorlog) {
-        stbds_arrfree(*errorlog);
-        *errorlog = NULL;
-    }
+static bool try_to_compile_audio(EditorState *E) {
+    
+    stbds_arrfree(E->last_compile_log);
+    E->last_compile_log = NULL;
     char cmd[1024];
     int version = g_version + 1;
 #if USING_ASAN
@@ -1175,10 +1174,10 @@ static bool try_to_compile_audio(char **errorlog) {
     }
     fprintf(f,
             "#include \"ginkgo.h\"\n"
-            "#line 1\n"
+            "#line 1 \"%s\"\n"
             "%.*s\n"
             "#include \"ginkgo_post.h\"\n",
-            (int)stbds_arrlen(tabs[TAB_AUDIO].str), tabs[TAB_AUDIO].str);
+            tabs[TAB_AUDIO].fname, (int)stbds_arrlen(tabs[TAB_AUDIO].str), tabs[TAB_AUDIO].str);
     // add c portions of shader too!
     const char *code_start = tabs[TAB_SHADER].str;
     const char *s = code_start;
@@ -1216,10 +1215,12 @@ static bool try_to_compile_audio(char **errorlog) {
     while (fgets(buf, sizeof(buf), fp)) {
         fprintf(stderr, "%s", buf);
         int n = strlen(buf);
-        char *errbuf = stbds_arraddnptr(*errorlog, n);
+        char *errbuf = stbds_arraddnptr(E->last_compile_log, n);
         memcpy(errbuf, buf, n);
     }
-    stbds_arrput(*errorlog, 0);
+    stbds_arrput(E->last_compile_log, 0);
+    parse_error_log(E);
+
     int rc = pclose(fp);
     int64_t t1 = get_time_us();
     if (rc != 0)
@@ -1507,7 +1508,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     load_file_into_editor(E);
                     parse_named_patterns_in_source();
                     try_to_compile_shader(E);
-                    try_to_compile_audio(&tabs[TAB_AUDIO].last_compile_log);
+                    try_to_compile_audio(&tabs[TAB_AUDIO]);
                     curE = E;
                     G->ui_alpha_target = 1.f;
                 } else if (strstr(fname, ".cpp")) {
@@ -1516,7 +1517,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                     E->fname = fname;
                     load_file_into_editor(E);
                     parse_named_patterns_in_source();
-                    try_to_compile_audio(&E->last_compile_log);
+                    try_to_compile_audio(E);
                     curE = E;
                     G->ui_alpha_target = 1.f;
                 } else if (strstr(fname, ".canvas")) {
@@ -1556,7 +1557,7 @@ static void key_callback(GLFWwindow *win, int key, int scancode, int action, int
                                 need_c_recompile = spanstr(E->str, E->str + stbds_arrlen(E->str), "#ifdef C") != NULL;
                             }
                             if (need_c_recompile) {
-                                try_to_compile_audio(&E->last_compile_log);
+                                try_to_compile_audio(E);
                             }
                         }
                     } else {
@@ -2363,7 +2364,6 @@ int main(int argc, char **argv) {
     try_to_compile_shader(&tabs[TAB_SHADER]);
     parse_named_patterns_in_source();
     // audio needs to be compiled after dsp is running
-    parse_error_log(&tabs[TAB_AUDIO]);
     bool load_canvas(EditorState * E);
     load_canvas(&tabs[TAB_CANVAS]);
 
@@ -2426,8 +2426,7 @@ int main(int argc, char **argv) {
     wav_recording = fopen("recording.wav", "wb");
     write_wav_header(wav_recording, 0, SAMPLE_RATE_OUTPUT, 2);
     
-    try_to_compile_audio(&tabs[TAB_AUDIO].last_compile_log);
-
+    try_to_compile_audio(&tabs[TAB_AUDIO]);
    
 
     double start_time = glfwGetTime();
@@ -2852,16 +2851,6 @@ int main(int argc, char **argv) {
         }
         iFrame++;
 
-        /*
-        // poll for changes in the audio file
-        static time_t last = 0;
-        struct stat st;
-        if (stat(tabs[TAB_AUDIO].fname, &st) == 0 && st.st_mtime != last) {
-            last = st.st_mtime;
-            try_to_compile_audio(tabs[TAB_AUDIO].fname, &tabs[TAB_AUDIO].last_compile_log);
-            parse_error_log(&tabs[TAB_AUDIO]);
-        }
-            */
 
         double t = G->t;
         int bar = (int)t;

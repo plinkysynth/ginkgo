@@ -805,12 +805,9 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
             float env2noise = h->get_param(P_ENV2NOISE, 0.f);
             float k_glide = env_k(0.5f * h->get_param(P_GLIDE, 0.f));
             hap_time t = from + first_smpl * G->dt;
-            if (v->phase <= 0.)
-                v->phase = dphase;
             for (int smpl = first_smpl; smpl < 96; smpl++, t += G->dt) {
                 ////////////// VOICE SAMPLE
                 bool keydown = G->playing && t < h->t1 + G->dt * 0.5f;
-                
                 float env1 = v->adsr1(keydown ? gate : 0.f, attack_k, decay_k, sustain, release_k, v->retrig);
                 float env2 = v->adsr2(keydown ? 1.f : 0.f, attack2_k, decay2_k, sustain2, release2_k, v->retrig);
                 float noise_actual = noise * (min(1.f, 1.f - env2noise) + env2 * env2noise);

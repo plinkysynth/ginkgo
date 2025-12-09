@@ -390,7 +390,13 @@ CREDITS
 
 #ifndef INCLUDE_STB_DS_H
 #define INCLUDE_STB_DS_H
-
+#ifdef __clang__
+#include <sanitizer/asan_interface.h>
+#else
+#define ASAN_UNPOISON_MEMORY_REGION(p, size) ((void)0)
+#define ASAN_POISON_MEMORY_REGION(p, size) ((void)0)
+#endif
+#include <assert.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -660,8 +666,9 @@ typedef struct
   size_t      capacity;
   void      * hash_table;
   ptrdiff_t   temp;
+  size_t      poison;
 } stbds_array_header;
-
+#define POISON_SENTINEL 0xDEADBEEFCAFE5023ull
 typedef struct stbds_string_block
 {
   struct stbds_string_block *next;
@@ -782,9 +789,16 @@ void *stbds_arrgrowf(void *a, size_t elemsize, size_t addlen, size_t min_cap)
   //if (num_prev < 65536) if (a) prev_allocs[num_prev++] = (int *) ((char *) a+1);
   //if (num_prev == 2201)
   //  num_prev = num_prev;
+  if (a) {
+    ASAN_UNPOISON_MEMORY_REGION(((size_t*)a)-1, 8);
+    assert(((size_t*)a)[-1] == POISON_SENTINEL); // for the cases when ASAN is off, we can at least explode on next resize.
+  }
   b = STBDS_REALLOC(NULL, (a) ? stbds_header(a) : 0, elemsize * min_cap + sizeof(stbds_array_header));
   //if (num_prev < 65536) prev_allocs[num_prev++] = (int *) (char *) b;
   b = (char *) b + sizeof(stbds_array_header);
+  ((size_t*)b)[-1] = POISON_SENTINEL;
+  ASAN_POISON_MEMORY_REGION(((size_t*)b)-1, 8);
+
   if (a == NULL) {
     stbds_header(b)->length = 0;
     stbds_header(b)->hash_table = 0;

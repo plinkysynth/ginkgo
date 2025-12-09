@@ -1,9 +1,10 @@
 
 #ifdef PATTERNS
 /snare <a2-c3:garden_cp sus 0 dec 0.2, sd:2 sus 0 gain 0.5 dec 0.1 > gain 1
-/pattern [ foley?: randi 500 sus 0 dec 0.1 ^ 0.1 - foley: randi 500 sus 0 dec 0.1-0.3] * 8 rib 5 2 mask {1 1 1 1}%2 
-, bd:4 struct [1 [- - 1] - 0 - 1 [- - 0] -] dec 0.5 sus 0 gain 1, [ - - /snare gain 2 - - [/snare? ^ 0.2 - -] /snare gain 1 [- - /snare? ^ 0.2]],
-br160/4:1 fit gain 0. hpf 1000
+/pattern [ foley?: randi 500 sus 0 dec 0.5 ^ 0.1 - foley: randi 500 sus 0.5] * 8 rib 12 4 mask {1}%2 gain 0.5
+, bd:4 struct [1 [0 - 0] - 1 - 0 [- - 0] -] dec 0.5 sus 0 gain 1, [ - - /snare gain 2 - - [/snare? ^ 0.2 gain 0.2 - -] /snare gain 1 [- - /snare? ^ 0.2]]
+
+
 //  sus 0 dec 0.1-0.5
 // /pattern br160/4:2 fit
 /bpm 100

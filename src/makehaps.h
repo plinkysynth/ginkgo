@@ -119,7 +119,7 @@ void _pretty_print_nodes(const char *src, const char *srcend, pattern_t *p, int 
         break;
     }
     default:
-        printf("%d - %s - maxlen %g val %g-%g\n", i, node_type_names[n->type], p->bfs_kids_total_length[i],
+        printf("%d - %s - kidslen %g val %g-%g\n", i, node_type_names[n->type], p->bfs_kids_total_length[i],
                p->bfs_min_max_value[i].mn, p->bfs_min_max_value[i].mx);
         break;
     }
@@ -249,15 +249,16 @@ void pattern_t::_apply_fn(int nodeidx, int hapid, hap_span_t &dst, int tmp_size,
     for (int i = hap_spans[0].size(); i < maxhaps; ++i) {
         if (dst.s >= dst.e)
             break;
-        *dst.s = *src++;
+        *dst.s++ = *src++;
     }
     hap_spans[0].e = dst.s;
     // now run the function for each set of parameter haps
     for (int i = 0; i < maxhaps; ++i) {
         int newid = hapid;
         for (int j = 1; j < num_children; ++j)
-            newid += haps[0] ? haps[0]->hapid : 0;
+            newid += haps[j] ? haps[j]->hapid : 0;
         newid = hash2_pcg(haps[0]->hapid, newid);
+        haps[0]->hapid = newid;
         fn(i, dst, tmp_size, viz_time, num_children, haps, newid, context, when);
         for (int j = 0; j < num_children; ++j)
             if (haps[j] && ++haps[j] >= hap_spans[j].e)
@@ -611,7 +612,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
             break;
         if (n->num_children == 1) {
             if (n->type == N_OP_ELONGATE && bfs_min_max_value[nodeidx].mx != 0.f) {
-                hap_time speed_scale = 1.0 / bfs_min_max_value[nodeidx].mx;
+                hap_time speed_scale = 1.0;// / bfs_min_max_value[nodeidx].mx;
                 hap_span_t left_haps =
                     _make_haps(dst, tmp_size, viz_time, n->first_child, when * speed_scale, hash2_pcg(hapid, n->first_child));
                 _filter_haps(left_haps, speed_scale, 0., when);
@@ -636,6 +637,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                 speed_scale = num;
                 break;
             case N_OP_ELONGATE:
+            speed_scale = 1.f;
+            break;
             case N_OP_DIVIDE:
                 speed_scale = num ? 1. / num : 0.;
                 break;
@@ -1029,7 +1032,6 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         int num_active = 0;
         int counts[right_haps.size()];
         int i = 0;
-        Sound *sound = get_sound("x");
         for (hap_t *right_hap = right_haps.s; right_hap < right_haps.e; right_hap++, i++) {
             int count = right_hap->has_param(P_NUMBER)                                 ? (int)(0.5f+right_hap->params[P_NUMBER])
                         : (right_hap->valid_params & ((1 << P_NOTE) | (1 << P_SOUND))) ? 1
@@ -1043,8 +1045,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         hap_span_t left_haps = _make_haps(dst, tmp_size, viz_time, n->first_child, when, hash2_pcg(hapid, n->first_child));
         hap_t *right_hap = right_haps.s;
         i = 0;
-        for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++, i++) {
-            int count = counts[i];
+        for (hap_t *left_hap = left_haps.s; left_hap < left_haps.e; left_hap++) {
+            int count = counts[right_hap - right_haps.s];
             if (count <= 0) {
                 left_hap->valid_params = 0;
             } else if (n->type != N_OP_MASK) {
@@ -1058,7 +1060,7 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                     left_hap->hapid = hash2_pcg(left_hap->hapid, right_hap->hapid + subsection);
                 }
             }
-            if (++right_hap >= right_haps.e)
+            if (++right_hap >= right_haps.e) 
                 right_hap = right_haps.s;
         }
         if (num_active < left_haps.size())

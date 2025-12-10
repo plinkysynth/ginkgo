@@ -209,6 +209,14 @@ static int fetch_to_cache_core(
     } else {
         remove(tmp_path);
         fprintf(stderr,"unexpected HTTP status: %d fetching %s\n", (int)code, url);
+        if (!prefer_offline) {
+            struct stat st;
+            if (stat(out_path, &st) == 0) {
+                printf("falling back to cached version: %s\n", out_path);
+                return 1;
+            }
+        }
+        
         return 0;
     }
 }

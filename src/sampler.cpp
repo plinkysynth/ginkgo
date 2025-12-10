@@ -196,7 +196,6 @@ static inline const char *escape_url(char *dstbuf, const char *s, const char *e)
 }
 
 int parse_strudel_json(const char *json_url, bool prefer_offline, const char *sound_prefix = NULL) {
-
     char pathbuf[512];
     if (strncmp(json_url, "github:", 7) == 0) {
         // example raw url: https://raw.githubusercontent.com/sonidosingapura/blu-mar-ten/main/Breaks/strudel.json
@@ -212,6 +211,7 @@ int parse_strudel_json(const char *json_url, bool prefer_offline, const char *so
         }
         json_url = pathbuf;
     }
+    bool local = strncmp(json_url, "file://", 7) == 0 || strstr(json_url, "://") == 0;
 
     int prefix_len = sound_prefix ? strlen(sound_prefix) : 0;
     const char *json_fname = fetch_to_cache(json_url, prefer_offline);
@@ -219,10 +219,16 @@ int parse_strudel_json(const char *json_url, bool prefer_offline, const char *so
     int old_num_sounds = num_sounds();
     int wav_count = 0, skip_count = 0;
     sj_Value base = {};
+    if (local) {
+        base.start = json_url;
+        const char *last_slash = strrchr(json_url, '/');
+        base.end = last_slash ? last_slash + 1 : json_url + strlen(json_url);
+    }
     for (sj_iter_t outer = iter_start(&r, NULL); iter_next(&outer);) {
         if (iter_key_is(&outer, "_base")) {
             // printf("base is %.*s\n", (int)(soundval.end-soundval.start), soundval.start);
-            base = outer.val;
+            if (!local)
+                base = outer.val;
         } else {
             int sound_name_len = (outer.key.end - outer.key.start) + prefix_len;
             char sound_name[sound_name_len + 1];
@@ -428,10 +434,11 @@ stereo sample_wave(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
 
 static inline stereo sample_saw(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
     // nb we DONT retrig the phase, and let the oscillator freerun to prevent clicks.
-    double phase = v->phase * P_C3;
-    v->phase += v->dphase;
+    double dphase = v->dphase * P_C3;
+    v->phase += dphase;
+    v->phase = frac(v->phase);
     float wavetable_number = h->get_param(P_NUMBER, 0.f);
-    return mono2st(shapeo(phase, v->dphase * P_C3, wavetable_number));
+    return mono2st(shapeo(v->phase, dphase, wavetable_number));
 }
 
 static inline stereo sample_supersaw(voice_state_t *v, hap_t *h, wave_t *w, bool *at_end) {
@@ -443,11 +450,11 @@ static inline stereo sample_supersaw(voice_state_t *v, hap_t *h, wave_t *w, bool
     const static float _F2 = _F0 / 1.00137f;
     const static float _F3 = _F1 * 1.00159f;
     const static float _F4 = _F2 / 1.00143f;
-    float s0 = shapeo(v->phase * _F0, v->dphase * _F0, wavetable_number);
-    float s1 = shapeo(v->phase * _F1, v->dphase * _F1, wavetable_number);
-    float s2 = shapeo(v->phase * _F2, v->dphase * _F2, wavetable_number);
-    float s3 = shapeo(v->phase * _F3, v->dphase * _F3, wavetable_number);
-    float s4 = shapeo(v->phase * _F4, v->dphase * _F4, wavetable_number);
+    float s0 = shapeo(frac(v->phase * _F0), v->dphase * _F0, wavetable_number);
+    float s1 = shapeo(frac(v->phase * _F1), v->dphase * _F1, wavetable_number);
+    float s2 = shapeo(frac(v->phase * _F2), v->dphase * _F2, wavetable_number);
+    float s3 = shapeo(frac(v->phase * _F3), v->dphase * _F3, wavetable_number);
+    float s4 = shapeo(frac(v->phase * _F4), v->dphase * _F4, wavetable_number);
     float l = s0 * 0.5 + s1 * 0.4 + s2 * 0.6 + s3 * 0.7 + s4 * 0.3;
     float r = s0 * 0.5 + s1 * 0.6 + s2 * 0.4 + s3 * 0.3 + s4 * 0.7;
     v->phase += v->dphase;
@@ -498,6 +505,7 @@ int init_sampler(bool eager) {
     parse_strudel_json("github:mot4i/garden", prefer_offline);
 
     parse_strudel_json("github:plinkysynth/ginkgo_samples/main/microlive", prefer_offline);
+    parse_strudel_json("file:///Users/alexe/dev/ginkgo_samples_alex/se/strudel.json", prefer_offline);
 
 
     //parse_strudel_json("file://samples/junglejungle/strudel.json", NULL);

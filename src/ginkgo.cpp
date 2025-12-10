@@ -2325,7 +2325,7 @@ int main(int argc, char **argv) {
     init_sampler(prefetch);
 
     void test_minipat(void);
-    // test_minipat();
+    test_minipat();
     // return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);

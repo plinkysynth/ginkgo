@@ -94,6 +94,7 @@ stereo ott_t::operator()(stereo rv, float amount) {
     gain[1] = db2lin(lerp(-inp_gain_db, logcompgain(m,lothreshm,hithreshm, makeupm), amount));
     gain[2] = db2lin(lerp(-inp_gain_db, logcompgain(h,lothreshh,hithreshh, makeuph), amount));
     rv=bands[0] * gain[0] + bands[1] * gain[1] + bands[2] * gain[2];
+    //rv = mono2st(gain[0] + gain[1] + gain[2]);
     return rv;
 }
 

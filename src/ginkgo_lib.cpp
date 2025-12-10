@@ -100,7 +100,7 @@ __attribute__((visibility("default"))) void frame_update_func(get_key_func_t _ge
 
 
 static float k_reverb_fade = 240 / 256.f;                // 240 originally
-static float k_reverb_shim = 80 / 256.f;                 // 80?
+static float k_reverb_shim = 70 / 256.f;                 // 80?
 static float k_reverb_wob = 0.3333f;                     // amount of wobble
 static const float lforate1 = 1.f / 32777.f * 9.4f;      // * 2.f; // speed of wobble
 static const float lforate2 = 1.3f / 32777.f * 3.15971f; // * 2.f; // speed of wobble
@@ -531,24 +531,25 @@ stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env
     } else {
         au={0.f,0.f};
     }
-    au *= env1;
     if (fold_actual > 0.f) {
         float foldgain = fold_actual * fold_actual * 100.f + 1.f;
         // float invfoldgain = 1.f / (fold_actual * 10.f + 1.f);
         au.l = fold(au.l * foldgain); // * invfoldgain;
         au.r = fold(au.r * foldgain); // * invfoldgain;
     }
-    if (dist_actual > 0.f) {
-        float mix = saturate(dist_actual * 10.f);
-        float distgain = exp(clamp(dist_actual, 0., 5.) * 4.f);
-        au.l = lerp(au.l, sclip(au.l * distgain), mix);
-        au.r = lerp(au.r, sclip(au.r * distgain), mix);
-    }
     if (noise_actual > 0.f) {
         noise_lpf += (rnd01()-0.5f - noise_lpf) * 0.1f;
         float n = noise_lpf * noise_actual; 
         au.l += n;
         au.r += n;
+    }
+    au *= env1;
+
+    if (dist_actual > 0.f) {
+        float mix = saturate(dist_actual * 10.f);
+        float distgain = exp(clamp(dist_actual, 0., 5.) * 4.f);
+        au.l = lerp(au.l, sclip(au.l * distgain), mix);
+        au.r = lerp(au.r, sclip(au.r * distgain), mix);
     }
     float resonance = h->get_param(P_RESONANCE, 0.f);
     au = filter.lpf(au, cutoff_actual, saturate(1.f - resonance));
@@ -628,7 +629,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
     if (level_target < 0.f)
         level_target = 0.f;
     level_target = level_target * level_target;
-    float distortion = options.distortion;
+    float distortion = options.dist;
     if (distortion <= 0.f) {
         distortion = 1.f;
     } else {
@@ -651,11 +652,14 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
             if (!(h->valid_params & ((1 << P_NOTE) | (1 << P_SOUND)) && h->t0 < to && h->t1 >= from))
                 continue;
             int i = (int)h->get_param(P_STRING, -1);
-            if (i < 0 || i >= max_voices) {
+            if (i >= 0&&  i < max_voices) {
+                // assigned string
+            } else { // voice allocation
                 for (; i < max_voices; ++i) {
                     hap_t *existing_hap = &voices[i].h;
-                    if (existing_hap->hapid == h->hapid && existing_hap->t0 == h->t0)
+                    if (existing_hap->hapid == h->hapid && existing_hap->t0 == h->t0) {
                         break;
+                    }
                 }
                 if (i == max_voices) {
                     if (h->t0 >= to || h->t0 < from) {
@@ -693,9 +697,11 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
             assert(i < max_voices && i>=0);
             if (h->t0 < to && h->t0 >= from) {
                 // trigger voices at the right time.
+                bool was_valid = voices[i].h.valid_params;
                 voices[i].h.valid_params = 0;
                 voices[i].h.hapid = 0;
-                voices[i].h.t0 = h->t0;
+                if (!was_valid) voices[i].h.t0 = h->t0;
+                // if the hap was already valid, we keep the old t0 so that we dont get a 'click' / hole in the output.
                 voices[i].h.t1 = h->t1;
                 voices[i].retrig = true;
                 voices[i].vibphase = rnd01();
@@ -765,8 +771,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
             double dphase = exp2((note - C3) / 12.f);         // midi2dphase(note);
             float key_track_gain = exp2(((note - C3) / -36.f) * key_track_amount); // gentle falloff of high notes
             
-            float predist_level = key_track_gain * oldtrem;
-            float predist_dlevel = (key_track_gain * newtrem - predist_level) / (96.f - first_smpl);
+            float dpredist_dlevel = (key_track_gain * newtrem - v->predist_level) / (96.f - first_smpl);
 
             float sustain = square(h->get_param(P_SUS, 1.f));
             float attack_k = env_k(h->get_param(P_ATT, 0.f));
@@ -778,8 +783,8 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
                 release_k = env_k(release);
             } else {
                 // no release specified...
-                bool has_any_env = h->valid_params & (1 << P_ATT | 1 << P_DEC | 1 << P_SUS | 1 << P_REL);
-                if (has_any_env) {
+                //bool has_any_env = h->valid_params & (1 << P_ATT | 1 << P_DEC | 1 << P_SUS | 1 << P_REL);
+                if (h->has_param(P_DEC)) {
                     release_k = decay_k;
                 } else
                 if (!G->playing) {
@@ -787,7 +792,7 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
                 } else if (w && w->num_frames > 0 && h->get_param(P_LOOPS, 0.f) >= h->get_param(P_LOOPE, 0.f)) {
                     release_k = 0.f; // it's a one shot sample so let it play out. nb this is now a _k value, not a time.
                 } else {
-                    release_k = decay_k; // 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.
+                    release_k = 0.005f; // it's a looping sample, so we must immediately stop when the key goes up.
                 }
             }
 
@@ -819,8 +824,8 @@ stereo synth_t::operator()(const char *pattern_name, float level_target, synth_t
                 float dist_actual = dist * (min(1.f, 1.f - env2dist) + env2 * env2dist);
                 v->dphase += (dphase - v->dphase) * k_glide;
                 bool at_end = false;
-                audio[smpl] +=  v->synth_sample(h, keydown, lerp(env1, min(1.f, env1 * 20.f), lpg), env2, fold_actual, dist_actual, cutoff_actual, noise_actual, w, &at_end) * predist_level;
-                predist_level += predist_dlevel;
+                audio[smpl] +=  v->synth_sample(h, keydown, lerp(env1, min(1.f, env1 * 20.f), lpg), env2, fold_actual, dist_actual, cutoff_actual, noise_actual, w, &at_end) * v->predist_level;
+                v->predist_level += dpredist_dlevel;
                 
                // v->cur_power += fabsf(audio[smpl].l) + fabsf(audio[smpl].r);
                 v->retrig = false;

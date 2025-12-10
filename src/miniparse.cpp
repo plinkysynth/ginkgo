@@ -917,7 +917,7 @@ static void update_lengths(pattern_maker_t *p, int node) {
     if (node < 0)
         return;
     Node *n = &p->nodes[node];
-    //float max_value = 0.f;
+    float max_value_of_kids = 0.f;
     float total_length = 0.f;
     int num_children = 0;
     if (n->first_child < 0)
@@ -926,8 +926,8 @@ static void update_lengths(pattern_maker_t *p, int node) {
     for (int i = n->first_child; i >= 0; i = p->nodes[i].next_sib) {
         ++num_children;
         update_lengths(p, i);
-        // if (i != n->first_child)
-        //     max_value = max(max_value, p->nodes[i].max_value);
+        if (i != n->first_child)
+            max_value_of_kids = max(max_value_of_kids, p->nodes[i].max_value);
         float to = from + get_length(p, i);
         if (p->nodes[i].type == N_OP_ELONGATE && p->nodes[i].min_value >= 0.f) {
             // the child is an elongate node with a specified start time. 
@@ -942,6 +942,9 @@ static void update_lengths(pattern_maker_t *p, int node) {
     }
     if (n->type == N_GRID) {
         total_length = n->max_value; // i claim the total length of my kids is in fact just my own grid size. :)
+    }
+    if (n->type == N_OP_REPLICATE) {
+        n->max_value = max_value_of_kids;
     }
     n->total_length = total_length;
     n->num_children = num_children;
@@ -987,7 +990,9 @@ void test_minipat(void) {
     //const char *s = "blendnear [/foo /bar]";
     //const char *s = "<c^'C  q   A  i D'>@1-2";
     //const char *s = "[bd _ bd@2]";
-    const char *s = "c3 sus 0 dec 0.3 $ : -1";
+    // char *s = "c3 sus 0 dec 0.3 $ : -1";
+
+    const char *s = "[bd ! 7 sd]";
     //const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";

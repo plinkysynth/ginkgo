@@ -400,6 +400,9 @@ struct delay_t {
     int delay_pos;
 
     stereo operator()(stereo inp, stereo time_qn={0.75f, 0.75f}, float feedback=0.5f, float rotate = 0.f);
+    stereo operator()(stereo inp, float time_qn=0.75f, float feedback=0.5f, float rotate = 0.f) {
+        return operator()(inp, mono2st(time_qn), feedback, rotate);
+    }
 };
 
 typedef struct pattern_t pattern_t;
@@ -573,7 +576,7 @@ static inline int plinky_pad_to_note(int x, int y) {
     int whitenoteidx =  x * 4 + 15 - y;
     int octave = whitenoteidx / 7 + G->plinky12_octave + 2;
     const static int whitenotes[8] = {0, 2, 4, 5, 7, 9, 11,12};
-    return octave * 12 + whitenotes[whitenoteidx % 7];
+    return octave * 12 + whitenotes[whitenoteidx % 7] - 48 + C3; // remove midi c3 as we have it as 0
 }
 
 typedef struct adsr_t {
@@ -676,6 +679,7 @@ typedef struct voice_state_t {
     float grainphase;
     float vibphase;
     float tremphase;
+    float predist_level;
    // float cur_power;
     float noise_lpf;
     bool retrig;
@@ -797,7 +801,7 @@ static inline float rndn(void) {
     return x * 1.4f;
 }
 
-static const int blep_os = 16;
+static const int blep_os =8;
 static const float minblep_table[129] = { // minBLEP correction for a unit step input; 16x oversampling
     -1.000000000f, -0.998811289f, -0.996531062f, -0.992795688f, -0.987211296f, -0.979364361f, -0.968834290f, -0.955206639f,
     -0.938089255f, -0.917128234f, -0.892024074f, -0.862547495f, -0.828554201f, -0.789997837f, -0.746941039f, -0.699562613f,
@@ -875,7 +879,7 @@ static inline float sawo_aliased(float phase, float dphase) {
 
 // a mix of sin (at -1) to saw (0) to square (1) to pulse (>1)
 static inline float shapeo(double phase, double dphase, float wavetable_number) {
-    float fphase = frac(phase);
+    float fphase = (phase);
     if (wavetable_number <= 0.f) {
         float s = sawo(fphase, dphase);
         return lerp(s, sino(fphase + 0.25f), min(1.f, -wavetable_number));
@@ -982,7 +986,7 @@ __attribute__((visibility("default"))) void *dsp(song_base_t *_G, stereo *audio,
 #endif
 
 struct synth_t_options {
-    float distortion;
+    float dist;
     int max_voices;
     bool debug_draw;
 };

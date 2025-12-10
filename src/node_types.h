@@ -38,10 +38,10 @@ NODE(N_POLY)
 // op_type, srcname, numparams, num_optional_params, precedence
 OP(N_OP_EUCLID, "(", 3, 1, 400)
 OP(N_OP_REPLICATE, "!", 1, 0, 300)
-OP(N_OP_ELONGATE, "@", 1, 0, 300)
 OP(N_OP_DEGRADE, "?", 0, 1, 200)
-OP(N_OP_TIMES, "*", 1, 0, 200)
-OP(N_OP_DIVIDE, "/", 1, 0, 200)
+OP(N_OP_TIMES, "*", 1, 0, 149)
+OP(N_OP_DIVIDE, "/", 1, 0, 149)
+OP(N_OP_ELONGATE, "@", 1, 0, 149) // chosen to be lower than param ^ (gate)
 
 // : ^ note s from params.h fall at 150 here.
 

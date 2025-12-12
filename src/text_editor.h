@@ -1099,7 +1099,7 @@ void editor_key(GLFWwindow *win, EditorState *E, int key) {
 // #define C_PATTERN_GUTTER 0x80000000u // same
 #define C_PATTERN_JUMP_MARKER 0x00070000u
 
-#define C_PATTERN_BG 0x11100000u
+#define C_PATTERN_BG 0 // 0x11100000u
 #define C_TRACKER_BG 0x12300000u
 #define C_TRACKER_BG_4 0x22400000u
 #define C_TRACKER_BG_8 0x33500000u
@@ -1939,7 +1939,7 @@ int code_color(EditorState *E, uint32_t *ptr) {
             }
             uint32_t bgcol = ccol & 0xfff00000u;
             if (bgcol == 0 && pattern_mode) {
-                ccol |= empty_bgcol;
+                /// DARKEN PATTERNS ccol |= empty_bgcol;
                 // hilight active notes
                 if (hilites) {
                     int nh = stbds_arrlen(hilites);

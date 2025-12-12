@@ -447,6 +447,7 @@ uniform vec4 cursor;
 uniform float ui_alpha;
 uniform int status_bar_size;
 uniform sampler2D uBloom;
+uniform float bloom_amount;
 uniform vec2 uARadjust;
 uniform sampler2D uSky;
 uniform sampler2D uTex;
@@ -618,12 +619,13 @@ vec4 get_text_pixel(vec2 fpixel, ivec2 ufontpx, float grey, float contrast, floa
         sdf_level=max(sdf_level, 0.5f - 2.f * abs(cellpix.x+0.25f-float(ascii-(128+16))*1.f/8.f));
     }
     float fontlvl = (ascii >= 32) ? sqrt(saturate(sdf_level * aa + 0.5)) : 0.0;
+    // darken code bg
     if (bg.x <= 1.f/15.f && bg.y <= 1.f/15.f && bg.z <= 1.f/15.f) {
         bg.w = bg.x * 4.f;
         bg.xyz = vec3(0.f);
     }
     if (ascii != 0) {
-        bg.w=max(grey, bg.w);
+        //bg.w=max(grey, bg.w);
     }
     return mix(bg, fg, fontlvl);
 }
@@ -724,6 +726,7 @@ const char *kFS_secmon = SHADER(
     in vec2 v_uv;
     uniform sampler2D uFP;
     uniform sampler2D uBloom;
+    uniform float bloom_amount;
     uniform vec2 uARadjust;
     out vec4 o_color;
     vec3 aces(vec3 x) {
@@ -738,7 +741,7 @@ const char *kFS_secmon = SHADER(
         vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
         vec3 rendercol= texture(uFP, user_uv).rgb;
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
-        rendercol += bloomcol;// * 0.3;
+        rendercol += bloomcol * bloom_amount;
         rendercol = max(vec3(0.), rendercol);
         rendercol.rgb = sqrt(aces(rendercol.rgb));
         o_color = vec4(rendercol.xyz, 1.0);
@@ -771,7 +774,7 @@ const char *kFS_ui_suffix = SHADER_NO_VERSION(
         vec2 user_uv = (v_uv-0.5) * uARadjust + 0.5;
         vec3 rendercol= texture(uFP, user_uv).rgb;
         vec3 bloomcol= texture(uBloom, user_uv).rgb;
-        rendercol += bloomcol ;//* 0.3;
+        rendercol += bloomcol * bloom_amount;
         rendercol = max(vec3(0.), rendercol);
         
         vec2 pix = (v_uv) * vec2(uScreenPx.x, 2048.f);
@@ -1976,7 +1979,7 @@ struct texture_t {
 
 bool skies_loaded = false;
 
-GLuint load_texture(const char *key, int filter_mode = GL_LINEAR, int wrap_mode = GL_CLAMP_TO_EDGE) {
+GLuint load_texture(const char *key, bool srgb, int filter_mode = GL_LINEAR, int wrap_mode = GL_CLAMP_TO_EDGE) {
     if (!skies_loaded) {
         skies_loaded = true;
         char *json = load_file("assets/skies.json");
@@ -2041,7 +2044,7 @@ GLuint load_texture(const char *key, int filter_mode = GL_LINEAR, int wrap_mode 
         }
     }
     GLuint texi = gl_create_texture(filter_mode, wrap_mode);
-    glTexImage2D(GL_TEXTURE_2D, 0, hdr ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, img);
+    glTexImage2D(GL_TEXTURE_2D, 0, hdr ? GL_RGBA16F : srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, img);
     if (hdr) {
         int nummips = 6;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -2325,7 +2328,7 @@ int main(int argc, char **argv) {
     init_sampler(prefetch);
 
     void test_minipat(void);
-    test_minipat();
+    //test_minipat();
     // return 0;
 
     GLFWwindow *win = gl_init(primon_idx, secmon_idx);
@@ -2367,7 +2370,7 @@ int main(int argc, char **argv) {
     bool load_canvas(EditorState * E);
     load_canvas(&tabs[TAB_CANVAS]);
 
-    texFont = load_texture("assets/font_sdf.png");
+    texFont = load_texture("assets/font_sdf.png", false);
 
     // GLuint paper_diff = load_texture("assets/textures/paper-rough-1-DIFFUSE.png", GL_LINEAR, GL_REPEAT);
     // GLuint paper_disp = load_texture("assets/textures/paper-rough-1-DISP.png", GL_LINEAR, GL_REPEAT);
@@ -2453,7 +2456,11 @@ int main(int argc, char **argv) {
         const char *sky_name = strstr(s, "// sky ");
         const char *tex_name = strstr(s, "// tex ");
         const char *want_taa_str = strstr(s, "// taa");
+        const char *bloom_str = strstr(s, "// bloom");
         float taa_amount = 0.95f;
+        float bloom_amount = 0.3f;
+        if (bloom_str && bloom_str[8] == ' ' && isdigit(bloom_str[9]))
+            bloom_amount = strtof(bloom_str + 9, NULL);
 
         if (want_taa_str && want_taa_str[6] == ' ' && isdigit(want_taa_str[7]))
             taa_amount = strtof(want_taa_str + 7, NULL);
@@ -2478,7 +2485,7 @@ int main(int argc, char **argv) {
                 ++s;
             sky_name = temp_cstring_from_span(spans, s);
             if (sky_name) {
-                skytex = load_texture(sky_name);
+                skytex = load_texture(sky_name, true);
             }
         }
         if (tex_name) {
@@ -2490,7 +2497,7 @@ int main(int argc, char **argv) {
                 ++s;
             tex_name = temp_cstring_from_span(spans, s);
             if (tex_name) {
-                textex = load_texture(tex_name);
+                textex = load_texture(tex_name, true);
             }
         }
 
@@ -2611,6 +2618,7 @@ int main(int argc, char **argv) {
         bind_texture_to_slot(ui_pass, 1, "uFont", texFont, GL_LINEAR);
         bind_texture_to_slot(ui_pass, 2, "uText", texText, GL_NEAREST);
         bind_texture_to_slot(ui_pass, 3, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
+        uniform1f(ui_pass, "bloom_amount", bloom_amount);
         set_aradjust(ui_pass, G->fbw, G->fbh);
 
         uniform2i(ui_pass, "uScreenPx", G->fbw, G->fbh);
@@ -2727,7 +2735,7 @@ int main(int argc, char **argv) {
         }
 
         // draw a mini plinky12 display
-        if (1 || G->plinky12_connected) {
+        if (curE == &tabs[TAB_AUDIO]) {
             static uint32_t plinky_palette[256];
             if (plinky_palette[255] == 0) {
                 // sampled from a photo of plinky :)
@@ -2840,6 +2848,7 @@ int main(int argc, char **argv) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
             bind_texture_to_slot(secmon_pass, 1, "uBloom", texFPRT[NUM_FPRTS], GL_LINEAR);
+            uniform1f(secmon_pass, "bloom_amount", bloom_amount);
             set_aradjust(secmon_pass, sw, sh);
             glBindVertexArray(vaoFS);
             glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -2875,6 +2884,7 @@ int main(int argc, char **argv) {
         const float makeupb = (5.3);
         
         //printf("b: %f, m: %f, h: %f\n", b, m, h);
+        if (curE == &tabs[TAB_AUDIO])
         for (int band = 0; band < 3; band++) {
             float lothresh = band == 0 ? lothreshb : band == 1 ? lothreshm : lothreshh;
             float hithresh = band == 0 ? hithreshb : band == 1 ? hithreshm : hithreshh;

@@ -569,6 +569,9 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
         break;
     }
     case N_LEAF: {
+        if (nodeidx == 9) {
+            int i =1;
+        }
         float f = floor(when);
         appended = _append_leaf_hap(dst, nodeidx, f, f + 1.f, hash2_pcg(hapid, (int)when));
         break;
@@ -675,8 +678,11 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
                           pattern_t *pat = (pattern_t *)context;
                           hap_t *target = srchaps[0];
                           hap_t *right_hap = srchaps[1];
-                          if (!right_hap)
+                          if (!right_hap || !right_hap->valid_params) {
+                            // if you do <thing> : - ie apply a rest, we delete the thing!
+                            target->valid_params = 0;
                               return;
+                          }
                           uint64_t right_params = right_hap->valid_params;
                           while (right_params) {
                               int param_idx = __builtin_ctzll(right_params);
@@ -1369,6 +1375,8 @@ hap_span_t pattern_t::_make_haps(hap_span_t &dst, int tmp_size, float viz_time, 
     }
 
     rv.e = dst.s;
+    if (rv.s==rv.e)
+        rv.s=rv.e=NULL;
     return rv;
 } // make_haps
 

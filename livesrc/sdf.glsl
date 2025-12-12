@@ -44,9 +44,11 @@ bool plane_intersect(vec3 ro, vec3 rd, vec4 plane_nd, inout float maxt, inout ve
 float map(vec3 p, vec4 r4){
 	//p.xyz+=sin(p.yzx + iTime)*0.5;
 	p.xyz+=sin(p.yzx*2.)*0.25;
+    return length(p)-1.;
+
 //return min(min(sdBox(p,vec3(1,1,7)), sdBox(p,vec3(7.,1.,1.))),sdBox(p,vec3(1.,7.,1.)));
 //p+=r4.xyz-0.5;
-    return length(p)-5.;
+    
 }
 
 vec4 pixel(vec2 uv) {

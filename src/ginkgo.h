@@ -1003,6 +1003,7 @@ typedef struct synth_t {
 
 
 hap_t *pat2hap(const char *pattern_name, hap_t *cache);
+float pat2float(const char *pattern_name, float defval=0.f);
 
 struct stutter_t {
     #define LOOP_BUFFER_SIZE (1<<18)

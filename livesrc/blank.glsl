@@ -24,13 +24,25 @@ Cmd+Q = quit
 For more information, see docs/docs.md
 */
 #ifdef PATTERNS
+/vispat 0 1
 #endif
+// bloom 0
+// tex assets/photo.jpg
 
-// tex assets/font_brutalita.png
-
-
-
+uniform vec4 vispat;
 vec4 pixel(vec2 uv) {
+	vec4 o=vec4(0.);
+	for (int iter=0;iter<4;++iter) {
+    	vec2 p0 = vec2(sin(iTime*vec2(0.010,0.0120)+vec2(21.,62.)+uv.y*0.01));
+        vec2 p1 = vec2(sin(iTime*vec2(0.015,0.0112)+vec2(31.,12.)+uv.y*0.01));
+        vec2 p = mix(p0,p1,uv.x);
+        p=sin(p)*1.5+0.5+0.175-vec2(1.4);
+            
+        o+=texture(uTex, p);
+        uv.x+=1.1;
+        uv+=uv*mat2(.8,.6,-.6,.8)*0.9;
+    }
+    return o;
     return vec4(0.01,0.02,0.03,1.);
 }
 

@@ -523,6 +523,17 @@ hap_t *pat2hap(const char *pattern_name, hap_t *cache) {
     return cache;
 }
 
+float pat2float(const char *pattern_name, float defval) {
+    pattern_t *pattern = get_pattern(pattern_name);
+    if (!pattern || !pattern->key) return defval;
+    hap_t haps[8];
+    hap_span_t hs = pattern->make_haps({haps, haps + 8}, 8, -1.f, G->t + G->dt * 0.5f);
+    if (hs.s < hs.e) {
+        return hs.s->get_param(P_NUMBER, defval);
+    }
+    return defval;
+}
+
 stereo voice_state_t::synth_sample(hap_t *h, bool keydown, float env1, float env2, float fold_actual, float dist_actual,
                                    float cutoff_actual, float noise_actual, wave_t *w, bool *at_end) {
     stereo au;

@@ -172,16 +172,17 @@ static int isclosing(int c) { return c <= 0 || c == ')' || c == ']' || c == '}' 
 static int isopening(int c) { return c == '(' || c == '[' || c == '{' || c == '<' || c == '#'; }
 static int isleaf(int c) { return isalnum(c) || c == '_' || c == '-' || c == '.'; }
 static int isdelimiter(int c) { return isspace(c) || isclosing(c) || c == ',' || c == '|'; }
-static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end, float maxval = -1e9f, float minval=-1e9f) {
+static int make_node(pattern_maker_t *p, int node_type, int first_child, int next_sib, int start, int end, float maxval = -1e9f,
+                     float minval = -1e9f) {
     int i = stbds_arrlen(p->nodes);
     Node nd = (Node){.type = (uint8_t)node_type,
-                    .start = start,
-                    .end = end,
-                    .linenumber = p->linecount,
-                    .first_child = first_child,
-                    .next_sib = next_sib,
-                    .total_length = 0,
-                    .num_children = 0};
+                     .start = start,
+                     .end = end,
+                     .linenumber = p->linecount,
+                     .first_child = first_child,
+                     .next_sib = next_sib,
+                     .total_length = 0,
+                     .num_children = 0};
     if (maxval != -1e9f)
         nd.max_value = maxval;
     if (minval != -1e9f)
@@ -247,12 +248,11 @@ static int parse_args(pattern_maker_t *p, int group_type, char close, int list_d
         }
         // we can drop the wrapper - especially as we recurse thru RANDOM and PARALLEL to get precedence right.
         return first_child;
-        
     }
     return make_node(p, group_type, first_child, -1, start, p->i);
 }
 
-static int parse_leaf(pattern_maker_t *p, bool *is_range=NULL);
+static int parse_leaf(pattern_maker_t *p, bool *is_range = NULL);
 static int parse_number(const char *s, const char *e, const char **end, float *number);
 
 static int parse_group(pattern_maker_t *p, char open, char close, int node_type, bool allow_comma = true) {
@@ -377,7 +377,6 @@ static int parse_grid(pattern_maker_t *p) {
     return group_node;
 }
 
-
 int parse_midinote(const char *s, const char *e, const char **end,
                    int allow_p_prefix) { // if you dont speify *end, midi note must fill all of s-e
     if (allow_p_prefix && e > s + 2 && s[0] == 'P' && s[1] == '_') {
@@ -432,7 +431,8 @@ static int parse_number(const char *s, const char *e, const char **end, float *n
     double d = 0;
     char *bufe = buf + (tentative_end - s);
     char *x = strchr(buf, 'x');
-    if (tentative_end == s+1) x=0;
+    if (tentative_end == s + 1)
+        x = 0;
     if (!x) {
         d = strtod(buf, &endptr);
     } else {
@@ -496,7 +496,8 @@ static inline EValueType parse_value(const char *s, const char *e, float *minval
     const char *dash = s + 1;
     while (dash < e && *dash != '-')
         dash++;
-    if (is_range) *is_range=dash != e;
+    if (is_range)
+        *is_range = dash != e;
     EValueType type1 = parse_number_or_note_or_sound(s, dash, minval, maxval);
     if (type1 == VT_NONE)
         return VT_NONE;
@@ -588,6 +589,7 @@ static int parse_call(pattern_maker_t *p) {
         pattern_t empty = {.key = name};
         stbds_shputs(new_pattern_map_during_parse, empty);
         patidx = stbds_shgeti(new_pattern_map_during_parse, name);
+        printf("added blank pattern %s %d\n", name, patidx);
     }
     p->i = end - p->s;
     int node = make_node(p, N_CALL, -1, -1, start - p->s, p->i);
@@ -810,7 +812,8 @@ static int parse_op(pattern_maker_t *p, int left_node, int node_type, int num_pa
             }
             maxval = p->nodes[right_node].max_value;
             if (is_range)
-                minval = p->nodes[right_node].min_value; // for elongate, we use a notation @from-length . its a bit odd but most ergonomic for it to be length, not end.
+                minval = p->nodes[right_node].min_value; // for elongate, we use a notation @from-length . its a bit odd but most
+                                                         // ergonomic for it to be length, not end.
             else
                 minval = -1.f;
             right_node = -1;
@@ -930,12 +933,12 @@ static void update_lengths(pattern_maker_t *p, int node) {
             max_value_of_kids = max(max_value_of_kids, p->nodes[i].max_value);
         float to = from + get_length(p, i);
         if (p->nodes[i].type == N_OP_ELONGATE && p->nodes[i].min_value >= 0.f) {
-            // the child is an elongate node with a specified start time. 
+            // the child is an elongate node with a specified start time.
             // we will choose to make the total length be the end of the cycle where this one starts.
             from = p->nodes[i].min_value;
-            to = from + p->nodes[i].max_value - 1.f/16.f; // allow for a little bit of overhang in the end of the note.
-            from = floorf(from)+1.f;
-            to = floorf(to)+1.f;
+            to = from + p->nodes[i].max_value - 1.f / 16.f; // allow for a little bit of overhang in the end of the note.
+            from = floorf(from) + 1.f;
+            to = floorf(to) + 1.f;
         }
         total_length = max(total_length, to);
         from = to;
@@ -952,7 +955,8 @@ static void update_lengths(pattern_maker_t *p, int node) {
     // poly nodes use it as a hack for the % figure.
     // single child elongate nodes use it as a count to elongate by.
     // ACTUALLY you know what, i dont think anyone is using this any more. let's let nodes control max_value how they like.
-    // if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID && n->type != N_NEAR &&
+    // if (num_children > 1 && n->type != N_POLY && n->type != N_LEAF && n->type != N_CALL && n->type != N_GRID && n->type != N_NEAR
+    // &&
     //     n->type != N_COLOR) {
     //     n->max_value = max_value;
     // }
@@ -987,13 +991,14 @@ void test_minipat(void) {
     // const char *s = "a sus 0.3 add 12 b | c d"; // simplest ever!
     // const char *s = "bd,bd,\n";
     // const char *s = "{a b c, d e}%4";
-    //const char *s = "blendnear [/foo /bar]";
-    //const char *s = "<c^'C  q   A  i D'>@1-2";
-    //const char *s = "[bd _ bd@2]";
+    // const char *s = "blendnear [/foo /bar]";
+    // const char *s = "<c^'C  q   A  i D'>@1-2";
+    // const char *s = "[bd _ bd@2]";
     // char *s = "c3 sus 0 dec 0.3 $ : -1";
 
-    const char *s = "[bd ! 7 sd]";
-    //const char *s= "break_amen/4 : c2";
+    // const char *s = "[bd ! 7 sd]";
+    const char *s = "<microlive:< - 29 30 31 34 33> >/2 rel 0 gain 2";
+    // const char *s= "break_amen/4 : c2";
 
     // const char *s = "<bd sd>";
     //  const char *s = "{c eb g, c2 g2}%4";
@@ -1114,7 +1119,7 @@ error_msg_t *parse_named_patterns_in_source(const char *s, const char *real_e, e
                 pat.seed = fnv1_hash(pat.key);
                 stbds_shputs(new_pattern_map_during_parse, pat);
                 int idx = stbds_shgeti(new_pattern_map_during_parse, pat.key);
-                printf("found pattern: %.*s - index %d\n", (int)(pathend - pathstart), pathstart, idx);
+                // printf("found pattern: %.*s - index %d\n", (int)(pathend - pathstart), pathstart, idx);
             } else {
                 printf("error: %.*s: %s\n", (int)(pathend - pathstart), pathstart, p.errmsg);
                 int errline = p.errline + count_lines(code_start, pattern_start);
